@@ -1,0 +1,8 @@
+# Local
+local-docs/
+test-files/
+CLAUDE.md
+
+# Added by cargo
+
+/target
