@@ -2,7 +2,7 @@
 
 use crate::error::Result;
 use crate::model::{
-    Block, ImageRef, InlineContent, Paragraph, ParagraphStyle, Section, StyleRegistry,
+    Block, Equation, ImageRef, InlineContent, Paragraph, ParagraphStyle, Section, StyleRegistry,
     Table, TableCell, TableRow, TextRun,
 };
 use quick_xml::events::Event;
@@ -129,7 +129,7 @@ impl<'a> SectionParser<'a> {
                                 char_pr_id: get_attr_u32(&e, "charPrIDRef"),
                             };
                             buf.clear();
-                            let run = self.parse_run(run_attrs)?;
+                            let run = self.parse_run(run_attrs, &mut paragraph)?;
                             if !run.text.is_empty() {
                                 paragraph.content.push(InlineContent::Text(run));
                             }
@@ -163,8 +163,8 @@ impl<'a> SectionParser<'a> {
         Ok(paragraph)
     }
 
-    /// Parses a <hp:run> text run element.
-    fn parse_run(&mut self, attrs: RunAttrs) -> Result<TextRun> {
+    /// Parses a <hp:run> text run element, returning the text run and any images found.
+    fn parse_run(&mut self, attrs: RunAttrs, paragraph: &mut Paragraph) -> Result<TextRun> {
         let text_style = attrs.char_pr_id
             .and_then(|id| self.styles.get_char_style(id))
             .cloned()
@@ -172,10 +172,11 @@ impl<'a> SectionParser<'a> {
 
         let mut text = String::new();
         let mut buf = Vec::new();
+        let mut in_pic = false;
 
         loop {
             match self.reader.read_event_into(&mut buf) {
-                Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+                Ok(Event::Start(e)) => {
                     let name = get_local_name(&e);
 
                     if name == "t" {
@@ -185,6 +186,26 @@ impl<'a> SectionParser<'a> {
                             if let Ok(s) = t.unescape() {
                                 text.push_str(&s);
                             }
+                        }
+                    } else if name == "pic" {
+                        // Start of picture element
+                        in_pic = true;
+                    } else if in_pic && name == "img" {
+                        // Look for binaryItemIDRef in <hc:img> element
+                        if let Some(id) = get_attr_string(&e, "binaryItemIDRef") {
+                            paragraph.content.push(InlineContent::Image(ImageRef::new(id)));
+                        }
+                    }
+                }
+                Ok(Event::Empty(e)) => {
+                    let name = get_local_name(&e);
+
+                    if name == "t" {
+                        // Empty text element - skip
+                    } else if in_pic && name == "img" {
+                        // Look for binaryItemIDRef in <hc:img/> element
+                        if let Some(id) = get_attr_string(&e, "binaryItemIDRef") {
+                            paragraph.content.push(InlineContent::Image(ImageRef::new(id)));
                         }
                     }
                 }
@@ -196,7 +217,9 @@ impl<'a> SectionParser<'a> {
                 }
                 Ok(Event::End(e)) => {
                     let name = get_local_name_end(&e);
-                    if name == "run" {
+                    if name == "pic" {
+                        in_pic = false;
+                    } else if name == "run" {
                         break;
                     }
                 }
@@ -211,26 +234,85 @@ impl<'a> SectionParser<'a> {
     }
 
     /// Parses a <hp:ctrl> control element.
+    ///
+    /// Handles various control types:
+    /// - pic: Pictures/images
+    /// - eqEdit: Equations (mathematical formulas)
+    /// - fn: Footnotes
+    /// - en: Endnotes
     fn parse_control(&mut self, paragraph: &mut Paragraph) -> Result<()> {
         let mut buf = Vec::new();
+        let mut in_pic = false;
+        let mut in_equation = false;
+        let mut in_footnote = false;
+        let mut equation_script = String::new();
+        let mut footnote_text = String::new();
 
         loop {
             match self.reader.read_event_into(&mut buf) {
-                Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+                Ok(Event::Start(e)) => {
                     let name = get_local_name(&e);
 
-                    if name == "pic" {
-                        // Image control
-                        if let Some(id) = get_attr_string(&e, "binItem") {
+                    match name.as_str() {
+                        "pic" => in_pic = true,
+                        "eqEdit" | "equation" => in_equation = true,
+                        "fn" | "footnote" => in_footnote = true,
+                        "en" | "endnote" => in_footnote = true, // Treat endnotes like footnotes
+                        "img" if in_pic => {
+                            // Look for binaryItemIDRef attribute in <hc:img> element
+                            if let Some(id) = get_attr_string(&e, "binaryItemIDRef") {
+                                paragraph.content.push(InlineContent::Image(ImageRef::new(id)));
+                            }
+                        }
+                        "script" if in_equation => {
+                            // Equation script content will be in text node
+                        }
+                        "subList" if in_footnote => {
+                            // Footnote content is in subList > p elements
+                            buf.clear();
+                            footnote_text = self.parse_footnote_content()?;
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(Event::Empty(e)) => {
+                    let name = get_local_name(&e);
+
+                    if in_pic && name == "img" {
+                        // Look for binaryItemIDRef attribute in <hc:img/> element
+                        if let Some(id) = get_attr_string(&e, "binaryItemIDRef") {
                             paragraph.content.push(InlineContent::Image(ImageRef::new(id)));
                         }
                     }
-                    // Skip other control types for now
+                }
+                Ok(Event::Text(t)) if in_equation => {
+                    // Collect equation script text
+                    if let Ok(s) = t.unescape() {
+                        equation_script.push_str(&s);
+                    }
                 }
                 Ok(Event::End(e)) => {
                     let name = get_local_name_end(&e);
-                    if name == "ctrl" {
-                        break;
+                    match name.as_str() {
+                        "pic" => in_pic = false,
+                        "eqEdit" | "equation" => {
+                            if !equation_script.is_empty() {
+                                let script = std::mem::take(&mut equation_script);
+                                let eq = Equation::new(script);
+                                paragraph.content.push(InlineContent::Equation(eq));
+                            }
+                            in_equation = false;
+                        }
+                        "fn" | "footnote" | "en" | "endnote" => {
+                            if !footnote_text.is_empty() {
+                                paragraph.content.push(InlineContent::Footnote(
+                                    std::mem::take(&mut footnote_text)
+                                ));
+                            }
+                            in_footnote = false;
+                        }
+                        "ctrl" => break,
+                        _ => {}
                     }
                 }
                 Ok(Event::Eof) => break,
@@ -241,6 +323,50 @@ impl<'a> SectionParser<'a> {
         }
 
         Ok(())
+    }
+
+    /// Parses footnote content from subList element.
+    fn parse_footnote_content(&mut self) -> Result<String> {
+        let mut text = String::new();
+        let mut buf = Vec::new();
+        let mut depth = 1;
+
+        loop {
+            match self.reader.read_event_into(&mut buf) {
+                Ok(Event::Start(e)) => {
+                    let name = get_local_name(&e);
+                    if name == "t" {
+                        // Text element inside footnote paragraph
+                    } else {
+                        depth += 1;
+                    }
+                }
+                Ok(Event::Text(t)) => {
+                    if let Ok(s) = t.unescape() {
+                        if !text.is_empty() && !text.ends_with(' ') {
+                            text.push(' ');
+                        }
+                        text.push_str(s.trim());
+                    }
+                }
+                Ok(Event::End(e)) => {
+                    let name = get_local_name_end(&e);
+                    if name == "subList" {
+                        break;
+                    }
+                    depth -= 1;
+                    if depth == 0 {
+                        break;
+                    }
+                }
+                Ok(Event::Eof) => break,
+                Err(e) => return Err(crate::error::Error::XmlParse(e.to_string())),
+                _ => {}
+            }
+            buf.clear();
+        }
+
+        Ok(text.trim().to_string())
     }
 
     /// Parses a <hp:tbl> table element.

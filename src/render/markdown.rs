@@ -6,25 +6,38 @@ use crate::model::{
     Alignment, Block, Document, InlineContent, ListStyle, Paragraph, Table, TextRun,
 };
 
+use std::collections::HashMap;
+
 /// Markdown renderer.
 #[derive(Debug)]
 pub struct MarkdownRenderer {
     options: RenderOptions,
+    /// Maps binaryItemIDRef (e.g., "image1") to actual filename (e.g., "image1.bmp")
+    image_id_to_filename: HashMap<String, String>,
 }
 
 impl MarkdownRenderer {
     /// Creates a new renderer with the given options.
     pub fn new(options: RenderOptions) -> Self {
-        Self { options }
+        Self {
+            options,
+            image_id_to_filename: HashMap::new(),
+        }
     }
 
     /// Renders a document to Markdown string.
     pub fn render(&self, document: &Document) -> Result<String> {
+        // Build image ID to filename mapping from resources
+        let renderer = Self {
+            options: self.options.clone(),
+            image_id_to_filename: Self::build_image_mapping(document),
+        };
+
         let mut output = String::new();
 
         // Render frontmatter if enabled
-        if self.options.include_frontmatter {
-            self.render_frontmatter(document, &mut output);
+        if renderer.options.include_frontmatter {
+            renderer.render_frontmatter(document, &mut output);
         }
 
         // Render each section
@@ -32,16 +45,34 @@ impl MarkdownRenderer {
             for block in &section.content {
                 match block {
                     Block::Paragraph(para) => {
-                        self.render_paragraph(para, &mut output);
+                        renderer.render_paragraph(para, &mut output);
                     }
                     Block::Table(table) => {
-                        self.render_table(table, &mut output);
+                        renderer.render_table(table, &mut output);
                     }
                 }
             }
         }
 
         Ok(output)
+    }
+
+    /// Builds a mapping from binaryItemIDRef to actual filename.
+    fn build_image_mapping(document: &Document) -> HashMap<String, String> {
+        let mut mapping = HashMap::new();
+
+        for filename in document.resources.keys() {
+            // Extract base name without extension (e.g., "image1.bmp" -> "image1")
+            if let Some(dot_pos) = filename.rfind('.') {
+                let base_name = &filename[..dot_pos];
+                mapping.insert(base_name.to_string(), filename.clone());
+            } else {
+                // No extension - use as-is
+                mapping.insert(filename.clone(), filename.clone());
+            }
+        }
+
+        mapping
     }
 
     /// Renders YAML frontmatter.
@@ -54,8 +85,26 @@ impl MarkdownRenderer {
         if let Some(ref author) = document.metadata.author {
             output.push_str(&format!("author: \"{}\"\n", escape_yaml(author)));
         }
+        if let Some(ref subject) = document.metadata.subject {
+            output.push_str(&format!("description: \"{}\"\n", escape_yaml(subject)));
+        }
         if let Some(ref created) = document.metadata.created {
             output.push_str(&format!("date: \"{}\"\n", created));
+        }
+        if let Some(ref modified) = document.metadata.modified {
+            output.push_str(&format!("lastmod: \"{}\"\n", modified));
+        }
+        if !document.metadata.keywords.is_empty() {
+            output.push_str("tags:\n");
+            for keyword in &document.metadata.keywords {
+                output.push_str(&format!("  - \"{}\"\n", escape_yaml(keyword)));
+            }
+        }
+        if let Some(ref app) = document.metadata.creator_app {
+            output.push_str(&format!("generator: \"{}\"\n", escape_yaml(app)));
+        }
+        if let Some(ref format) = document.metadata.format_version {
+            output.push_str(&format!("format: \"{}\"\n", escape_yaml(format)));
         }
 
         output.push_str("---\n\n");
@@ -121,15 +170,27 @@ impl MarkdownRenderer {
             }
             InlineContent::Image(img) => {
                 let alt = img.alt_text.as_deref().unwrap_or("image");
-                let path = format!("{}{}", self.options.image_path_prefix, img.id);
+                // Look up the actual filename from binaryItemIDRef
+                let filename = self
+                    .image_id_to_filename
+                    .get(&img.id)
+                    .cloned()
+                    .unwrap_or_else(|| img.id.clone());
+                let path = format!("{}{}", self.options.image_path_prefix, filename);
                 output.push_str(&format!("![{}]({})", alt, path));
             }
             InlineContent::Equation(eq) => {
-                // Prefer LaTeX if available, otherwise use code block
+                // Prefer LaTeX if available, otherwise convert from HWP script
                 if let Some(ref latex) = eq.latex {
                     output.push_str(&format!("${}$", latex));
-                } else {
-                    output.push_str(&format!("`{}`", eq.script));
+                } else if !eq.script.is_empty() {
+                    // Convert HWP equation script to LaTeX
+                    let latex = crate::equation::to_latex(&eq.script);
+                    if latex.is_empty() {
+                        output.push_str(&format!("`{}`", eq.script));
+                    } else {
+                        output.push_str(&format!("${}$", latex));
+                    }
                 }
             }
             InlineContent::Footnote(text) => {

@@ -80,6 +80,26 @@ impl HwpxParser {
         if let Some(author) = extract_metadata_field(&content_hpf, "creator") {
             document.metadata.author = Some(author);
         }
+        if let Some(subject) = extract_metadata_field(&content_hpf, "description") {
+            document.metadata.subject = Some(subject);
+        }
+        if let Some(date) = extract_metadata_field(&content_hpf, "date") {
+            document.metadata.created = Some(date);
+        }
+        if let Some(modified) = extract_metadata_field(&content_hpf, "modified") {
+            document.metadata.modified = Some(modified);
+        }
+
+        // Extract keywords
+        let keywords = extract_keywords(&content_hpf);
+        if !keywords.is_empty() {
+            document.metadata.keywords = keywords;
+        }
+
+        // Try to get application info
+        if let Some(generator) = extract_metadata_field(&content_hpf, "generator") {
+            document.metadata.creator_app = Some(generator);
+        }
 
         Ok(())
     }
@@ -156,18 +176,79 @@ impl HwpxParser {
 
 /// Extracts a metadata field from content.hpf XML.
 fn extract_metadata_field(xml: &str, field: &str) -> Option<String> {
-    // Simple regex-like extraction for dc:title, dc:creator, etc.
+    // Try dc: namespace first (Dublin Core)
     let start_tag = format!("<dc:{}>", field);
     let end_tag = format!("</dc:{}>", field);
 
     if let Some(start) = xml.find(&start_tag) {
         let content_start = start + start_tag.len();
         if let Some(end) = xml[content_start..].find(&end_tag) {
-            return Some(xml[content_start..content_start + end].to_string());
+            let value = xml[content_start..content_start + end].trim().to_string();
+            if !value.is_empty() {
+                return Some(value);
+            }
+        }
+    }
+
+    // Try opf: namespace
+    let start_tag = format!("<opf:{}>", field);
+    let end_tag = format!("</opf:{}>", field);
+
+    if let Some(start) = xml.find(&start_tag) {
+        let content_start = start + start_tag.len();
+        if let Some(end) = xml[content_start..].find(&end_tag) {
+            let value = xml[content_start..content_start + end].trim().to_string();
+            if !value.is_empty() {
+                return Some(value);
+            }
+        }
+    }
+
+    // Try meta with name attribute
+    let name_attr = format!("name=\"{}\"", field);
+    if let Some(start) = xml.find(&name_attr) {
+        // Look for content attribute
+        let rest = &xml[start..];
+        if let Some(content_start) = rest.find("content=\"") {
+            let after_content = &rest[content_start + 9..];
+            if let Some(end) = after_content.find('"') {
+                let value = after_content[..end].trim().to_string();
+                if !value.is_empty() {
+                    return Some(value);
+                }
+            }
         }
     }
 
     None
+}
+
+/// Extracts keywords from content.hpf XML (may be comma-separated).
+fn extract_keywords(xml: &str) -> Vec<String> {
+    let mut keywords = Vec::new();
+
+    // Try dc:subject first
+    if let Some(subject) = extract_metadata_field(xml, "subject") {
+        // Split by common delimiters
+        for kw in subject.split(&[',', ';', '|'][..]) {
+            let kw = kw.trim();
+            if !kw.is_empty() {
+                keywords.push(kw.to_string());
+            }
+        }
+    }
+
+    // Also try meta keywords
+    if let Some(kw_str) = extract_metadata_field(xml, "keywords") {
+        for kw in kw_str.split(&[',', ';', '|'][..]) {
+            let kw = kw.trim();
+            if !kw.is_empty() && !keywords.contains(&kw.to_string()) {
+                keywords.push(kw.to_string());
+            }
+        }
+    }
+
+    keywords
 }
 
 /// Guesses MIME type from filename extension.

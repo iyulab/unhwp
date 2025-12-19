@@ -35,6 +35,7 @@
 //! - `async`: Async I/O support with Tokio
 
 pub mod detect;
+pub mod equation;
 pub mod error;
 pub mod model;
 pub mod parse_options;

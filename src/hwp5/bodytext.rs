@@ -1,49 +1,67 @@
 //! BodyText section parsing for HWP 5.0.
 
-use super::control::ControlParser;
 use super::record::{Record, RecordIterator, TagId};
 use crate::error::Result;
 use crate::model::{
-    InlineContent, Paragraph, ParagraphStyle, Section, StyleRegistry, Table, TextRun, TextStyle,
+    Equation, InlineContent, Paragraph, ParagraphStyle, Section, StyleRegistry, Table, TextRun,
+    TextStyle,
 };
 
 /// Control characters in HWP text.
 /// Characters in range 0x0001-0x001F have special meanings.
-/// Some controls consume 8 WCHARs (16 bytes) total including the control itself.
+///
+/// According to HWP 5.0 specification:
+/// - Char controls (1 WCHAR): 0x0001, 0x0004, 0x0009-0x000A, 0x000D-0x0018, 0x001E-0x001F
+/// - Inline controls (8 WCHARs): 0x0002-0x0003, 0x000B, 0x000C
+/// - Extended controls (8 WCHARs): 0x0005-0x0008
 mod control_char {
-    /// Reserved
+    /// Unusable character (char, 1 WCHAR)
     pub const RESERVED: u16 = 0x0001;
-    /// Section definition - consumes 8 WCHARs total
+    /// Section/column definition (inline, 8 WCHARs)
     pub const SECTION_DEF: u16 = 0x0002;
-    /// Field start - consumes 8 WCHARs total
+    /// Field start (inline, 8 WCHARs)
     pub const FIELD_START: u16 = 0x0003;
-    /// Field end
+    /// Field end (char, 1 WCHAR)
     pub const FIELD_END: u16 = 0x0004;
-    /// Title mark / inline control start - consumes 8 WCHARs total
+    /// Title mark / control inline (extended, 8 WCHARs)
     pub const INLINE_CTRL_1: u16 = 0x0005;
-    /// Inline control - consumes 8 WCHARs total
+    /// Tab definition (extended, 8 WCHARs)
     pub const INLINE_CTRL_2: u16 = 0x0006;
-    /// Inline control - consumes 8 WCHARs total
+    /// Drawing object (extended, 8 WCHARs)
     pub const INLINE_CTRL_3: u16 = 0x0007;
-    /// Inline control - consumes 8 WCHARs total
+    /// Reserved (extended, 8 WCHARs)
     pub const INLINE_CTRL_4: u16 = 0x0008;
-    /// Tab
+    /// Tab (char, 1 WCHAR)
     pub const TAB: u16 = 0x0009;
-    /// Line break (soft return)
+    /// Line break / soft return (char, 1 WCHAR)
     pub const LINE_BREAK: u16 = 0x000A;
-    /// Extended control (table, image, etc.) - consumes 8 WCHARs total
+    /// Extended control (table, image, equation, etc.) - (inline, 8 WCHARs)
     pub const EXTENDED_CONTROL: u16 = 0x000B;
-    /// Paragraph break
+    /// Hyphen (inline, 8 WCHARs)
+    pub const HYPHEN: u16 = 0x000C;
+    /// Paragraph break (char, 1 WCHAR)
     pub const PARA_BREAK: u16 = 0x000D;
-    /// Hidden comment - consumes 8 WCHARs total
+    /// Page break in column (char, 1 WCHAR)
+    pub const PAGE_BREAK_COL: u16 = 0x000E;
+    /// Page break in box (char, 1 WCHAR)
+    pub const PAGE_BREAK_BOX: u16 = 0x000F;
+    /// Hidden comment (char, 1 WCHAR)
     pub const HIDDEN_COMMENT: u16 = 0x0010;
-    /// Footnote/endnote - consumes 8 WCHARs total
+    /// Footnote/endnote (char, 1 WCHAR)
     pub const FOOTNOTE: u16 = 0x0011;
-    /// Auto numbering - consumes 8 WCHARs total
+    /// Auto numbering (char, 1 WCHAR)
     pub const AUTO_NUMBERING: u16 = 0x0012;
-    /// Non-breaking space
+    /// Page control (char, 1 WCHAR)
+    pub const PAGE_CTRL: u16 = 0x0015;
+    /// Bookmark (char, 1 WCHAR)
+    pub const BOOKMARK: u16 = 0x0016;
+    /// OLE overlay/underlay (char, 1 WCHAR)
+    pub const OLE_OVERLAY: u16 = 0x0017;
+    /// Title mark (char, 1 WCHAR)
+    pub const TITLE_MARK: u16 = 0x0018;
+    /// Non-breaking space (char, 1 WCHAR)
     pub const NBSP: u16 = 0x001E;
-    /// Fixed-width space
+    /// Fixed-width space (char, 1 WCHAR)
     pub const FIXED_SPACE: u16 = 0x001F;
 }
 
@@ -232,17 +250,15 @@ fn parse_para_text(
             }
 
             // All controls that consume 8 WCHARs total (including the control char itself)
-            // These are: 0x0002, 0x0003, 0x0005-0x0008, 0x000B, 0x0010-0x0012, 0x0014-0x0017
+            // Inline controls: 0x0002, 0x0003, 0x000B, 0x000C
+            // Extended controls: 0x0005-0x0008
             control_char::SECTION_DEF
             | control_char::FIELD_START
             | control_char::INLINE_CTRL_1
             | control_char::INLINE_CTRL_2
             | control_char::INLINE_CTRL_3
             | control_char::INLINE_CTRL_4
-            | control_char::HIDDEN_COMMENT
-            | control_char::FOOTNOTE
-            | control_char::AUTO_NUMBERING
-            | 0x0014..=0x0017 => {
+            | control_char::HYPHEN => {
                 // Skip next 7 WCHARs (14 bytes)
                 i += 14;
             }
@@ -260,10 +276,23 @@ fn parse_para_text(
                 context.push_char(' ');
             }
 
-            // Control characters with no additional data - just skip
-            control_char::RESERVED | control_char::FIELD_END | 0x000C | 0x000E | 0x000F
-            | 0x0013 | 0x0018..=0x001D => {
-                // Skip silently
+            // Char controls (1 WCHAR) - just skip the control character
+            // Includes: 0x0001, 0x0004, 0x000E-0x0018, 0x001A-0x001D
+            control_char::RESERVED
+            | control_char::FIELD_END
+            | control_char::PAGE_BREAK_COL
+            | control_char::PAGE_BREAK_BOX
+            | control_char::HIDDEN_COMMENT
+            | control_char::FOOTNOTE
+            | control_char::AUTO_NUMBERING
+            | 0x0013
+            | 0x0014
+            | control_char::PAGE_CTRL
+            | control_char::BOOKMARK
+            | control_char::OLE_OVERLAY
+            | control_char::TITLE_MARK
+            | 0x0019..=0x001D => {
+                // Skip silently - these are 1 WCHAR char controls
             }
 
             0x0000 => {
