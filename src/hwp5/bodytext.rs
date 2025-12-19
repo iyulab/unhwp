@@ -8,23 +8,39 @@ use crate::model::{
 };
 
 /// Control characters in HWP text.
+/// Characters in range 0x0001-0x001F have special meanings.
+/// Some controls consume 8 WCHARs (16 bytes) total including the control itself.
 mod control_char {
-    /// Line break (soft return)
-    pub const LINE_BREAK: u16 = 0x000A;
-    /// Extended control (table, image, etc.) - consumes 8 WCHARs total
-    pub const EXTENDED_CONTROL: u16 = 0x000B;
-    /// Paragraph break
-    pub const PARA_BREAK: u16 = 0x000D;
+    /// Reserved
+    pub const RESERVED: u16 = 0x0001;
     /// Section definition - consumes 8 WCHARs total
     pub const SECTION_DEF: u16 = 0x0002;
     /// Field start - consumes 8 WCHARs total
     pub const FIELD_START: u16 = 0x0003;
     /// Field end
     pub const FIELD_END: u16 = 0x0004;
-    /// Footnote/endnote - consumes 8 WCHARs total
-    pub const FOOTNOTE: u16 = 0x0011;
+    /// Title mark / inline control start - consumes 8 WCHARs total
+    pub const INLINE_CTRL_1: u16 = 0x0005;
+    /// Inline control - consumes 8 WCHARs total
+    pub const INLINE_CTRL_2: u16 = 0x0006;
+    /// Inline control - consumes 8 WCHARs total
+    pub const INLINE_CTRL_3: u16 = 0x0007;
+    /// Inline control - consumes 8 WCHARs total
+    pub const INLINE_CTRL_4: u16 = 0x0008;
     /// Tab
     pub const TAB: u16 = 0x0009;
+    /// Line break (soft return)
+    pub const LINE_BREAK: u16 = 0x000A;
+    /// Extended control (table, image, etc.) - consumes 8 WCHARs total
+    pub const EXTENDED_CONTROL: u16 = 0x000B;
+    /// Paragraph break
+    pub const PARA_BREAK: u16 = 0x000D;
+    /// Hidden comment - consumes 8 WCHARs total
+    pub const HIDDEN_COMMENT: u16 = 0x0010;
+    /// Footnote/endnote - consumes 8 WCHARs total
+    pub const FOOTNOTE: u16 = 0x0011;
+    /// Auto numbering - consumes 8 WCHARs total
+    pub const AUTO_NUMBERING: u16 = 0x0012;
     /// Non-breaking space
     pub const NBSP: u16 = 0x001E;
     /// Fixed-width space
@@ -215,7 +231,18 @@ fn parse_para_text(
                 i += 14; // Skip remaining 7 WCHARs
             }
 
-            control_char::SECTION_DEF | control_char::FIELD_START | control_char::FOOTNOTE => {
+            // All controls that consume 8 WCHARs total (including the control char itself)
+            // These are: 0x0002, 0x0003, 0x0005-0x0008, 0x000B, 0x0010-0x0012, 0x0014-0x0017
+            control_char::SECTION_DEF
+            | control_char::FIELD_START
+            | control_char::INLINE_CTRL_1
+            | control_char::INLINE_CTRL_2
+            | control_char::INLINE_CTRL_3
+            | control_char::INLINE_CTRL_4
+            | control_char::HIDDEN_COMMENT
+            | control_char::FOOTNOTE
+            | control_char::AUTO_NUMBERING
+            | 0x0014..=0x0017 => {
                 // Skip next 7 WCHARs (14 bytes)
                 i += 14;
             }
@@ -233,8 +260,15 @@ fn parse_para_text(
                 context.push_char(' ');
             }
 
-            0x0000..=0x001F => {
-                // Other control characters - skip
+            // Control characters with no additional data - just skip
+            control_char::RESERVED | control_char::FIELD_END | 0x000C | 0x000E | 0x000F
+            | 0x0013 | 0x0018..=0x001D => {
+                // Skip silently
+            }
+
+            0x0000 => {
+                // Null terminator - end of meaningful text
+                break;
             }
 
             _ => {
