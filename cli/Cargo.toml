@@ -1,0 +1,39 @@
+[package]
+name = "unhwp-cli"
+version = "0.1.3"
+edition = "2021"
+authors = ["iyulab"]
+description = "Command-line tool for converting HWP/HWPX documents to Markdown"
+license = "MIT"
+repository = "https://github.com/iyulab/unhwp"
+keywords = ["hwp", "hwpx", "cli", "converter"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "unhwp"
+path = "src/main.rs"
+
+[dependencies]
+# Core library
+unhwp = { path = ".." }
+
+# CLI argument parsing
+clap = { version = "4.5", features = ["derive"] }
+
+# JSON serialization
+serde_json = "1.0"
+
+# Self-update from GitHub releases
+self_update = { version = "0.41", features = ["archive-zip", "archive-tar", "compression-flate2"] }
+
+# Async runtime for self-update
+tokio = { version = "1.42", features = ["rt-multi-thread", "macros"] }
+
+# Version comparison
+semver = "1.0"
+
+# Progress indicator
+indicatif = "0.17"
+
+# Colored output
+colored = "2.1"

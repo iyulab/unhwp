@@ -43,19 +43,19 @@ jobs:
           - target: x86_64-pc-windows-msvc
             os: windows-latest
             lib_name: unhwp.dll
-            cli_name: unhwp-cli.exe
+            cli_name: unhwp.exe
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             lib_name: libunhwp.so
-            cli_name: unhwp-cli
+            cli_name: unhwp
           - target: x86_64-apple-darwin
             os: macos-latest
             lib_name: libunhwp.dylib
-            cli_name: unhwp-cli
+            cli_name: unhwp
           - target: aarch64-apple-darwin
             os: macos-latest
             lib_name: libunhwp.dylib
-            cli_name: unhwp-cli
+            cli_name: unhwp
 
     steps:
       - uses: actions/checkout@v4
@@ -66,8 +66,11 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.target }}
 
-      - name: Build release
-        run: cargo build --release --target ${{ matrix.target }}
+      - name: Build library
+        run: cargo build --release --target ${{ matrix.target }} -p unhwp
+
+      - name: Build CLI
+        run: cargo build --release --target ${{ matrix.target }} -p unhwp-cli
 
       - name: Prepare artifacts (Windows)
         if: matrix.os == 'windows-latest'
@@ -155,13 +158,20 @@ jobs:
             ### Contents
 
             - `unhwp.dll` / `libunhwp.so` / `libunhwp.dylib` - C-ABI library for FFI integration (C#, Python, etc.)
-            - `unhwp-cli` - Command-line tool
+            - `unhwp` - Command-line tool with self-update support
 
             ### Installation
 
             #### Rust/Cargo
             ```bash
-            cargo install unhwp
+            cargo install unhwp-cli
+            ```
+
+            #### Self-Update
+            The CLI supports automatic updates:
+            ```bash
+            unhwp update        # Update to latest version
+            unhwp update --check  # Check for updates only
             ```
 
             #### C# / .NET
