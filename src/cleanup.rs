@@ -394,15 +394,15 @@ fn count_cjk_neighbors(chars: &[char], pos: usize) -> usize {
     let mut count = 0;
 
     // Check 3 chars before
-    for i in pos.saturating_sub(3)..pos {
-        if is_cjk_ideograph(chars[i]) {
+    for c in chars.iter().take(pos).skip(pos.saturating_sub(3)) {
+        if is_cjk_ideograph(*c) {
             count += 1;
         }
     }
 
     // Check 3 chars after
-    for i in (pos + 1)..chars.len().min(pos + 4) {
-        if is_cjk_ideograph(chars[i]) {
+    for c in chars.iter().skip(pos + 1).take(3) {
+        if is_cjk_ideograph(*c) {
             count += 1;
         }
     }
@@ -686,10 +686,12 @@ fn extract_yaml_frontmatter(input: &str) -> (Option<String>, &str) {
     }
 
     // Skip the newline
-    let content_start = if after_opening.starts_with("\r\n") {
-        &after_opening[2..]
+    let content_start = if let Some(stripped) = after_opening.strip_prefix("\r\n") {
+        stripped
+    } else if let Some(stripped) = after_opening.strip_prefix('\n') {
+        stripped
     } else {
-        &after_opening[1..]
+        return (None, input);
     };
 
     // Find the closing ---
@@ -865,7 +867,7 @@ fn is_orphan_line(line: &str) -> bool {
     if line.starts_with("- ")
         || line.starts_with("* ")
         || line.starts_with("+ ")
-        || line.chars().next().map_or(false, |c| c.is_ascii_digit())
+        || line.chars().next().is_some_and(|c| c.is_ascii_digit())
     {
         return false;
     }

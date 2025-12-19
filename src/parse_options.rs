@@ -88,33 +88,23 @@ impl ParseOptions {
 }
 
 /// How to handle parsing errors.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ErrorMode {
     /// Fail immediately on any error.
+    #[default]
     Strict,
     /// Skip problematic sections and continue parsing.
     Lenient,
 }
 
 /// What content to extract from the document.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ExtractMode {
     /// Extract all content (text, styles, structure, resources).
+    #[default]
     Full,
     /// Extract only text content.
     TextOnly,
     /// Extract only document structure (headings, paragraphs, tables).
     StructureOnly,
-}
-
-impl Default for ErrorMode {
-    fn default() -> Self {
-        Self::Strict
-    }
-}
-
-impl Default for ExtractMode {
-    fn default() -> Self {
-        Self::Full
-    }
 }

@@ -1,7 +1,12 @@
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 //! # FFI Bindings for C# Interop
 //!
 //! This module provides C-compatible FFI functions for integrating unhwp
 //! with C#, .NET, and other languages via P/Invoke.
+//!
+//! # Safety
+//! All functions that accept raw pointers require the caller to ensure
+//! the pointers are valid. This is enforced by the FFI contract.
 //!
 //! ## Usage Pattern
 //!
@@ -77,13 +82,15 @@ pub const FORMAT_HWP3: i32 = 3;
 /// - FORMAT_HWPX (2): HWPX XML format
 /// - FORMAT_HWP3 (3): Legacy HWP 3.x format
 /// - FORMAT_UNKNOWN (0): Unknown or error
+/// # Safety
+/// The `path` pointer must be a valid null-terminated C string.
 #[no_mangle]
-pub extern "C" fn unhwp_detect_format(path: *const c_char) -> i32 {
+pub unsafe extern "C" fn unhwp_detect_format(path: *const c_char) -> i32 {
     if path.is_null() {
         return FORMAT_UNKNOWN;
     }
 
-    let path_str = match unsafe { CStr::from_ptr(path) }.to_str() {
+    let path_str = match CStr::from_ptr(path).to_str() {
         Ok(s) => s,
         Err(_) => return FORMAT_UNKNOWN,
     };
@@ -193,25 +200,29 @@ impl Default for UnhwpRenderOptions {
 
 impl UnhwpRenderOptions {
     fn to_rust_options(&self) -> RenderOptions {
-        let mut options = RenderOptions::default();
+        let image_path_prefix = if !self.image_path_prefix.is_null() {
+            unsafe { CStr::from_ptr(self.image_path_prefix) }
+                .to_str()
+                .map(|s| s.to_string())
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
 
-        options.include_frontmatter = self.include_frontmatter != 0;
-        options.preserve_line_breaks = self.preserve_line_breaks != 0;
-        options.escape_special_chars = self.escape_special_chars != 0;
-
-        if !self.image_path_prefix.is_null() {
-            if let Ok(s) = unsafe { CStr::from_ptr(self.image_path_prefix) }.to_str() {
-                options.image_path_prefix = s.to_string();
-            }
-        }
-
-        options.table_fallback = match self.table_fallback {
+        let table_fallback = match self.table_fallback {
             1 => crate::render::TableFallback::Html,
             2 => crate::render::TableFallback::Skip,
             _ => crate::render::TableFallback::SimplifiedMarkdown,
         };
 
-        options
+        RenderOptions {
+            include_frontmatter: self.include_frontmatter != 0,
+            preserve_line_breaks: self.preserve_line_breaks != 0,
+            escape_special_chars: self.escape_special_chars != 0,
+            image_path_prefix,
+            table_fallback,
+            ..Default::default()
+        }
     }
 }
 
@@ -241,8 +252,11 @@ pub extern "C" fn unhwp_render_options_default() -> UnhwpRenderOptions {
 ///   Caller must free it using `unhwp_free_string`.
 /// - On failure, `*out_error` may be set to an error message.
 ///   Caller must free it using `unhwp_free_string`.
+///
+/// # Safety
+/// All pointer parameters must be valid or null where allowed.
 #[no_mangle]
-pub extern "C" fn unhwp_to_markdown(
+pub unsafe extern "C" fn unhwp_to_markdown(
     path: *const c_char,
     out_markdown: *mut *mut c_char,
     out_error: *mut *mut c_char,
@@ -262,8 +276,11 @@ pub extern "C" fn unhwp_to_markdown(
 /// # Returns
 /// - UNHWP_OK (0) on success
 /// - Error code on failure
+///
+/// # Safety
+/// All pointer parameters must be valid or null where allowed.
 #[no_mangle]
-pub extern "C" fn unhwp_to_markdown_with_cleanup(
+pub unsafe extern "C" fn unhwp_to_markdown_with_cleanup(
     path: *const c_char,
     out_markdown: *mut *mut c_char,
     out_error: *mut *mut c_char,
@@ -285,8 +302,11 @@ pub extern "C" fn unhwp_to_markdown_with_cleanup(
 /// # Returns
 /// - UNHWP_OK (0) on success
 /// - Error code on failure
+///
+/// # Safety
+/// All pointer parameters must be valid or null where allowed.
 #[no_mangle]
-pub extern "C" fn unhwp_to_markdown_ex(
+pub unsafe extern "C" fn unhwp_to_markdown_ex(
     path: *const c_char,
     render_options: *const UnhwpRenderOptions,
     cleanup_options: *const UnhwpCleanupOptions,
@@ -299,7 +319,7 @@ pub extern "C" fn unhwp_to_markdown_ex(
     }
 
     // Convert path
-    let path_str = match unsafe { CStr::from_ptr(path) }.to_str() {
+    let path_str = match CStr::from_ptr(path).to_str() {
         Ok(s) => s,
         Err(e) => {
             set_error(out_error, &format!("Invalid UTF-8 path: {}", e));
@@ -326,12 +346,12 @@ pub extern "C" fn unhwp_to_markdown_ex(
     let mut rust_render_options = if render_options.is_null() {
         RenderOptions::default()
     } else {
-        unsafe { &*render_options }.to_rust_options()
+        (*render_options).to_rust_options()
     };
 
     // Apply cleanup options
     if !cleanup_options.is_null() {
-        let cleanup = unsafe { &*cleanup_options };
+        let cleanup = &*cleanup_options;
         rust_render_options.cleanup = cleanup.to_rust_options();
     }
 
@@ -347,7 +367,7 @@ pub extern "C" fn unhwp_to_markdown_ex(
     // Return result
     match CString::new(markdown) {
         Ok(cstr) => {
-            unsafe { *out_markdown = cstr.into_raw() };
+            *out_markdown = cstr.into_raw();
             UNHWP_OK
         }
         Err(e) => {
@@ -367,8 +387,11 @@ pub extern "C" fn unhwp_to_markdown_ex(
 /// # Returns
 /// - UNHWP_OK (0) on success
 /// - Error code on failure
+///
+/// # Safety
+/// All pointer parameters must be valid or null where allowed.
 #[no_mangle]
-pub extern "C" fn unhwp_extract_text(
+pub unsafe extern "C" fn unhwp_extract_text(
     path: *const c_char,
     out_text: *mut *mut c_char,
     out_error: *mut *mut c_char,
@@ -379,7 +402,7 @@ pub extern "C" fn unhwp_extract_text(
     }
 
     // Convert path
-    let path_str = match unsafe { CStr::from_ptr(path) }.to_str() {
+    let path_str = match CStr::from_ptr(path).to_str() {
         Ok(s) => s,
         Err(e) => {
             set_error(out_error, &format!("Invalid UTF-8 path: {}", e));
@@ -391,7 +414,7 @@ pub extern "C" fn unhwp_extract_text(
     match crate::extract_text(path_str) {
         Ok(text) => match CString::new(text) {
             Ok(cstr) => {
-                unsafe { *out_text = cstr.into_raw() };
+                *out_text = cstr.into_raw();
                 UNHWP_OK
             }
             Err(e) => {
@@ -1050,12 +1073,14 @@ mod tests {
 
     #[test]
     fn test_null_handling() {
-        // Test null path
-        assert_eq!(unhwp_detect_format(ptr::null()), FORMAT_UNKNOWN);
+        unsafe {
+            // Test null path
+            assert_eq!(unhwp_detect_format(ptr::null()), FORMAT_UNKNOWN);
 
-        // Test null output pointer
-        let path = CString::new("test.hwp").unwrap();
-        let result = unhwp_to_markdown(path.as_ptr(), ptr::null_mut(), ptr::null_mut());
-        assert_eq!(result, UNHWP_ERR_INVALID_ARG);
+            // Test null output pointer
+            let path = CString::new("test.hwp").unwrap();
+            let result = unhwp_to_markdown(path.as_ptr(), ptr::null_mut(), ptr::null_mut());
+            assert_eq!(result, UNHWP_ERR_INVALID_ARG);
+        }
     }
 }

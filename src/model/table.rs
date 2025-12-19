@@ -158,18 +158,13 @@ pub enum VerticalAlignment {
 }
 
 /// Column width specification.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Default)]
 pub enum ColumnWidth {
     /// Automatic width
+    #[default]
     Auto,
     /// Fixed width in pixels
     Pixels(u32),
     /// Percentage of table width
     Percent(f32),
-}
-
-impl Default for ColumnWidth {
-    fn default() -> Self {
-        Self::Auto
-    }
 }

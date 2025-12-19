@@ -135,18 +135,13 @@ impl RenderOptions {
 }
 
 /// Fallback modes for tables with merged cells.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TableFallback {
     /// Render as HTML table with rowspan/colspan.
+    #[default]
     Html,
     /// Render as simplified Markdown table (ignore merges).
     SimplifiedMarkdown,
     /// Skip tables with merged cells entirely.
     Skip,
-}
-
-impl Default for TableFallback {
-    fn default() -> Self {
-        Self::Html
-    }
 }

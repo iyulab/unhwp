@@ -212,9 +212,9 @@ impl ParagraphContext {
 fn parse_para_text(
     data: &[u8],
     context: &mut ParagraphContext,
-    pending_controls: &mut Vec<Record>,
+    pending_controls: &mut [Record],
 ) -> Result<()> {
-    if data.len() % 2 != 0 {
+    if !data.len().is_multiple_of(2) {
         return Err(crate::error::Error::InvalidData(
             "PARA_TEXT data must be even length".into(),
         ));

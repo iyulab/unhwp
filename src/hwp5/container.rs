@@ -128,7 +128,7 @@ fn decompress_stream(data: &[u8]) -> Result<Vec<u8>> {
 
 /// Decodes UTF-16LE bytes to a String.
 fn decode_utf16le(data: &[u8]) -> Result<String> {
-    if data.len() % 2 != 0 {
+    if !data.len().is_multiple_of(2) {
         return Err(Error::Encoding("Invalid UTF-16LE data length".into()));
     }
 
