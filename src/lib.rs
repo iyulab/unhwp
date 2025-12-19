@@ -34,9 +34,11 @@
 //! - `hwp3`: Legacy HWP 3.x format support
 //! - `async`: Async I/O support with Tokio
 
+pub mod cleanup;
 pub mod detect;
 pub mod equation;
 pub mod error;
+pub mod ffi;
 pub mod model;
 pub mod parse_options;
 pub mod render;
@@ -54,6 +56,7 @@ pub mod hwp3;
 pub mod async_api;
 
 // Re-exports
+pub use cleanup::{cleanup, CleanupOptions};
 pub use detect::{detect_format, detect_format_from_bytes, detect_format_from_path, FormatType};
 pub use error::{Error, Result};
 pub use model::Document;

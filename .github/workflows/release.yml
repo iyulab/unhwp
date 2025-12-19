@@ -1,0 +1,172 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Cargo.toml'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check-version:
+    name: Check Version Change
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+      should_release: ${{ steps.check.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Get version from Cargo.toml
+        id: get_version
+        run: |
+          VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Check if version changed
+        id: check
+        run: |
+          git diff HEAD~1 HEAD -- Cargo.toml | grep -q '^+version = ' && echo "should_release=true" >> $GITHUB_OUTPUT || echo "should_release=false" >> $GITHUB_OUTPUT
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: check-version
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            lib_name: unhwp.dll
+            cli_name: unhwp-cli.exe
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            lib_name: libunhwp.so
+            cli_name: unhwp-cli
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            lib_name: libunhwp.dylib
+            cli_name: unhwp-cli
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            lib_name: libunhwp.dylib
+            cli_name: unhwp-cli
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Build release
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Prepare artifacts (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.lib_name }}" -Destination "artifacts/"
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.cli_name }}" -Destination "artifacts/"
+
+      - name: Prepare artifacts (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          mkdir -p artifacts
+          cp "target/${{ matrix.target }}/release/${{ matrix.lib_name }}" artifacts/
+          cp "target/${{ matrix.target }}/release/${{ matrix.cli_name }}" artifacts/
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: unhwp-${{ matrix.target }}
+          path: artifacts/
+
+  publish-crates:
+    name: Publish to crates.io
+    needs: [check-version, build]
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-action@stable
+
+      - name: Publish to crates.io
+        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  release:
+    name: Create GitHub Release
+    needs: [check-version, build]
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          cd artifacts
+          for dir in */; do
+            target="${dir%/}"
+            target="${target#unhwp-}"
+            cd "$dir"
+            if [[ "$target" == *"windows"* ]]; then
+              zip "../unhwp-$target.zip" *
+            else
+              tar -czvf "../unhwp-$target.tar.gz" *
+            fi
+            cd ..
+          done
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.check-version.outputs.version }}
+          name: Release v${{ needs.check-version.outputs.version }}
+          body: |
+            ## unhwp v${{ needs.check-version.outputs.version }}
+
+            ### Downloads
+
+            | Platform | Architecture | File |
+            |----------|--------------|------|
+            | Windows | x64 | `unhwp-x86_64-pc-windows-msvc.zip` |
+            | Linux | x64 | `unhwp-x86_64-unknown-linux-gnu.tar.gz` |
+            | macOS | Intel | `unhwp-x86_64-apple-darwin.tar.gz` |
+            | macOS | Apple Silicon | `unhwp-aarch64-apple-darwin.tar.gz` |
+
+            ### Contents
+
+            - `unhwp.dll` / `libunhwp.so` / `libunhwp.dylib` - C-ABI library for FFI integration (C#, Python, etc.)
+            - `unhwp-cli` - Command-line tool
+
+            ### Installation
+
+            #### Rust/Cargo
+            ```bash
+            cargo install unhwp
+            ```
+
+            #### C# / .NET
+            Download the appropriate library for your platform and follow the [C# Integration Guide](https://github.com/iyulab/unhwp/blob/main/docs/csharp-integration.md).
+          files: |
+            artifacts/*.zip
+            artifacts/*.tar.gz
+          draft: false
+          prerelease: false

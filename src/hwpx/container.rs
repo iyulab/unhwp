@@ -6,6 +6,7 @@ use std::path::Path;
 use zip::ZipArchive;
 
 /// HWPX container paths.
+#[allow(dead_code)]
 mod paths {
     pub const MIMETYPE: &str = "mimetype";
     pub const CONTENT_HPF: &str = "Contents/content.hpf";

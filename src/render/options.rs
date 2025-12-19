@@ -1,5 +1,6 @@
 //! Rendering options for Markdown output.
 
+use crate::cleanup::CleanupOptions;
 use std::path::PathBuf;
 
 /// Options for Markdown rendering.
@@ -41,6 +42,10 @@ pub struct RenderOptions {
 
     /// Whether to escape special Markdown characters in text.
     pub escape_special_chars: bool,
+
+    /// Cleanup options for purifying output for LLM training.
+    /// If None, no cleanup is performed.
+    pub cleanup: Option<CleanupOptions>,
 }
 
 impl Default for RenderOptions {
@@ -57,6 +62,7 @@ impl Default for RenderOptions {
             use_atx_headers: true,
             paragraph_spacing: true,
             escape_special_chars: false,
+            cleanup: None,
         }
     }
 }
@@ -94,6 +100,36 @@ impl RenderOptions {
     /// Disables paragraph spacing.
     pub fn without_paragraph_spacing(mut self) -> Self {
         self.paragraph_spacing = false;
+        self
+    }
+
+    /// Enables cleanup with default options.
+    ///
+    /// This applies a 4-stage cleanup pipeline to purify markdown output:
+    /// 1. String normalization (Unicode, bullets, control chars)
+    /// 2. Line-based cleaning (page numbers, headers, TOC)
+    /// 3. Structural filtering (empty tags)
+    /// 4. Final normalization (newlines, whitespace)
+    pub fn with_cleanup(mut self) -> Self {
+        self.cleanup = Some(CleanupOptions::default());
+        self
+    }
+
+    /// Enables cleanup with custom options.
+    pub fn with_cleanup_options(mut self, options: CleanupOptions) -> Self {
+        self.cleanup = Some(options);
+        self
+    }
+
+    /// Enables minimal cleanup (only essential normalization).
+    pub fn with_minimal_cleanup(mut self) -> Self {
+        self.cleanup = Some(CleanupOptions::minimal());
+        self
+    }
+
+    /// Enables aggressive cleanup (maximum purification).
+    pub fn with_aggressive_cleanup(mut self) -> Self {
+        self.cleanup = Some(CleanupOptions::aggressive());
         self
     }
 }

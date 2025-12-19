@@ -3,8 +3,7 @@
 use super::record::{Record, RecordIterator, TagId};
 use crate::error::Result;
 use crate::model::{
-    Equation, InlineContent, Paragraph, ParagraphStyle, Section, StyleRegistry, Table, TextRun,
-    TextStyle,
+    InlineContent, Paragraph, ParagraphStyle, Section, StyleRegistry, Table, TextRun, TextStyle,
 };
 
 /// Control characters in HWP text.

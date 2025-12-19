@@ -9,7 +9,7 @@ mod styles;
 
 pub use container::HwpxContainer;
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::model::Document;
 use rayon::prelude::*;
 use std::io::{Read, Seek};

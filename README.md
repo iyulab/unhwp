@@ -2,6 +2,7 @@
 
 [![Crates.io](https://img.shields.io/crates/v/unhwp.svg)](https://crates.io/crates/unhwp)
 [![Documentation](https://docs.rs/unhwp/badge.svg)](https://docs.rs/unhwp)
+[![CI](https://github.com/iyulab/unhwp/actions/workflows/ci.yml/badge.svg)](https://github.com/iyulab/unhwp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A high-performance Rust library for extracting HWP/HWPX Korean word processor documents into structured Markdown with assets.
@@ -9,11 +10,37 @@ A high-performance Rust library for extracting HWP/HWPX Korean word processor do
 ## Features
 
 - **Multi-format support**: HWP 5.0 (OLE) and HWPX (XML/ZIP)
+- **Multiple output formats**: Markdown, Plain Text, JSON (with full metadata)
 - **Structure preservation**: Headings, lists, tables, inline formatting
 - **Asset extraction**: Images and binary resources
+- **C-ABI FFI**: Native library for C#, Python, and other languages
 - **Parallel processing**: Uses Rayon for multi-section documents
 - **Async support**: Optional Tokio integration
-- **Builder API**: Fluent configuration interface
+
+## Installation
+
+### Rust
+
+```bash
+cargo add unhwp
+```
+
+### CLI
+
+```bash
+cargo install unhwp
+```
+
+### Pre-built Binaries
+
+Download from [GitHub Releases](https://github.com/iyulab/unhwp/releases):
+
+| Platform | Architecture | File |
+|----------|--------------|------|
+| Windows | x64 | `unhwp-x86_64-pc-windows-msvc.zip` |
+| Linux | x64 | `unhwp-x86_64-unknown-linux-gnu.tar.gz` |
+| macOS | Intel | `unhwp-x86_64-apple-darwin.tar.gz` |
+| macOS | Apple Silicon | `unhwp-aarch64-apple-darwin.tar.gz` |
 
 ## Quick Start
 
@@ -33,6 +60,33 @@ fn main() -> unhwp::Result<()> {
 }
 ```
 
+## Output Formats
+
+unhwp provides four complementary output formats:
+
+| Format | Method | Description |
+|--------|--------|-------------|
+| **RawContent** | `doc.raw_content()` | JSON with full metadata, styles, structure |
+| **RawText** | `doc.plain_text()` | Pure text without formatting |
+| **Markdown** | `to_markdown()` | Structured Markdown |
+| **Images** | `doc.resources` | Extracted binary assets |
+
+### RawContent (JSON)
+
+Get the complete document structure with all metadata:
+
+```rust
+let doc = unhwp::parse_file("document.hwp")?;
+let json = doc.raw_content();
+
+// JSON includes:
+// - metadata: title, author, created, modified
+// - sections: paragraphs, tables
+// - styles: bold, italic, underline, font, color
+// - tables: rows, cells, colspan, rowspan
+// - images, equations, links
+```
+
 ## Builder API
 
 ```rust
@@ -48,34 +102,26 @@ let markdown = Unhwp::new()
     .to_markdown()?;
 ```
 
-## Async Support
+## C# / .NET Integration
 
-Enable the `async` feature for non-blocking operations:
+unhwp provides C-ABI compatible bindings for use with P/Invoke:
 
-```toml
-[dependencies]
-unhwp = { version = "0.1", features = ["async"] }
-```
+```csharp
+using var doc = HwpDocument.Parse("document.hwp");
 
-```rust
-use unhwp::async_api::{parse_file, to_markdown, AsyncUnhwp};
+// Access multiple output formats
+string markdown = doc.Markdown;
+string text = doc.RawText;
+string json = doc.RawContent;  // Full structured JSON
 
-#[tokio::main]
-async fn main() -> unhwp::Result<()> {
-    // Simple async parsing
-    let document = parse_file("document.hwp").await?;
-
-    // Async builder
-    let markdown = AsyncUnhwp::new()
-        .with_frontmatter()
-        .parse("document.hwp")
-        .await?
-        .to_markdown()
-        .await?;
-
-    Ok(())
+// Extract images
+foreach (var image in doc.Images)
+{
+    image.SaveTo($"./images/{image.Name}");
 }
 ```
+
+See [C# Integration Guide](docs/csharp-integration.md) for complete documentation.
 
 ## Supported Formats
 
@@ -93,7 +139,7 @@ unhwp maintains document structure during conversion:
 - **Lists**: Ordered and unordered with nesting
 - **Tables**: Cell spans, alignment, HTML fallback for complex tables
 - **Images**: Extracted with Markdown references
-- **Inline styles**: Bold (`**`), italic (`*`), strikethrough (`~~`)
+- **Inline styles**: Bold (`**`), italic (`*`), underline (`<u>`), strikethrough (`~~`)
 - **Equations**: LaTeX or script format
 
 ## Feature Flags
@@ -105,6 +151,19 @@ unhwp maintains document structure during conversion:
 | `hwp3` | Legacy HWP 3.x support (EUC-KR) | ❌ |
 | `async` | Async I/O with Tokio | ❌ |
 
+## CLI Usage
+
+```bash
+# Convert to Markdown
+unhwp-cli document.hwp -o output.md
+
+# Extract plain text
+unhwp-cli document.hwp --text
+
+# Extract with cleanup (for LLM training)
+unhwp-cli document.hwp --cleanup
+```
+
 ## Performance
 
 - Parallel section processing with Rayon
@@ -114,25 +173,6 @@ unhwp maintains document structure during conversion:
 Run benchmarks:
 ```bash
 cargo bench
-```
-
-## API Documentation
-
-```rust
-// Format detection
-let format = unhwp::detect_format_from_path("document.hwp")?;
-
-// Full document model access
-let document = unhwp::parse_file("document.hwp")?;
-println!("Sections: {}", document.sections.len());
-println!("Paragraphs: {}", document.paragraph_count());
-
-// Custom render options
-use unhwp::RenderOptions;
-let options = RenderOptions::default()
-    .with_image_dir("./images")
-    .with_frontmatter();
-let markdown = unhwp::render::render_markdown(&document, &options)?;
 ```
 
 ## License

@@ -1,9 +1,10 @@
 //! Table structures for document model.
 
 use super::{Alignment, Paragraph};
+use serde::Serialize;
 
 /// A table in the document.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct Table {
     /// Table rows
     pub rows: Vec<TableRow>,
@@ -61,7 +62,7 @@ impl Table {
 }
 
 /// A row in a table.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct TableRow {
     /// Cells in this row
     pub cells: Vec<TableCell>,
@@ -85,7 +86,7 @@ impl TableRow {
 }
 
 /// A cell in a table.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct TableCell {
     /// Content paragraphs within this cell
     pub content: Vec<Paragraph>,
@@ -146,7 +147,7 @@ impl TableCell {
 }
 
 /// Vertical alignment options for table cells.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub enum VerticalAlignment {
     #[default]
     Top,
@@ -155,7 +156,7 @@ pub enum VerticalAlignment {
 }
 
 /// Column width specification.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub enum ColumnWidth {
     /// Automatic width
     Auto,

@@ -54,6 +54,11 @@ impl MarkdownRenderer {
             }
         }
 
+        // Apply cleanup pipeline if enabled
+        if let Some(ref cleanup_options) = renderer.options.cleanup {
+            output = crate::cleanup::cleanup(&output, cleanup_options);
+        }
+
         Ok(output)
     }
 
@@ -222,6 +227,10 @@ impl MarkdownRenderer {
         if style.italic {
             prefix.push('*');
             suffix.insert(0, '*');
+        }
+        if style.underline {
+            prefix.push_str("<u>");
+            suffix.insert_str(0, "</u>");
         }
         if style.strikethrough {
             prefix.push_str("~~");

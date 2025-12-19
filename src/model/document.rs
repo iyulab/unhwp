@@ -1,10 +1,11 @@
 //! Document structure and metadata.
 
 use super::{Paragraph, StyleRegistry, Table};
+use serde::Serialize;
 use std::collections::HashMap;
 
 /// A complete document parsed from HWP/HWPX.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct Document {
     /// Document metadata
     pub metadata: Metadata,
@@ -59,10 +60,24 @@ impl Document {
         }
         result.join("\n")
     }
+
+    /// Returns structured content as JSON with full metadata.
+    ///
+    /// This provides access to the full document structure including:
+    /// - Document metadata (title, author, dates)
+    /// - Paragraph styles (heading level, alignment, list type)
+    /// - Text formatting (bold, italic, underline, font, color, etc.)
+    /// - Table structure (rows, cells, colspan, rowspan)
+    /// - Equations, images, and links
+    ///
+    /// The output is valid JSON that can be parsed by any JSON library.
+    pub fn raw_content(&self) -> String {
+        serde_json::to_string_pretty(self).unwrap_or_else(|_| "{}".to_string())
+    }
 }
 
 /// Document metadata.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct Metadata {
     /// Document title
     pub title: Option<String>,
@@ -83,7 +98,7 @@ pub struct Metadata {
 }
 
 /// A section of the document.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct Section {
     /// Section index (0-based)
     pub index: usize,
@@ -118,7 +133,7 @@ impl Section {
 }
 
 /// A block-level content element.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub enum Block {
     /// A paragraph
     Paragraph(Paragraph),
@@ -127,7 +142,7 @@ pub enum Block {
 }
 
 /// A binary resource (image, OLE object, etc.).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Resource {
     /// Resource type
     pub resource_type: ResourceType,
@@ -179,7 +194,7 @@ impl Resource {
 }
 
 /// Type of binary resource.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum ResourceType {
     /// Image file (PNG, JPEG, etc.)
     Image,

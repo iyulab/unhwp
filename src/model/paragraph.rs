@@ -1,9 +1,10 @@
 //! Paragraph and text run definitions.
 
 use super::{ParagraphStyle, TextStyle};
+use serde::Serialize;
 
 /// A text run with uniform formatting.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TextRun {
     /// The text content
     pub text: String,
@@ -35,7 +36,7 @@ impl TextRun {
 }
 
 /// Content that can appear within a paragraph.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum InlineContent {
     /// Plain or formatted text
     Text(TextRun),
@@ -52,7 +53,7 @@ pub enum InlineContent {
 }
 
 /// A paragraph containing inline content.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct Paragraph {
     /// Paragraph style
     pub style: ParagraphStyle,
@@ -117,7 +118,7 @@ impl Paragraph {
 }
 
 /// Reference to an embedded image.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ImageRef {
     /// Resource identifier (key in Document.resources)
     pub id: String,
@@ -142,7 +143,7 @@ impl ImageRef {
 }
 
 /// An equation/formula.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Equation {
     /// Original equation script (EQEdit format for HWP)
     pub script: String,

@@ -1,9 +1,10 @@
 //! Style definitions for text and paragraphs.
 
+use serde::Serialize;
 use std::collections::HashMap;
 
 /// Text formatting style.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct TextStyle {
     /// Bold text
     pub bold: bool,
@@ -61,7 +62,7 @@ impl TextStyle {
 }
 
 /// Paragraph-level style.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct ParagraphStyle {
     /// Heading level (0 = normal paragraph, 1-6 = heading levels)
     pub heading_level: u8,
@@ -105,7 +106,7 @@ impl ParagraphStyle {
 }
 
 /// Text alignment options.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub enum Alignment {
     #[default]
     Left,
@@ -115,7 +116,7 @@ pub enum Alignment {
 }
 
 /// List style types.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum ListStyle {
     /// Ordered list (1, 2, 3, ...)
     Ordered,
@@ -126,7 +127,7 @@ pub enum ListStyle {
 }
 
 /// Style registry for resolving style references.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct StyleRegistry {
     /// Character (text) styles by ID
     pub char_styles: HashMap<u32, TextStyle>,

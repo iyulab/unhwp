@@ -32,8 +32,22 @@ quick-xml = "0.37"
 # Error handling
 thiserror = "2.0"
 
+# JSON serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
 # Zero-copy buffers
 bytes = "1.9"
+
+# Regular expressions (cleanup pipeline)
+regex = "1.11"
+
+# Unicode normalization (cleanup pipeline)
+unicode-normalization = "0.1"
+
+# Markdown parsing (cleanup pipeline Stage 3)
+pulldown-cmark = { version = "0.12", default-features = false }
+pulldown-cmark-to-cmark = "18"
 
 # Parallel processing
 rayon = "1.10"
@@ -52,3 +66,10 @@ rand = "0.8"
 [[bench]]
 name = "parse_benchmark"
 harness = false
+
+[[bin]]
+name = "unhwp-cli"
+path = "src/bin/main.rs"
+
+[lib]
+crate-type = ["lib", "cdylib"]

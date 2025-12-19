@@ -1,8 +1,12 @@
 //! Control parsing for HWP 5.0 (tables, images, equations).
+//!
+//! This module is reserved for future implementation of control elements.
+
+#![allow(dead_code)]
 
 use super::record::Record;
 use crate::error::Result;
-use crate::model::{Table, TableRow, TableCell, Paragraph};
+use crate::model::{Paragraph, Table, TableCell, TableRow};
 
 /// Control types identified by 4-character codes.
 pub mod ctrl_id {
@@ -58,9 +62,9 @@ impl ControlParser {
 
     /// Parses a table control.
     pub fn parse_table(
-        ctrl_header: &Record,
+        _ctrl_header: &Record,
         list_header: &Record,
-        cell_records: &[Record],
+        _cell_records: &[Record],
     ) -> Result<Table> {
         // ListHeader contains row/column info
         let data = list_header.data();
@@ -118,7 +122,7 @@ impl ControlParser {
 
     /// Parses a drawing object (GSO) to extract image reference.
     pub fn parse_image(record: &Record) -> Result<Option<String>> {
-        let data = record.data();
+        let _data = record.data();
 
         // GSO contains various shape components
         // Picture component has BinData reference

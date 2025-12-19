@@ -9,6 +9,7 @@ const HWP_SIGNATURE: &[u8] = b"HWP Document File";
 const FILE_HEADER_SIZE: usize = 256;
 
 /// Property flags bit positions.
+#[allow(dead_code)]
 mod flags {
     /// Document is compressed
     pub const COMPRESSED: u32 = 1 << 0;

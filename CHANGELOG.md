@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+#### RawContent JSON API
+- `Document::raw_content()` method returning JSON with full document structure
+- `unhwp_result_get_raw_content()` FFI function for C#/Python integration
+- Complete metadata, styles, and formatting in JSON output
+
+#### Markdown Renderer Improvements
+- Underline support (`<u>text</u>`)
+
+#### C# Integration
+- `HwpDocument.RawContent` property for accessing structured JSON
+- Updated documentation with JSON parsing examples
+
+#### CI/CD
+- GitHub Actions workflow for CI (test, lint)
+- Automated release on Cargo.toml version change
+- Multi-platform binary builds (Windows, Linux, macOS Intel/ARM)
+- Automatic publishing to crates.io and GitHub Releases
+
+### Changed
+- Renamed CLI binary from `unhwp` to `unhwp-cli` to avoid name collision with library
+
+### Fixed
+- Resolved unused code warnings with `#[allow(dead_code)]` for reserved code
+- Fixed unused imports in hwpx and hwp5 modules
+
 #### HWP 3.x Legacy Support (feature: `hwp3`)
 - HWP 3.x binary format parser with 128-byte header parsing
 - EUC-KR/CP949 text encoding support via `encoding_rs`
