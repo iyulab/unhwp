@@ -88,11 +88,28 @@ impl Hwp5Container {
         Ok(sections)
     }
 
-    /// Lists all BinData entries.
     pub fn list_bindata(&self) -> Result<Vec<String>> {
-        // BinData entries are typically named BIN0001.xxx, BIN0002.xxx, etc.
-        // For now, return empty - will implement when iterating storage
-        Ok(Vec::new())
+        let cfb = self.cfb.borrow_mut();
+
+        // Check if BinData storage exists
+        if !cfb.is_storage("/BinData") {
+            return Ok(Vec::new());
+        }
+
+        let mut resources = Vec::new();
+        for entry in cfb
+            .read_storage("/BinData")
+            .map_err(|e| Error::MissingComponent(format!("BinData: {}", e)))?
+        {
+            if entry.is_stream() {
+                resources.push(entry.name().to_string());
+            }
+        }
+
+        // Sort for consistent ordering (BIN0001.xxx, BIN0002.xxx, etc.)
+        resources.sort();
+
+        Ok(resources)
     }
 
     /// Reads a BinData entry.

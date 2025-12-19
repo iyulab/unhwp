@@ -135,6 +135,11 @@ pub struct StyleRegistry {
     pub para_styles: HashMap<u32, ParagraphStyle>,
     /// Named styles
     pub named_styles: HashMap<String, u32>,
+    /// BinData index to filename mapping (for HWP5 images)
+    /// Key: 0-based index in DocInfo BinData records
+    /// Value: filename like "BIN0001.bmp"
+    #[serde(skip)]
+    pub bindata_mapping: HashMap<u32, String>,
 }
 
 impl StyleRegistry {
@@ -161,5 +166,15 @@ impl StyleRegistry {
     /// Gets a paragraph style by ID.
     pub fn get_para_style(&self, id: u32) -> Option<&ParagraphStyle> {
         self.para_styles.get(&id)
+    }
+
+    /// Registers a BinData index to filename mapping.
+    pub fn register_bindata(&mut self, index: u32, filename: String) {
+        self.bindata_mapping.insert(index, filename);
+    }
+
+    /// Gets the filename for a BinData index.
+    pub fn get_bindata_filename(&self, index: u32) -> Option<&String> {
+        self.bindata_mapping.get(&index)
     }
 }

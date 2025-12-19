@@ -11,11 +11,16 @@ pub fn parse_docinfo(data: &[u8], registry: &mut StyleRegistry) -> Result<()> {
     let mut face_names: Vec<String> = Vec::new();
     let mut char_shapes: Vec<CharShapeData> = Vec::new();
     let mut para_shapes: Vec<ParaShapeData> = Vec::new();
-
     for record in RecordIterator::new(data) {
         let record = record?;
 
         match record.tag() {
+            TagId::BinData => {
+                // Parse BinData record to get binId → filename mapping
+                if let Some((bin_id, filename)) = parse_bindata_record(&record) {
+                    registry.register_bindata(bin_id as u32, filename);
+                }
+            }
             TagId::FaceName => {
                 if let Ok(name) = parse_face_name(&record) {
                     face_names.push(name);
@@ -302,4 +307,48 @@ fn decode_utf16le_string(data: &[u8]) -> Result<String> {
     }
 
     String::from_utf16(&u16_values).map_err(|e| crate::error::Error::Encoding(e.to_string()))
+}
+
+/// Parses a BinData record to extract the binId and filename.
+///
+/// BinData structure for embedded files:
+/// - type (2 bytes): 0=link, 1=embedding, 2=storage
+/// - binId (2 bytes): ID used in filename (BINxxxx)
+/// - extLen (2 bytes): length of extension string
+/// - ext (extLen * 2 bytes): extension in UTF-16LE
+///
+/// Returns (binId, filename) tuple if successful.
+fn parse_bindata_record(record: &Record) -> Option<(u16, String)> {
+    let data = record.data();
+
+    if data.len() < 6 {
+        return None;
+    }
+
+    let type_info = u16::from_le_bytes([data[0], data[1]]);
+    let bin_type = type_info & 0x0F;
+
+    // Only process embedded (1) or storage (2) types
+    if bin_type != 1 && bin_type != 2 {
+        return None;
+    }
+
+    let bin_id = u16::from_le_bytes([data[2], data[3]]);
+    let ext_len = u16::from_le_bytes([data[4], data[5]]) as usize;
+
+    // Extract extension
+    let ext = if ext_len > 0 && 6 + ext_len * 2 <= data.len() {
+        let ext_data = &data[6..6 + ext_len * 2];
+        let u16_values: Vec<u16> = ext_data
+            .chunks_exact(2)
+            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .take_while(|&v| v != 0)
+            .collect();
+        String::from_utf16_lossy(&u16_values)
+    } else {
+        String::from("bin")
+    };
+
+    // Format filename: BIN + 4-digit hex + extension
+    Some((bin_id, format!("BIN{:04X}.{}", bin_id, ext)))
 }

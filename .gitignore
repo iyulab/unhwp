@@ -2,6 +2,8 @@
 local-docs/
 test-files/
 CLAUDE.md
+.serena/
+examples/
 
 # Added by cargo
 

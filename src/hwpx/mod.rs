@@ -155,11 +155,13 @@ impl HwpxParser {
 
                 let mime_type = guess_mime_type(&filename);
 
+                let size = data.len();
                 let resource = crate::model::Resource {
                     resource_type: crate::model::ResourceType::Image,
                     filename: Some(filename.clone()),
                     mime_type,
                     data,
+                    size,
                 };
 
                 document.resources.insert(filename, resource);

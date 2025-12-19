@@ -3,7 +3,8 @@
 use super::record::{Record, RecordIterator, TagId};
 use crate::error::Result;
 use crate::model::{
-    InlineContent, Paragraph, ParagraphStyle, Section, StyleRegistry, Table, TextRun, TextStyle,
+    ImageRef, InlineContent, Paragraph, ParagraphStyle, Section, StyleRegistry, Table, TextRun,
+    TextStyle,
 };
 
 /// Control characters in HWP text.
@@ -68,7 +69,8 @@ mod control_char {
 pub fn parse_section(data: &[u8], section_index: usize, styles: &StyleRegistry) -> Result<Section> {
     let mut section = Section::new(section_index);
     let mut paragraph_context = ParagraphContext::new();
-    let mut pending_controls: Vec<Record> = Vec::new();
+    // Section-wide picture counter (1-based to match BinId)
+    let mut picture_counter: u32 = 0;
 
     for record in RecordIterator::new(data) {
         let record = record?;
@@ -97,12 +99,11 @@ pub fn parse_section(data: &[u8], section_index: usize, styles: &StyleRegistry) 
                 }
 
                 paragraph_context.start(style);
-                pending_controls.clear();
             }
 
             TagId::ParaText => {
                 let text_data = record.data();
-                parse_para_text(text_data, &mut paragraph_context, &mut pending_controls)?;
+                parse_para_text(text_data, &mut paragraph_context, &mut picture_counter, styles)?;
             }
 
             TagId::ParaCharShape => {
@@ -110,14 +111,9 @@ pub fn parse_section(data: &[u8], section_index: usize, styles: &StyleRegistry) 
                 parse_char_shape_positions(&record, &mut paragraph_context, styles)?;
             }
 
-            TagId::CtrlHeader => {
-                // Store control for later processing
-                pending_controls.push(record);
-            }
-
             TagId::Table | TagId::ListHeader => {
                 // Table encountered - parse and add to section
-                if let Some(table) = parse_table_from_records(&record, &pending_controls, styles)? {
+                if let Some(table) = parse_table_from_records(&record, styles)? {
                     // If we have a pending paragraph, add it first
                     if let Some(para) = paragraph_context.finish() {
                         section.content.push(crate::model::Block::Paragraph(para));
@@ -127,7 +123,7 @@ pub fn parse_section(data: &[u8], section_index: usize, styles: &StyleRegistry) 
             }
 
             _ => {
-                // Skip other records
+                // Skip other records (CtrlHeader, ShapeComponent, ShapeComponentPicture, etc.)
             }
         }
     }
@@ -180,6 +176,12 @@ impl ParagraphContext {
         self.content.push(InlineContent::LineBreak);
     }
 
+    fn push_image(&mut self, filename: &str) {
+        self.flush_text();
+        self.content
+            .push(InlineContent::Image(ImageRef::new(filename)));
+    }
+
     fn flush_text(&mut self) {
         if !self.current_text.is_empty() {
             let text = std::mem::take(&mut self.current_text);
@@ -212,7 +214,8 @@ impl ParagraphContext {
 fn parse_para_text(
     data: &[u8],
     context: &mut ParagraphContext,
-    pending_controls: &mut [Record],
+    picture_counter: &mut u32,
+    styles: &StyleRegistry,
 ) -> Result<()> {
     if !data.len().is_multiple_of(2) {
         return Err(crate::error::Error::InvalidData(
@@ -221,7 +224,6 @@ fn parse_para_text(
     }
 
     let mut i = 0;
-    let mut control_index = 0;
 
     while i + 1 < data.len() {
         let ch = u16::from_le_bytes([data[i], data[i + 1]]);
@@ -233,13 +235,26 @@ fn parse_para_text(
             }
 
             control_char::EXTENDED_CONTROL => {
-                // Skip next 7 WCHARs (14 bytes) - extended control data
+                // EXTENDED_CONTROL is followed by 7 more WCHARs (14 bytes) of inline data
+                // Structure: [instance_id(4)] [ctrl_type(4)] [reserved(6)]
+                if i + 14 > data.len() {
+                    break;
+                }
+
                 context.flush_text();
 
-                // Process the control if we have one pending
-                if control_index < pending_controls.len() {
-                    // Control processing would go here
-                    control_index += 1;
+                // Check control type at offset 0-3 of the inline data
+                // GSO identifier: " osg" = [0x20, 0x6F, 0x73, 0x67]
+                let ctrl_type = &data[i..i + 4];
+                let is_gso = ctrl_type == b" osg" || ctrl_type == b"gso ";
+
+                if is_gso {
+                    *picture_counter += 1;
+                    // Only add image if bindata exists in registry
+                    if let Some(filename) = styles.get_bindata_filename(*picture_counter) {
+                        context.push_image(filename);
+                    }
+                    // Skip GSO controls without bindata (equations, OLE, etc.)
                 }
 
                 i += 14; // Skip remaining 7 WCHARs
@@ -351,7 +366,6 @@ fn parse_char_shape_positions(
 /// Attempts to parse a table from control records.
 fn parse_table_from_records(
     _table_record: &Record,
-    _controls: &[Record],
     _styles: &StyleRegistry,
 ) -> Result<Option<Table>> {
     // Table parsing is complex - implement basic structure

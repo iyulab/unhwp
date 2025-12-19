@@ -208,6 +208,7 @@ fn convert_document(
     // Render options
     let mut options = RenderOptions::default()
         .with_image_dir("images/")
+        .with_image_prefix("images/")
         .with_frontmatter();
 
     // Apply cleanup options

@@ -129,11 +129,34 @@ impl Hwp5Parser {
 
         for name in resources {
             if let Ok(data) = self.container.read_bindata(&name, self.is_compressed()) {
-                let resource = crate::model::Resource::new(crate::model::ResourceType::Image, data);
+                let mime_type = guess_mime_type(&name);
+                let size = data.len();
+                let resource = crate::model::Resource {
+                    resource_type: crate::model::ResourceType::Image,
+                    filename: Some(name.clone()),
+                    mime_type,
+                    data,
+                    size,
+                };
                 document.resources.insert(name, resource);
             }
         }
 
         Ok(())
+    }
+}
+
+/// Guesses MIME type from filename extension.
+fn guess_mime_type(filename: &str) -> Option<String> {
+    let ext = filename.rsplit('.').next()?.to_lowercase();
+    match ext.as_str() {
+        "bmp" => Some("image/bmp".to_string()),
+        "jpg" | "jpeg" => Some("image/jpeg".to_string()),
+        "png" => Some("image/png".to_string()),
+        "gif" => Some("image/gif".to_string()),
+        "tif" | "tiff" => Some("image/tiff".to_string()),
+        "wmf" => Some("image/x-wmf".to_string()),
+        "emf" => Some("image/x-emf".to_string()),
+        _ => None,
     }
 }

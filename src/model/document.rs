@@ -155,28 +155,35 @@ pub struct Resource {
     pub filename: Option<String>,
     /// MIME type (if known)
     pub mime_type: Option<String>,
-    /// Binary data
+    /// Binary data (excluded from JSON serialization - extracted to separate files)
+    #[serde(skip)]
     pub data: Vec<u8>,
+    /// Size of binary data in bytes
+    pub size: usize,
 }
 
 impl Resource {
     /// Creates a new resource.
     pub fn new(resource_type: ResourceType, data: Vec<u8>) -> Self {
+        let size = data.len();
         Self {
             resource_type,
             filename: None,
             mime_type: None,
             data,
+            size,
         }
     }
 
     /// Creates an image resource.
     pub fn image(data: Vec<u8>, mime_type: impl Into<String>) -> Self {
+        let size = data.len();
         Self {
             resource_type: ResourceType::Image,
             filename: None,
             mime_type: Some(mime_type.into()),
             data,
+            size,
         }
     }
 
