@@ -3,8 +3,8 @@
 use super::record::{Record, RecordIterator, TagId};
 use crate::error::Result;
 use crate::model::{
-    ImageRef, InlineContent, Paragraph, ParagraphStyle, Section, StyleRegistry, Table, TextRun,
-    TextStyle,
+    ImageRef, InlineContent, Paragraph, ParagraphStyle, Section, StyleRegistry, Table, TableCell,
+    TableRow, TextRun, TextStyle,
 };
 
 /// Control characters in HWP text.
@@ -67,16 +67,32 @@ mod control_char {
 
 /// Parses a BodyText section stream into a Section.
 pub fn parse_section(data: &[u8], section_index: usize, styles: &StyleRegistry) -> Result<Section> {
+    // First, collect all records into a Vec for indexed access
+    let records: Vec<Record> = RecordIterator::new(data)
+        .filter_map(|r| r.ok())
+        .collect();
+
     let mut section = Section::new(section_index);
     let mut paragraph_context = ParagraphContext::new();
     // Section-wide picture counter (1-based to match BinId)
     let mut picture_counter: u32 = 0;
+    // Track which records to skip (already processed as part of table)
+    let mut skip_until_idx: usize = 0;
 
-    for record in RecordIterator::new(data) {
-        let record = record?;
+    let mut idx = 0;
+    while idx < records.len() {
+        if idx < skip_until_idx {
+            idx += 1;
+            continue;
+        }
+
+        let record = &records[idx];
 
         match record.tag() {
             TagId::ParaHeader => {
+                // Check if this paragraph is at base level (not inside a table)
+                let base_level = record.level();
+
                 // Finish previous paragraph if any
                 if let Some(para) = paragraph_context.finish() {
                     section.content.push(crate::model::Block::Paragraph(para));
@@ -99,6 +115,7 @@ pub fn parse_section(data: &[u8], section_index: usize, styles: &StyleRegistry) 
                 }
 
                 paragraph_context.start(style);
+                paragraph_context.base_level = base_level;
             }
 
             TagId::ParaText => {
@@ -107,25 +124,36 @@ pub fn parse_section(data: &[u8], section_index: usize, styles: &StyleRegistry) 
             }
 
             TagId::ParaCharShape => {
-                // Maps positions to character shape IDs
-                parse_char_shape_positions(&record, &mut paragraph_context, styles)?;
+                parse_char_shape_positions(record, &mut paragraph_context, styles)?;
             }
 
-            TagId::Table | TagId::ListHeader => {
-                // Table encountered - parse and add to section
-                if let Some(table) = parse_table_from_records(&record, styles)? {
-                    // If we have a pending paragraph, add it first
-                    if let Some(para) = paragraph_context.finish() {
-                        section.content.push(crate::model::Block::Paragraph(para));
-                    }
+            TagId::Table => {
+                // Table record - parse the full table including nested cells
+                let table_level = record.level();
+
+                // Finish any pending paragraph
+                if let Some(para) = paragraph_context.finish() {
+                    section.content.push(crate::model::Block::Paragraph(para));
+                }
+
+                // Find all records belonging to this table
+                let table_end = find_block_end(&records, idx, table_level);
+
+                // Parse table from the collected records
+                if let Some(table) = parse_table_records(&records[idx..table_end], styles) {
                     section.content.push(crate::model::Block::Table(table));
                 }
+
+                // Skip all records that were part of the table
+                skip_until_idx = table_end;
             }
 
             _ => {
-                // Skip other records (CtrlHeader, ShapeComponent, ShapeComponentPicture, etc.)
+                // Skip other records (CtrlHeader, ShapeComponent, etc.)
             }
         }
+
+        idx += 1;
     }
 
     // Don't forget the last paragraph
@@ -136,6 +164,203 @@ pub fn parse_section(data: &[u8], section_index: usize, styles: &StyleRegistry) 
     Ok(section)
 }
 
+/// Finds the end index of a block (table, cell, etc.)
+/// Returns the index of the first record that drops BELOW the base level.
+/// In HWP, table cells (ListHeader) are at the SAME level as the Table record,
+/// so we look for records with level < base_level (not <=).
+fn find_block_end(records: &[Record], start_idx: usize, base_level: u16) -> usize {
+    for i in (start_idx + 1)..records.len() {
+        if records[i].level() < base_level {
+            return i;
+        }
+    }
+    records.len()
+}
+
+/// Parses table records into a Table structure.
+fn parse_table_records(records: &[Record], styles: &StyleRegistry) -> Option<Table> {
+    if records.is_empty() {
+        return None;
+    }
+
+    // First record should be Table tag with table properties
+    let table_record = &records[0];
+    if table_record.tag() != TagId::Table {
+        return None;
+    }
+
+    let data = table_record.data();
+    if data.len() < 14 {
+        return None;
+    }
+
+    // Table record structure:
+    // Offset 0-3: CtrlId (should be "tbl ")
+    // Offset 4-5: Number of rows
+    // Offset 6-7: Number of columns
+    // Offset 8-9: Cell spacing
+    // Offset 10-13: Table left margin, etc.
+    let row_count = u16::from_le_bytes([data[4], data[5]]) as usize;
+    let col_count = u16::from_le_bytes([data[6], data[7]]) as usize;
+
+    if row_count == 0 || col_count == 0 {
+        return None;
+    }
+
+    // Find all cell ListHeaders and their content
+    // In HWP, cells are represented by ListHeader records
+    // The structure is: Table -> (ListHeader -> ParaHeader -> ParaText)*
+    let mut cells_data: Vec<CellData> = Vec::new();
+
+    // Find all ListHeader records that belong to this table
+    let mut i = 1; // Skip the Table record itself
+
+    while i < records.len() {
+        let record = &records[i];
+
+        // ListHeader marks the beginning of a cell
+        if record.tag() == TagId::ListHeader {
+            // Find all records belonging to this cell
+            let cell_end = find_cell_end(records, i, record.level());
+
+            let cell_content = parse_cell_content(&records[i..cell_end], styles);
+            cells_data.push(cell_content);
+            i = cell_end;
+        } else {
+            i += 1;
+        }
+    }
+
+    // Build the table from collected cells
+    let mut table = Table::new();
+    let total_cells = row_count * col_count;
+
+    for row_idx in 0..row_count {
+        let mut row = TableRow::new();
+        row.is_header = row_idx == 0;
+
+        for col_idx in 0..col_count {
+            let cell_idx = row_idx * col_count + col_idx;
+            let cell = if cell_idx < cells_data.len() {
+                let cell_data = &cells_data[cell_idx];
+                TableCell {
+                    content: cell_data.paragraphs.clone(),
+                    rowspan: cell_data.rowspan,
+                    colspan: cell_data.colspan,
+                    ..Default::default()
+                }
+            } else {
+                TableCell::new()
+            };
+            row.cells.push(cell);
+        }
+        table.rows.push(row);
+    }
+
+    // Set header flag if we have at least one row
+    table.has_header = !table.rows.is_empty();
+
+    // If we couldn't parse cells properly but have cell data,
+    // try to infer structure from actual cell count
+    if cells_data.len() > total_cells && total_cells > 0 {
+        // Cells might include merged cell placeholders, keep as is
+    }
+
+    Some(table)
+}
+
+/// Data for a single table cell
+struct CellData {
+    paragraphs: Vec<Paragraph>,
+    rowspan: u32,
+    colspan: u32,
+}
+
+/// Finds the end of a cell (next ListHeader at same level or lower level record)
+fn find_cell_end(records: &[Record], start_idx: usize, cell_level: u16) -> usize {
+    for i in (start_idx + 1)..records.len() {
+        let record = &records[i];
+        // End when we hit another ListHeader at the same level (next cell)
+        // or when we drop below the cell level (end of table)
+        if record.level() < cell_level {
+            return i;
+        }
+        if record.level() == cell_level && record.tag() == TagId::ListHeader {
+            return i;
+        }
+    }
+    records.len()
+}
+
+/// Parses cell content from a slice of records starting with ListHeader
+fn parse_cell_content(records: &[Record], styles: &StyleRegistry) -> CellData {
+    let mut paragraphs = Vec::new();
+    let rowspan = 1u32;
+    let colspan = 1u32;
+
+    if records.is_empty() {
+        return CellData {
+            paragraphs,
+            rowspan,
+            colspan,
+        };
+    }
+
+    // First record is ListHeader with cell properties
+    let list_header = &records[0];
+    let _data = list_header.data();
+
+    // ListHeader structure for table cells:
+    // Offset 0-1: Number of paragraphs
+    // Offset 2-5: TextWidth
+    // For cells, colspan/rowspan is stored in a separate CellSplit record (not ListHeader)
+    // We leave colspan/rowspan as 1 for now - merged cells require additional parsing
+    // TODO: Parse CELL_SPLIT record to get actual rowspan/colspan
+
+    // Parse paragraphs within the cell
+    // Process all remaining records - they belong to this cell
+    let mut para_context = ParagraphContext::new();
+    let mut picture_counter = 0u32;
+
+    for record in records.iter().skip(1) {
+        match record.tag() {
+            TagId::ParaHeader => {
+                if let Some(para) = para_context.finish() {
+                    paragraphs.push(para);
+                }
+
+                let para_shape_id = record.read_u32(0).unwrap_or(0);
+                let style = styles
+                    .get_para_style(para_shape_id)
+                    .cloned()
+                    .unwrap_or_default();
+                para_context.start(style);
+            }
+
+            TagId::ParaText => {
+                let _ = parse_para_text(record.data(), &mut para_context, &mut picture_counter, styles);
+            }
+
+            TagId::ParaCharShape => {
+                let _ = parse_char_shape_positions(record, &mut para_context, styles);
+            }
+
+            _ => {}
+        }
+    }
+
+    // Don't forget the last paragraph
+    if let Some(para) = para_context.finish() {
+        paragraphs.push(para);
+    }
+
+    CellData {
+        paragraphs,
+        rowspan,
+        colspan,
+    }
+}
+
 /// Context for building a paragraph.
 struct ParagraphContext {
     style: ParagraphStyle,
@@ -144,6 +369,7 @@ struct ParagraphContext {
     current_style: TextStyle,
     char_shape_positions: Vec<(usize, u32)>,
     in_paragraph: bool,
+    base_level: u16,
 }
 
 impl ParagraphContext {
@@ -155,6 +381,7 @@ impl ParagraphContext {
             current_style: TextStyle::default(),
             char_shape_positions: Vec::new(),
             in_paragraph: false,
+            base_level: 0,
         }
     }
 
@@ -361,17 +588,4 @@ fn parse_char_shape_positions(
     }
 
     Ok(())
-}
-
-/// Attempts to parse a table from control records.
-fn parse_table_from_records(
-    _table_record: &Record,
-    _styles: &StyleRegistry,
-) -> Result<Option<Table>> {
-    // Table parsing is complex - implement basic structure
-    // Full implementation would recursively parse cell paragraphs
-
-    // For now, return None to skip tables
-    // TODO: Implement full table parsing
-    Ok(None)
 }
