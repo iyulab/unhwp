@@ -77,9 +77,7 @@ pub fn parse_header<R: Read + Seek>(reader: &mut R) -> Result<Hwp3Header> {
 
     // Check signature
     if !buffer.starts_with(HWP3_SIGNATURE) {
-        return Err(Error::InvalidData(
-            "Invalid HWP 3.x signature".into(),
-        ));
+        return Err(Error::InvalidData("Invalid HWP 3.x signature".into()));
     }
 
     // Parse version from signature (e.g., "HWP Document File V3.0")

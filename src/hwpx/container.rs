@@ -1,7 +1,7 @@
 //! ZIP container wrapper for HWPX documents.
 
 use crate::error::{Error, Result};
-use std::io::{Read, Seek, Cursor};
+use std::io::{Cursor, Read, Seek};
 use std::path::Path;
 use zip::ZipArchive;
 
@@ -55,7 +55,8 @@ impl HwpxContainer {
 
     /// Reads a file from the archive as UTF-8 string.
     pub fn read_file(&mut self, path: &str) -> Result<String> {
-        let mut file = self.archive
+        let mut file = self
+            .archive
             .by_name(path)
             .map_err(|_| Error::MissingComponent(path.to_string()))?;
 
@@ -66,7 +67,8 @@ impl HwpxContainer {
 
     /// Reads a binary file from the archive.
     pub fn read_binary(&mut self, path: &str) -> Result<Vec<u8>> {
-        let mut file = self.archive
+        let mut file = self
+            .archive
             .by_name(path)
             .map_err(|_| Error::MissingComponent(path.to_string()))?;
 

@@ -2,12 +2,12 @@
 //!
 //! This module handles parsing of HWP 5.0 documents stored in OLE containers.
 
+mod bodytext;
 mod container;
+mod control;
+mod docinfo;
 mod header;
 mod record;
-mod docinfo;
-mod bodytext;
-mod control;
 
 pub use container::Hwp5Container;
 pub use header::FileHeader;
@@ -80,10 +80,9 @@ impl Hwp5Parser {
 
     /// Parses DocInfo stream for style definitions.
     fn parse_docinfo(&self, document: &mut Document) -> Result<()> {
-        let data = self.container.read_stream_decompressed(
-            "DocInfo",
-            self.is_compressed(),
-        )?;
+        let data = self
+            .container
+            .read_stream_decompressed("DocInfo", self.is_compressed())?;
 
         docinfo::parse_docinfo(&data, &mut document.styles)?;
         Ok(())
@@ -114,9 +113,7 @@ impl Hwp5Parser {
         // Parse sections in parallel
         let mut sections: Vec<_> = section_data
             .par_iter()
-            .filter_map(|(index, data)| {
-                bodytext::parse_section(data, *index, &styles).ok()
-            })
+            .filter_map(|(index, data)| bodytext::parse_section(data, *index, &styles).ok())
             .collect();
 
         // Sort by index to maintain order
@@ -132,10 +129,7 @@ impl Hwp5Parser {
 
         for name in resources {
             if let Ok(data) = self.container.read_bindata(&name, self.is_compressed()) {
-                let resource = crate::model::Resource::new(
-                    crate::model::ResourceType::Image,
-                    data,
-                );
+                let resource = crate::model::Resource::new(crate::model::ResourceType::Image, data);
                 document.resources.insert(name, resource);
             }
         }

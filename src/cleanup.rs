@@ -167,7 +167,8 @@ pub fn stage1_normalize_string(input: &str, options: &CleanupOptions) -> String 
 
 /// Check if character is a control character that should be removed
 fn is_control_char(c: char) -> bool {
-    matches!(c,
+    matches!(
+        c,
         '\0'        // Null
         | '\x0B'    // Vertical Tab
         | '\x0C'    // Form Feed
@@ -199,7 +200,7 @@ fn get_bullet_replacement(c: char) -> Option<&'static str> {
 /// Normalize fullwidth characters to ASCII equivalents
 fn normalize_fullwidth(c: char) -> Option<char> {
     match c {
-        '\u{3000}' => Some(' '),  // Ideographic space -> regular space
+        '\u{3000}' => Some(' '), // Ideographic space -> regular space
         '\u{FF01}'..='\u{FF5E}' => {
             // Fullwidth ASCII variants (！to ～)
             let offset = c as u32 - 0xFF01;
@@ -319,7 +320,7 @@ fn is_hangul(c: char) -> bool {
     let code = c as u32;
     (0xAC00..=0xD7AF).contains(&code)  // Hangul Syllables
         || (0x1100..=0x11FF).contains(&code)  // Hangul Jamo
-        || (0x3130..=0x318F).contains(&code)  // Hangul Compatibility Jamo
+        || (0x3130..=0x318F).contains(&code) // Hangul Compatibility Jamo
 }
 
 /// Determines if a character is "normal" content (not potential mojibake)
@@ -333,14 +334,16 @@ fn is_normal_content_char(c: char) -> bool {
     let code = c as u32;
     if (0xAC00..=0xD7AF).contains(&code) // Hangul Syllables
         || (0x1100..=0x11FF).contains(&code) // Hangul Jamo
-        || (0x3130..=0x318F).contains(&code) // Hangul Compatibility Jamo
+        || (0x3130..=0x318F).contains(&code)
+    // Hangul Compatibility Jamo
     {
         return true;
     }
 
     // Common punctuation and symbols used in Korean documents
     if (0x2000..=0x206F).contains(&code) // General Punctuation
-        || (0x3000..=0x303F).contains(&code) // CJK Symbols and Punctuation
+        || (0x3000..=0x303F).contains(&code)
+    // CJK Symbols and Punctuation
     {
         return true;
     }
@@ -370,13 +373,15 @@ fn is_suspicious_trailing_char(c: char, chars: &[char], pos: usize) -> bool {
     // CJK Extension ranges - rarely used in normal text
     if (0x3400..=0x4DBF).contains(&code)   // CJK Extension A
         || (0x20000..=0x2A6DF).contains(&code) // CJK Extension B
-        || (0x2A700..=0x2B73F).contains(&code) // CJK Extension C
+        || (0x2A700..=0x2B73F).contains(&code)
+    // CJK Extension C
     {
         return true;
     }
 
     // Unassigned or rarely used ranges
-    if (0xFFF0..=0xFFFF).contains(&code) // Specials
+    if (0xFFF0..=0xFFFF).contains(&code)
+    // Specials
     {
         return true;
     }
@@ -445,44 +450,38 @@ fn is_entirely_mojibake(line: &str) -> bool {
 // ============================================================================
 
 // Regex patterns (compiled once using LazyLock)
-static RE_PAGE_HYPHEN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\s*[-\[\(]\s*\d+\s*[-\]\)]\s*$").unwrap()
-});
+static RE_PAGE_HYPHEN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*[-\[\(]\s*\d+\s*[-\]\)]\s*$").unwrap());
 
-static RE_PAGE_RATIO: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)^\s*(?:Page\s*)?\d+\s*(?:/|of)\s*\d+\s*$").unwrap()
-});
+static RE_PAGE_RATIO: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)^\s*(?:Page\s*)?\d+\s*(?:/|of)\s*\d+\s*$").unwrap());
 
 static RE_PAGE_KOREAN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\s*(?:-\s*)?\d+\s*(?:쪽|페이지|Page)(?:\s*-)?(?:\s*/\s*\d+(?:쪽|페이지|Page)?)?\s*$").unwrap()
+    Regex::new(
+        r"^\s*(?:-\s*)?\d+\s*(?:쪽|페이지|Page)(?:\s*-)?(?:\s*/\s*\d+(?:쪽|페이지|Page)?)?\s*$",
+    )
+    .unwrap()
 });
 
-static RE_TOC_DOTS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^.*\.{3,}[\.\s]*\d+\s*$").unwrap()
-});
+static RE_TOC_DOTS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^.*\.{3,}[\.\s]*\d+\s*$").unwrap());
 
-static RE_SEPARATOR: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[-=*_]{3,}$").unwrap()
-});
+static RE_SEPARATOR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[-=*_]{3,}$").unwrap());
 
-static RE_HWP_PLACEHOLDER: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\s*\[(?:EQ|수식|표|TABLE|그림|IMAGE)\]\s*$").unwrap()
-});
+static RE_HWP_PLACEHOLDER: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*\[(?:EQ|수식|표|TABLE|그림|IMAGE)\]\s*$").unwrap());
 
-static RE_EMPTY_BRACKETS: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[\(\[\{<]\s*[\)\]\}>]$").unwrap()
-});
+static RE_EMPTY_BRACKETS: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[\(\[\{<]\s*[\)\]\}>]$").unwrap());
 
 // Reserved for future caption detection feature
 #[allow(dead_code)]
-static RE_FIGURE_CAPTION: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\s*\[?(?:그림|Figure|Fig)\.?\s*\d+[^\]]*\]?\s*$").unwrap()
-});
+static RE_FIGURE_CAPTION: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*\[?(?:그림|Figure|Fig)\.?\s*\d+[^\]]*\]?\s*$").unwrap());
 
 #[allow(dead_code)]
-static RE_TABLE_CAPTION: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\s*\[?(?:표|Table)\.?\s*\d+[^\]]*\]?\s*$").unwrap()
-});
+static RE_TABLE_CAPTION: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*\[?(?:표|Table)\.?\s*\d+[^\]]*\]?\s*$").unwrap());
 
 /// Stage 2: Line-based cleaning
 ///
@@ -570,9 +569,7 @@ pub fn stage2_clean_lines(input: &str, options: &CleanupOptions) -> String {
 
 /// Check if line matches page number patterns
 fn is_page_number(line: &str) -> bool {
-    RE_PAGE_HYPHEN.is_match(line)
-        || RE_PAGE_RATIO.is_match(line)
-        || RE_PAGE_KOREAN.is_match(line)
+    RE_PAGE_HYPHEN.is_match(line) || RE_PAGE_RATIO.is_match(line) || RE_PAGE_KOREAN.is_match(line)
 }
 
 /// Analyze line frequencies to detect headers/footers
@@ -726,8 +723,14 @@ fn extract_yaml_frontmatter(input: &str) -> (Option<String>, &str) {
 
     // If remaining is empty but there's leftover after the closing ---, use original slice
     let final_remaining = if remaining.is_empty() {
-        let full_fm_len = opening_offset + 3 + (content_start.as_ptr() as usize - trimmed.as_ptr() as usize - 3) + end_pos;
-        input.get(full_fm_len..).unwrap_or("").trim_start_matches(['\n', '\r'])
+        let full_fm_len = opening_offset
+            + 3
+            + (content_start.as_ptr() as usize - trimmed.as_ptr() as usize - 3)
+            + end_pos;
+        input
+            .get(full_fm_len..)
+            .unwrap_or("")
+            .trim_start_matches(['\n', '\r'])
     } else {
         remaining
     };
@@ -773,17 +776,11 @@ fn is_empty_emphasis(
 // Stage 4: Final Normalization
 // ============================================================================
 
-static RE_MULTIPLE_NEWLINES: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\n{3,}").unwrap()
-});
+static RE_MULTIPLE_NEWLINES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n{3,}").unwrap());
 
-static RE_MULTIPLE_SPACES: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"[ \t]+").unwrap()
-});
+static RE_MULTIPLE_SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[ \t]+").unwrap());
 
-static RE_TRAILING_WHITESPACE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"[ \t]+$").unwrap()
-});
+static RE_TRAILING_WHITESPACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[ \t]+$").unwrap());
 
 /// Stage 4: Final normalization
 ///
@@ -795,7 +792,9 @@ pub fn stage4_final_normalize(input: &str, _options: &CleanupOptions) -> String 
     let mut result = input.to_string();
 
     // Reduce consecutive newlines
-    result = RE_MULTIPLE_NEWLINES.replace_all(&result, "\n\n").to_string();
+    result = RE_MULTIPLE_NEWLINES
+        .replace_all(&result, "\n\n")
+        .to_string();
 
     // Process line by line
     let lines: Vec<&str> = result.lines().collect();
@@ -812,7 +811,11 @@ pub fn stage4_final_normalize(input: &str, _options: &CleanupOptions) -> String 
         let cleaned = if trimmed.starts_with("    ") || trimmed.starts_with('\t') {
             // Preserve code block indentation
             let leading = &line[..line.len() - line.trim_start().len()];
-            format!("{}{}", leading, RE_MULTIPLE_SPACES.replace_all(trimmed, " "))
+            format!(
+                "{}{}",
+                leading,
+                RE_MULTIPLE_SPACES.replace_all(trimmed, " ")
+            )
         } else {
             RE_MULTIPLE_SPACES.replace_all(trimmed, " ").to_string()
         };
@@ -826,7 +829,9 @@ pub fn stage4_final_normalize(input: &str, _options: &CleanupOptions) -> String 
     result = cleaned_lines.join("\n");
 
     // Final pass: reduce any remaining consecutive newlines
-    RE_MULTIPLE_NEWLINES.replace_all(&result, "\n\n").to_string()
+    RE_MULTIPLE_NEWLINES
+        .replace_all(&result, "\n\n")
+        .to_string()
 }
 
 /// Check if line is an orphan (meaningless fragment)
@@ -848,7 +853,10 @@ fn is_orphan_line(line: &str) -> bool {
     // (threshold lowered to 2 to handle short Korean words like "첫번째")
     if len >= 2 {
         // But still check if it's only punctuation
-        if !line.chars().all(|c| c.is_ascii_punctuation() || c.is_whitespace()) {
+        if !line
+            .chars()
+            .all(|c| c.is_ascii_punctuation() || c.is_whitespace())
+        {
             return false;
         }
     }
@@ -879,7 +887,10 @@ fn is_orphan_line(line: &str) -> bool {
     }
 
     // Short fragments that only contain punctuation are orphans
-    if line.chars().all(|c| c.is_ascii_punctuation() || c.is_whitespace()) {
+    if line
+        .chars()
+        .all(|c| c.is_ascii_punctuation() || c.is_whitespace())
+    {
         return true;
     }
 
@@ -1035,15 +1046,24 @@ mod tests {
         let result = cleanup(input, &CleanupOptions::default());
 
         // Bullet should be mapped (pulldown-cmark may convert list markers)
-        assert!(result.contains("첫번째 항목"), "Expected '첫번째 항목' in result");
+        assert!(
+            result.contains("첫번째 항목"),
+            "Expected '첫번째 항목' in result"
+        );
         // Page number should be removed
         assert!(!result.contains("- 15 -"), "Page number should be removed");
         // PUA should be removed
         assert!(!result.contains('\u{E000}'), "PUA char should be removed");
         // Excessive newlines should be reduced
-        assert!(!result.contains("\n\n\n\n"), "Excessive newlines should be reduced");
+        assert!(
+            !result.contains("\n\n\n\n"),
+            "Excessive newlines should be reduced"
+        );
         // TOC should be removed
-        assert!(!result.contains("서론.......... 5"), "TOC should be removed");
+        assert!(
+            !result.contains("서론.......... 5"),
+            "TOC should be removed"
+        );
     }
 
     #[test]
@@ -1116,14 +1136,21 @@ mod tests {
 
     #[test]
     fn test_frontmatter_preservation_in_pipeline() {
-        let input = "---\ntitle: \"My Document\"\nformat: \"5.0.4.0\"\n---\n\nDocument content here.";
+        let input =
+            "---\ntitle: \"My Document\"\nformat: \"5.0.4.0\"\n---\n\nDocument content here.";
         let options = CleanupOptions::default();
         let result = stage3_filter_structure(input, &options);
 
         // Frontmatter should be preserved
         assert!(result.starts_with("---"), "Should start with ---");
-        assert!(result.contains("title: \"My Document\""), "Title should be preserved");
-        assert!(result.contains("format: \"5.0.4.0\""), "Format should be preserved");
+        assert!(
+            result.contains("title: \"My Document\""),
+            "Title should be preserved"
+        );
+        assert!(
+            result.contains("format: \"5.0.4.0\""),
+            "Format should be preserved"
+        );
         assert!(result.contains("---\n"), "Closing --- should exist");
     }
 
@@ -1135,7 +1162,13 @@ mod tests {
         let result = stage3_filter_structure(input, &options);
 
         // Should NOT convert frontmatter format field to a heading
-        assert!(!result.contains("## format"), "Should not convert format to heading");
-        assert!(result.contains("format: \"5.0.4.0\""), "Format value should be preserved");
+        assert!(
+            !result.contains("## format"),
+            "Should not convert format to heading"
+        );
+        assert!(
+            result.contains("format: \"5.0.4.0\""),
+            "Format value should be preserved"
+        );
     }
 }

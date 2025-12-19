@@ -4,7 +4,7 @@
 
 use super::record::{Record, RecordIterator, TagId};
 use crate::error::Result;
-use crate::model::{ParagraphStyle, StyleRegistry, TextStyle, Alignment, ListStyle};
+use crate::model::{Alignment, ListStyle, ParagraphStyle, StyleRegistry, TextStyle};
 
 /// Parses DocInfo stream and populates the style registry.
 pub fn parse_docinfo(data: &[u8], registry: &mut StyleRegistry) -> Result<()> {
@@ -112,7 +112,9 @@ struct ParaShapeData {
 fn parse_face_name(record: &Record) -> Result<String> {
     let data = record.data();
     if data.len() < 2 {
-        return Err(crate::error::Error::InvalidData("FaceName too small".into()));
+        return Err(crate::error::Error::InvalidData(
+            "FaceName too small".into(),
+        ));
     }
 
     // FaceName structure:
@@ -148,7 +150,9 @@ fn parse_char_shape(record: &Record) -> Result<CharShapeData> {
 
     // Need at least 2 bytes for face name index
     if data.len() < 2 {
-        return Err(crate::error::Error::InvalidData("CharShape too small".into()));
+        return Err(crate::error::Error::InvalidData(
+            "CharShape too small".into(),
+        ));
     }
 
     let face_name_index = Some(u16::from_le_bytes([data[0], data[1]]));
@@ -182,10 +186,7 @@ fn parse_char_shape(record: &Record) -> Result<CharShapeData> {
 
     // Text color at offset 78 (RGB, 3 bytes)
     let text_color = if data.len() > 80 {
-        Some(format!(
-            "#{:02X}{:02X}{:02X}",
-            data[78], data[79], data[80]
-        ))
+        Some(format!("#{:02X}{:02X}{:02X}", data[78], data[79], data[80]))
     } else {
         None
     };
@@ -207,7 +208,9 @@ fn parse_char_shape(record: &Record) -> Result<CharShapeData> {
 fn parse_para_shape(record: &Record) -> Result<ParaShapeData> {
     let data = record.data();
     if data.len() < 54 {
-        return Err(crate::error::Error::InvalidData("ParaShape too small".into()));
+        return Err(crate::error::Error::InvalidData(
+            "ParaShape too small".into(),
+        ));
     }
 
     // ParaShape structure (simplified):

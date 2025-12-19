@@ -4,9 +4,7 @@
 
 use super::{decode_euckr, Hwp3Header};
 use crate::error::{Error, Result};
-use crate::model::{
-    Block, Document, InlineContent, Paragraph, Section, TextRun, TextStyle,
-};
+use crate::model::{Block, Document, InlineContent, Paragraph, Section, TextRun, TextStyle};
 use flate2::read::ZlibDecoder;
 use std::io::{Read, Seek, SeekFrom};
 
@@ -48,11 +46,7 @@ impl BodyParser {
     }
 
     /// Parses the document body.
-    pub fn parse<R: Read + Seek>(
-        &self,
-        reader: &mut R,
-        document: &mut Document,
-    ) -> Result<()> {
+    pub fn parse<R: Read + Seek>(&self, reader: &mut R, document: &mut Document) -> Result<()> {
         // Seek to body position
         if self.body_offset == 0 {
             // If no explicit offset, body starts after header

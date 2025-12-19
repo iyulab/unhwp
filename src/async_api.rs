@@ -38,10 +38,12 @@ pub async fn parse_bytes(data: &[u8]) -> Result<Document> {
     let data = data.to_vec();
     tokio::task::spawn_blocking(move || crate::parse_bytes(&data))
         .await
-        .map_err(|e| crate::error::Error::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            e.to_string(),
-        )))?
+        .map_err(|e| {
+            crate::error::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            ))
+        })?
 }
 
 /// Asynchronously parses a document from an async reader.
@@ -90,14 +92,14 @@ pub async fn to_markdown_with_options(
 ) -> Result<String> {
     let document = parse_file(path).await?;
     let options = options.clone();
-    tokio::task::spawn_blocking(move || {
-        crate::render::render_markdown(&document, &options)
-    })
-    .await
-    .map_err(|e| crate::error::Error::Io(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        e.to_string(),
-    )))?
+    tokio::task::spawn_blocking(move || crate::render::render_markdown(&document, &options))
+        .await
+        .map_err(|e| {
+            crate::error::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            ))
+        })?
 }
 
 /// Asynchronously detects the format of a file.
@@ -210,14 +212,14 @@ impl AsyncParsedDocument {
         let document = self.document.clone();
         let options = self.render_options.clone();
 
-        tokio::task::spawn_blocking(move || {
-            crate::render::render_markdown(&document, &options)
-        })
-        .await
-        .map_err(|e| crate::error::Error::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            e.to_string(),
-        )))?
+        tokio::task::spawn_blocking(move || crate::render::render_markdown(&document, &options))
+            .await
+            .map_err(|e| {
+                crate::error::Error::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    e.to_string(),
+                ))
+            })?
     }
 
     /// Returns the plain text content.

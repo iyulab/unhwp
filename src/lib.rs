@@ -199,10 +199,7 @@ pub fn to_markdown(path: impl AsRef<Path>) -> Result<String> {
 /// std::fs::write("output.md", markdown)?;
 /// # Ok::<(), unhwp::Error>(())
 /// ```
-pub fn to_markdown_with_options(
-    path: impl AsRef<Path>,
-    options: &RenderOptions,
-) -> Result<String> {
+pub fn to_markdown_with_options(path: impl AsRef<Path>, options: &RenderOptions) -> Result<String> {
     let document = parse_file(path)?;
     render::render_markdown(&document, options)
 }

@@ -65,11 +65,7 @@ mod control_char {
 }
 
 /// Parses a BodyText section stream into a Section.
-pub fn parse_section(
-    data: &[u8],
-    section_index: usize,
-    styles: &StyleRegistry,
-) -> Result<Section> {
+pub fn parse_section(data: &[u8], section_index: usize, styles: &StyleRegistry) -> Result<Section> {
     let mut section = Section::new(section_index);
     let mut paragraph_context = ParagraphContext::new();
     let mut pending_controls: Vec<Record> = Vec::new();
@@ -188,7 +184,8 @@ impl ParagraphContext {
         if !self.current_text.is_empty() {
             let text = std::mem::take(&mut self.current_text);
             let style = self.current_style.clone();
-            self.content.push(InlineContent::Text(TextRun::with_style(text, style)));
+            self.content
+                .push(InlineContent::Text(TextRun::with_style(text, style)));
         }
     }
 

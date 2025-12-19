@@ -153,8 +153,7 @@ impl Version {
 
     /// Returns true if this version is at least the specified version.
     pub fn at_least(&self, major: u8, minor: u8, build: u8, revision: u8) -> bool {
-        (self.major, self.minor, self.build, self.revision)
-            >= (major, minor, build, revision)
+        (self.major, self.minor, self.build, self.revision) >= (major, minor, build, revision)
     }
 }
 
@@ -198,7 +197,7 @@ mod tests {
         data[33] = 0; // build
         data[34] = 1; // minor
         data[35] = 5; // major
-        // Set properties (compressed) at offset 36
+                      // Set properties (compressed) at offset 36
         data[36] = 0x01;
 
         let header = FileHeader::parse(&data).unwrap();

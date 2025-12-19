@@ -76,7 +76,11 @@ fn main() {
                             println!("❌ Failed to write image {}: {}", name, e);
                         }
                     }
-                    println!("🖼️  Extracted {} images → {}/", doc.resources.len(), images_dir);
+                    println!(
+                        "🖼️  Extracted {} images → {}/",
+                        doc.resources.len(),
+                        images_dir
+                    );
                 }
 
                 // Show preview

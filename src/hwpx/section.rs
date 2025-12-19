@@ -9,11 +9,7 @@ use quick_xml::events::Event;
 use quick_xml::Reader;
 
 /// Parses a section XML file.
-pub fn parse_section(
-    xml: &str,
-    section_index: usize,
-    styles: &StyleRegistry,
-) -> Result<Section> {
+pub fn parse_section(xml: &str, section_index: usize, styles: &StyleRegistry) -> Result<Section> {
     let mut section = Section::new(section_index);
     let mut parser = SectionParser::new(xml, styles);
     parser.parse(&mut section)?;
@@ -51,10 +47,7 @@ impl<'a> SectionParser<'a> {
         let mut reader = Reader::from_str(xml);
         reader.config_mut().trim_text(true);
 
-        Self {
-            reader,
-            styles,
-        }
+        Self { reader, styles }
     }
 
     fn parse(&mut self, section: &mut Section) -> Result<()> {
@@ -165,7 +158,8 @@ impl<'a> SectionParser<'a> {
 
     /// Parses a <hp:run> text run element, returning the text run and any images found.
     fn parse_run(&mut self, attrs: RunAttrs, paragraph: &mut Paragraph) -> Result<TextRun> {
-        let text_style = attrs.char_pr_id
+        let text_style = attrs
+            .char_pr_id
             .and_then(|id| self.styles.get_char_style(id))
             .cloned()
             .unwrap_or_default();
@@ -193,7 +187,9 @@ impl<'a> SectionParser<'a> {
                     } else if in_pic && name == "img" {
                         // Look for binaryItemIDRef in <hc:img> element
                         if let Some(id) = get_attr_string(&e, "binaryItemIDRef") {
-                            paragraph.content.push(InlineContent::Image(ImageRef::new(id)));
+                            paragraph
+                                .content
+                                .push(InlineContent::Image(ImageRef::new(id)));
                         }
                     }
                 }
@@ -205,7 +201,9 @@ impl<'a> SectionParser<'a> {
                     } else if in_pic && name == "img" {
                         // Look for binaryItemIDRef in <hc:img/> element
                         if let Some(id) = get_attr_string(&e, "binaryItemIDRef") {
-                            paragraph.content.push(InlineContent::Image(ImageRef::new(id)));
+                            paragraph
+                                .content
+                                .push(InlineContent::Image(ImageRef::new(id)));
                         }
                     }
                 }
@@ -261,7 +259,9 @@ impl<'a> SectionParser<'a> {
                         "img" if in_pic => {
                             // Look for binaryItemIDRef attribute in <hc:img> element
                             if let Some(id) = get_attr_string(&e, "binaryItemIDRef") {
-                                paragraph.content.push(InlineContent::Image(ImageRef::new(id)));
+                                paragraph
+                                    .content
+                                    .push(InlineContent::Image(ImageRef::new(id)));
                             }
                         }
                         "script" if in_equation => {
@@ -281,7 +281,9 @@ impl<'a> SectionParser<'a> {
                     if in_pic && name == "img" {
                         // Look for binaryItemIDRef attribute in <hc:img/> element
                         if let Some(id) = get_attr_string(&e, "binaryItemIDRef") {
-                            paragraph.content.push(InlineContent::Image(ImageRef::new(id)));
+                            paragraph
+                                .content
+                                .push(InlineContent::Image(ImageRef::new(id)));
                         }
                     }
                 }
@@ -305,9 +307,11 @@ impl<'a> SectionParser<'a> {
                         }
                         "fn" | "footnote" | "en" | "endnote" => {
                             if !footnote_text.is_empty() {
-                                paragraph.content.push(InlineContent::Footnote(
-                                    std::mem::take(&mut footnote_text)
-                                ));
+                                paragraph
+                                    .content
+                                    .push(InlineContent::Footnote(std::mem::take(
+                                        &mut footnote_text,
+                                    )));
                             }
                             in_footnote = false;
                         }

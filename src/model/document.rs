@@ -27,7 +27,12 @@ impl Document {
     pub fn paragraph_count(&self) -> usize {
         self.sections
             .iter()
-            .map(|s| s.content.iter().filter(|b| matches!(b, Block::Paragraph(_))).count())
+            .map(|s| {
+                s.content
+                    .iter()
+                    .filter(|b| matches!(b, Block::Paragraph(_)))
+                    .count()
+            })
             .sum()
     }
 

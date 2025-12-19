@@ -97,8 +97,8 @@ pub fn parse_styles(xml: &str, registry: &mut StyleRegistry) -> Result<()> {
                     // Font size - HWPML uses "height" in charShape (in hwpunit = 1/7200 inch)
                     "sz" | "size" | "height" if in_char_properties => {
                         if let Some((_, ref mut style)) = current_char_style {
-                            if let Some(size) = get_float_attr(&e, "val")
-                                .or_else(|| get_float_attr(&e, "height"))
+                            if let Some(size) =
+                                get_float_attr(&e, "val").or_else(|| get_float_attr(&e, "height"))
                             {
                                 // HWPML height is in hwpunit (1/7200 inch)
                                 // 1 point = 100 hwpunit, so divide by 100
@@ -151,8 +151,8 @@ pub fn parse_styles(xml: &str, registry: &mut StyleRegistry) -> Result<()> {
                     // Heading level / outline level
                     "outlineLevel" | "heading" | "level" if in_para_properties => {
                         if let Some((_, ref mut style)) = current_para_style {
-                            if let Some(level) = get_int_attr(&e, "val")
-                                .or_else(|| get_int_attr(&e, "level"))
+                            if let Some(level) =
+                                get_int_attr(&e, "val").or_else(|| get_int_attr(&e, "level"))
                             {
                                 // Level 1-6 for headings, 0 means not a heading
                                 if level > 0 {
@@ -176,8 +176,8 @@ pub fn parse_styles(xml: &str, registry: &mut StyleRegistry) -> Result<()> {
                     // Line spacing
                     "lineSpacing" | "spacing" | "lnSpc" if in_para_properties => {
                         if let Some((_, ref mut style)) = current_para_style {
-                            if let Some(spacing) = get_float_attr(&e, "val")
-                                .or_else(|| get_float_attr(&e, "line"))
+                            if let Some(spacing) =
+                                get_float_attr(&e, "val").or_else(|| get_float_attr(&e, "line"))
                             {
                                 // HWPML line spacing is in percentage (e.g., 160 = 160%)
                                 style.line_spacing = Some(spacing / 100.0);

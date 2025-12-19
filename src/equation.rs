@@ -385,7 +385,8 @@ impl<'a> EquationConverter<'a> {
                         }
                     }
                     let inner = to_latex(&content);
-                    self.output.push_str(&format!("\\begin{{pmatrix}} {} \\end{{pmatrix}}", inner));
+                    self.output
+                        .push_str(&format!("\\begin{{pmatrix}} {} \\end{{pmatrix}}", inner));
                 }
             }
 
@@ -394,7 +395,8 @@ impl<'a> EquationConverter<'a> {
                 if self.peek() == Some('{') {
                     let content = self.read_group();
                     let inner = content.replace('#', " \\\\ ").replace('&', " & ");
-                    self.output.push_str(&format!("\\begin{{pmatrix}} {} \\end{{pmatrix}}", inner));
+                    self.output
+                        .push_str(&format!("\\begin{{pmatrix}} {} \\end{{pmatrix}}", inner));
                 }
             }
 
@@ -403,7 +405,8 @@ impl<'a> EquationConverter<'a> {
                 if self.peek() == Some('{') {
                     let content = self.read_group();
                     let inner = content.replace('#', " \\\\ ").replace('&', " & ");
-                    self.output.push_str(&format!("\\begin{{bmatrix}} {} \\end{{bmatrix}}", inner));
+                    self.output
+                        .push_str(&format!("\\begin{{bmatrix}} {} \\end{{bmatrix}}", inner));
                 }
             }
 
@@ -412,7 +415,8 @@ impl<'a> EquationConverter<'a> {
                 if self.peek() == Some('{') {
                     let content = self.read_group();
                     let inner = content.replace('#', " \\\\ ").replace('&', " & ");
-                    self.output.push_str(&format!("\\begin{{vmatrix}} {} \\end{{vmatrix}}", inner));
+                    self.output
+                        .push_str(&format!("\\begin{{vmatrix}} {} \\end{{vmatrix}}", inner));
                 }
             }
 
@@ -462,7 +466,8 @@ impl<'a> EquationConverter<'a> {
             "FRAC" => {
                 let num = self.read_group();
                 let den = self.read_group();
-                self.output.push_str(&format!("\\frac{{{}}}{{{}}}", num, den));
+                self.output
+                    .push_str(&format!("\\frac{{{}}}{{{}}}", num, den));
             }
 
             // Cases
@@ -471,7 +476,8 @@ impl<'a> EquationConverter<'a> {
                 if self.peek() == Some('{') {
                     let content = self.read_group();
                     let inner = content.replace('#', " \\\\ ");
-                    self.output.push_str(&format!("\\begin{{cases}} {} \\end{{cases}}", inner));
+                    self.output
+                        .push_str(&format!("\\begin{{cases}} {} \\end{{cases}}", inner));
                 }
             }
 

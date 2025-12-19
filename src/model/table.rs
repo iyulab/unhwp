@@ -45,9 +45,11 @@ impl Table {
 
     /// Returns true if this table has any merged cells.
     pub fn has_merged_cells(&self) -> bool {
-        self.rows
-            .iter()
-            .any(|row| row.cells.iter().any(|cell| cell.rowspan > 1 || cell.colspan > 1))
+        self.rows.iter().any(|row| {
+            row.cells
+                .iter()
+                .any(|cell| cell.rowspan > 1 || cell.colspan > 1)
+        })
     }
 
     /// Gets a cell at the specified position.

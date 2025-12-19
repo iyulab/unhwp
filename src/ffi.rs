@@ -623,9 +623,8 @@ impl UnhwpResult {
     fn ensure_text(&mut self) -> Result<&CString, String> {
         if self.cached_text.is_none() {
             let text = self.document.plain_text();
-            self.cached_text = Some(
-                CString::new(text).map_err(|e| format!("String conversion error: {}", e))?,
-            );
+            self.cached_text =
+                Some(CString::new(text).map_err(|e| format!("String conversion error: {}", e))?);
         }
         Ok(self.cached_text.as_ref().unwrap())
     }
@@ -633,9 +632,8 @@ impl UnhwpResult {
     fn ensure_raw_content(&mut self) -> Result<&CString, String> {
         if self.cached_raw_content.is_none() {
             let raw = self.document.raw_content();
-            self.cached_raw_content = Some(
-                CString::new(raw).map_err(|e| format!("String conversion error: {}", e))?,
-            );
+            self.cached_raw_content =
+                Some(CString::new(raw).map_err(|e| format!("String conversion error: {}", e))?);
         }
         Ok(self.cached_raw_content.as_ref().unwrap())
     }

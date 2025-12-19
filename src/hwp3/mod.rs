@@ -15,11 +15,11 @@
 //!
 //! HWP 3.x files use EUC-KR (or CP949) encoding for Korean text.
 
-mod header;
 mod body;
+mod header;
 
-pub use header::{Hwp3Header, Hwp3Version};
 pub use body::BodyParser;
+pub use header::{Hwp3Header, Hwp3Version};
 
 use crate::error::Result;
 use crate::model::Document;

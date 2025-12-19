@@ -333,7 +333,13 @@ impl MarkdownRenderer {
                 }
 
                 let text = cell.plain_text();
-                output.push_str(&format!("    <{}{}>{}</{}>\n", tag, attrs, text.trim(), tag));
+                output.push_str(&format!(
+                    "    <{}{}>{}</{}>\n",
+                    tag,
+                    attrs,
+                    text.trim(),
+                    tag
+                ));
             }
 
             output.push_str("  </tr>\n");
@@ -392,7 +398,8 @@ mod tests {
         let mut section = Section::new(0);
 
         let mut para = Paragraph::with_style(crate::model::ParagraphStyle::heading(2));
-        para.content.push(InlineContent::Text(TextRun::new("Section Title")));
+        para.content
+            .push(InlineContent::Text(TextRun::new("Section Title")));
         section.push_paragraph(para);
         doc.sections.push(section);
 

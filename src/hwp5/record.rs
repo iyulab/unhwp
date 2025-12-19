@@ -145,7 +145,9 @@ impl RecordHeader {
         let (size, consumed) = if size_field == Self::EXTENDED_SIZE_SENTINEL {
             // Extended size: next 4 bytes contain actual size
             if data.len() < 8 {
-                return Err(Error::InvalidData("Extended record header too small".into()));
+                return Err(Error::InvalidData(
+                    "Extended record header too small".into(),
+                ));
             }
             let extended_size = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
             (extended_size, 8)
@@ -219,7 +221,10 @@ impl Record {
         if offset + 2 > self.data.len() {
             return Err(Error::InvalidData("Read past end of record".into()));
         }
-        Ok(u16::from_le_bytes([self.data[offset], self.data[offset + 1]]))
+        Ok(u16::from_le_bytes([
+            self.data[offset],
+            self.data[offset + 1],
+        ]))
     }
 
     /// Reads a u32 (little-endian) at the specified offset.

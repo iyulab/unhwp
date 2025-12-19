@@ -122,9 +122,7 @@ impl HwpxParser {
         let section_data: Vec<(usize, String)> = section_files
             .iter()
             .enumerate()
-            .filter_map(|(index, path)| {
-                self.container.read_file(path).ok().map(|xml| (index, xml))
-            })
+            .filter_map(|(index, path)| self.container.read_file(path).ok().map(|xml| (index, xml)))
             .collect();
 
         // Clone styles for parallel access
@@ -133,9 +131,7 @@ impl HwpxParser {
         // Parse sections in parallel
         let mut sections: Vec<_> = section_data
             .par_iter()
-            .filter_map(|(index, xml)| {
-                section::parse_section(xml, *index, &styles).ok()
-            })
+            .filter_map(|(index, xml)| section::parse_section(xml, *index, &styles).ok())
             .collect();
 
         // Sort by index to maintain order

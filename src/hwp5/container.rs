@@ -30,7 +30,9 @@ impl Hwp5Container {
     pub fn from_bytes(data: Vec<u8>) -> Result<Self> {
         let cursor = Cursor::new(data);
         let cfb = CompoundFile::open(cursor)?;
-        Ok(Self { cfb: RefCell::new(cfb) })
+        Ok(Self {
+            cfb: RefCell::new(cfb),
+        })
     }
 
     /// Reads the FileHeader stream (always uncompressed).
@@ -134,8 +136,7 @@ fn decode_utf16le(data: &[u8]) -> Result<String> {
         .chunks_exact(2)
         .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]));
 
-    String::from_utf16(&u16_iter.collect::<Vec<_>>())
-        .map_err(|e| Error::Encoding(e.to_string()))
+    String::from_utf16(&u16_iter.collect::<Vec<_>>()).map_err(|e| Error::Encoding(e.to_string()))
 }
 
 #[cfg(test)]

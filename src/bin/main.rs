@@ -34,9 +34,7 @@ fn main() {
     let enable_cleanup_aggressive = args.iter().any(|a| a == "--cleanup-aggressive");
 
     // Filter out flags from args
-    let positional_args: Vec<&String> = args.iter()
-        .filter(|a| !a.starts_with("--"))
-        .collect();
+    let positional_args: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
 
     let input_path = Path::new(&positional_args[1]);
 
@@ -50,7 +48,10 @@ fn main() {
         Path::new(positional_args[2]).to_path_buf()
     } else {
         let stem = input_path.file_stem().unwrap_or_default().to_string_lossy();
-        input_path.parent().unwrap_or(Path::new(".")).join(format!("{}_output", stem))
+        input_path
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join(format!("{}_output", stem))
     };
 
     // Create output directory
@@ -114,10 +115,7 @@ fn main() {
     };
 
     // Write markdown file
-    let md_filename = input_path
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy();
+    let md_filename = input_path.file_stem().unwrap_or_default().to_string_lossy();
     let md_path = output_dir.join(format!("{}.md", md_filename));
 
     if let Err(e) = fs::write(&md_path, &markdown) {
