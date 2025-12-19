@@ -11,6 +11,7 @@ pub use container::HwpxContainer;
 
 use crate::error::{Error, Result};
 use crate::model::Document;
+use rayon::prelude::*;
 use std::io::{Read, Seek};
 use std::path::Path;
 
@@ -92,15 +93,35 @@ impl HwpxParser {
     }
 
     /// Parses all sections.
+    ///
+    /// Uses parallel processing when there are multiple sections.
     fn parse_sections(&mut self, document: &mut Document) -> Result<()> {
         let section_files = self.container.list_sections()?;
 
-        for (index, section_path) in section_files.iter().enumerate() {
-            let section_xml = self.container.read_file(section_path)?;
-            let section = section::parse_section(&section_xml, index, &document.styles)?;
-            document.sections.push(section);
-        }
+        // Read all section XML content first (requires mutable borrow)
+        let section_data: Vec<(usize, String)> = section_files
+            .iter()
+            .enumerate()
+            .filter_map(|(index, path)| {
+                self.container.read_file(path).ok().map(|xml| (index, xml))
+            })
+            .collect();
 
+        // Clone styles for parallel access
+        let styles = document.styles.clone();
+
+        // Parse sections in parallel
+        let mut sections: Vec<_> = section_data
+            .par_iter()
+            .filter_map(|(index, xml)| {
+                section::parse_section(xml, *index, &styles).ok()
+            })
+            .collect();
+
+        // Sort by index to maintain order
+        sections.sort_by_key(|s| s.index);
+
+        document.sections = sections;
         Ok(())
     }
 

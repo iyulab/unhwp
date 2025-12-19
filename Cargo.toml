@@ -35,15 +35,19 @@ thiserror = "2.0"
 # Zero-copy buffers
 bytes = "1.9"
 
+# Parallel processing
+rayon = "1.10"
+
 # Optional: Legacy encoding (HWP 3.x)
 encoding_rs = { version = "0.8", optional = true }
 
 # Optional: Async support
-tokio = { version = "1.42", features = ["fs", "io-util"], optional = true }
+tokio = { version = "1.42", features = ["fs", "io-util", "rt", "macros"], optional = true }
 
 [dev-dependencies]
 criterion = "0.5"
 tempfile = "3.14"
+rand = "0.8"
 
 [[bench]]
 name = "parse_benchmark"

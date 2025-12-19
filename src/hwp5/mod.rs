@@ -15,6 +15,7 @@ pub use record::{Record, RecordHeader, RecordIterator, TagId};
 
 use crate::error::Result;
 use crate::model::Document;
+use rayon::prelude::*;
 use std::io::{Read, Seek};
 use std::path::Path;
 
@@ -89,19 +90,39 @@ impl Hwp5Parser {
     }
 
     /// Parses BodyText sections.
+    ///
+    /// Uses parallel processing when there are multiple sections.
     fn parse_bodytext(&self, document: &mut Document) -> Result<()> {
         let section_names = self.container.list_bodytext_sections()?;
+        let is_compressed = self.is_compressed();
 
-        for (index, name) in section_names.iter().enumerate() {
-            let data = self.container.read_stream_decompressed(
-                name,
-                self.is_compressed(),
-            )?;
+        // Read all section data first
+        let section_data: Vec<(usize, Vec<u8>)> = section_names
+            .iter()
+            .enumerate()
+            .filter_map(|(index, name)| {
+                self.container
+                    .read_stream_decompressed(name, is_compressed)
+                    .ok()
+                    .map(|data| (index, data))
+            })
+            .collect();
 
-            let section = bodytext::parse_section(&data, index, &document.styles)?;
-            document.sections.push(section);
-        }
+        // Clone styles for parallel access
+        let styles = document.styles.clone();
 
+        // Parse sections in parallel
+        let mut sections: Vec<_> = section_data
+            .par_iter()
+            .filter_map(|(index, data)| {
+                bodytext::parse_section(data, *index, &styles).ok()
+            })
+            .collect();
+
+        // Sort by index to maintain order
+        sections.sort_by_key(|s| s.index);
+
+        document.sections = sections;
         Ok(())
     }
 

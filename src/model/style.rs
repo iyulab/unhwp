@@ -126,7 +126,7 @@ pub enum ListStyle {
 }
 
 /// Style registry for resolving style references.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct StyleRegistry {
     /// Character (text) styles by ID
     pub char_styles: HashMap<u32, TextStyle>,

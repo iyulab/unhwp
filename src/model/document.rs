@@ -4,7 +4,7 @@ use super::{Paragraph, StyleRegistry, Table};
 use std::collections::HashMap;
 
 /// A complete document parsed from HWP/HWPX.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct Document {
     /// Document metadata
     pub metadata: Metadata,
@@ -83,7 +83,7 @@ pub struct Metadata {
 }
 
 /// A section of the document.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct Section {
     /// Section index (0-based)
     pub index: usize,

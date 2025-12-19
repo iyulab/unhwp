@@ -37,6 +37,7 @@
 pub mod detect;
 pub mod error;
 pub mod model;
+pub mod parse_options;
 pub mod render;
 
 #[cfg(feature = "hwp5")]
@@ -45,10 +46,14 @@ pub mod hwp5;
 #[cfg(feature = "hwpx")]
 pub mod hwpx;
 
+#[cfg(feature = "async")]
+pub mod async_api;
+
 // Re-exports
 pub use detect::{detect_format, detect_format_from_bytes, detect_format_from_path, FormatType};
 pub use error::{Error, Result};
 pub use model::Document;
+pub use parse_options::{ErrorMode, ExtractMode, ParseOptions};
 pub use render::{RenderOptions, TableFallback};
 
 use std::io::{Read, Seek};
@@ -200,7 +205,8 @@ pub fn to_markdown_with_options(
 /// # Ok::<(), unhwp::Error>(())
 /// ```
 pub struct Unhwp {
-    options: RenderOptions,
+    render_options: RenderOptions,
+    parse_options: ParseOptions,
     extract_images: bool,
 }
 
@@ -214,7 +220,8 @@ impl Unhwp {
     /// Creates a new Unhwp builder with default settings.
     pub fn new() -> Self {
         Self {
-            options: RenderOptions::default(),
+            render_options: RenderOptions::default(),
+            parse_options: ParseOptions::default(),
             extract_images: false,
         }
     }
@@ -227,19 +234,43 @@ impl Unhwp {
 
     /// Sets the directory for extracted images.
     pub fn with_image_dir(mut self, dir: impl Into<std::path::PathBuf>) -> Self {
-        self.options.image_dir = Some(dir.into());
+        self.render_options.image_dir = Some(dir.into());
         self
     }
 
     /// Sets the table fallback mode.
     pub fn with_table_fallback(mut self, fallback: TableFallback) -> Self {
-        self.options.table_fallback = fallback;
+        self.render_options.table_fallback = fallback;
         self
     }
 
     /// Enables YAML frontmatter in output.
     pub fn with_frontmatter(mut self) -> Self {
-        self.options.include_frontmatter = true;
+        self.render_options.include_frontmatter = true;
+        self
+    }
+
+    /// Sets lenient error handling (skip invalid sections).
+    pub fn lenient(mut self) -> Self {
+        self.parse_options = self.parse_options.lenient();
+        self
+    }
+
+    /// Extracts only text content (faster, smaller output).
+    pub fn text_only(mut self) -> Self {
+        self.parse_options = self.parse_options.text_only();
+        self
+    }
+
+    /// Sets memory limit in megabytes.
+    pub fn with_memory_limit_mb(mut self, mb: usize) -> Self {
+        self.parse_options = self.parse_options.with_memory_limit_mb(mb);
+        self
+    }
+
+    /// Disables parallel processing.
+    pub fn sequential(mut self) -> Self {
+        self.parse_options = self.parse_options.sequential();
         self
     }
 
@@ -248,7 +279,7 @@ impl Unhwp {
         let document = parse_file(path)?;
         Ok(ParsedDocument {
             document,
-            options: self.options,
+            render_options: self.render_options,
             extract_images: self.extract_images,
         })
     }
@@ -257,7 +288,7 @@ impl Unhwp {
 /// A parsed document ready for rendering.
 pub struct ParsedDocument {
     document: Document,
-    options: RenderOptions,
+    render_options: RenderOptions,
     extract_images: bool,
 }
 
@@ -271,7 +302,7 @@ impl ParsedDocument {
     pub fn to_markdown(&self) -> Result<String> {
         // Extract images if requested
         if self.extract_images {
-            if let Some(ref image_dir) = self.options.image_dir {
+            if let Some(ref image_dir) = self.render_options.image_dir {
                 std::fs::create_dir_all(image_dir)?;
 
                 for (name, resource) in &self.document.resources {
@@ -281,12 +312,27 @@ impl ParsedDocument {
             }
         }
 
-        render::render_markdown(&self.document, &self.options)
+        render::render_markdown(&self.document, &self.render_options)
     }
 
     /// Returns the plain text content.
     pub fn to_text(&self) -> String {
         self.document.plain_text()
+    }
+
+    /// Returns the number of sections in the document.
+    pub fn section_count(&self) -> usize {
+        self.document.sections.len()
+    }
+
+    /// Returns the number of paragraphs in the document.
+    pub fn paragraph_count(&self) -> usize {
+        self.document.paragraph_count()
+    }
+
+    /// Consumes self and returns the underlying document.
+    pub fn into_document(self) -> Document {
+        self.document
     }
 }
 
