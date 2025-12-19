@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2024-12-19
+
+### Fixed
+- Fixed all Clippy warnings for cleaner code
+  - Replaced manual range loops with iterators
+  - Used `strip_prefix()` instead of manual string slicing
+  - Replaced `map_or()` with `is_some_and()` for cleaner boolean checks
+  - Changed `push_str()` to `push()` for single character appends
+  - Used `derive(Default)` with `#[default]` attribute for enum defaults
+  - Replaced manual `% 2 != 0` checks with `is_multiple_of(2)`
+- Fixed FFI safety by wrapping unsafe function calls in `unsafe` blocks
+
+### Changed
+- Added `#![allow(clippy::not_unsafe_ptr_arg_deref)]` for FFI module (intentional raw pointer handling)
+- CI workflow now uses `dtolnay/rust-toolchain` action correctly
+
 ## [0.1.1] - 2024-12-19
 
 ### Added
@@ -105,6 +121,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `thiserror` for error types
 - `bytes` for buffer handling
 
-[Unreleased]: https://github.com/iyulab/unhwp/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/iyulab/unhwp/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/iyulab/unhwp/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/iyulab/unhwp/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/iyulab/unhwp/releases/tag/v0.1.0
