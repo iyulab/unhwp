@@ -83,7 +83,7 @@ async fn main() -> unhwp::Result<()> {
 |--------|-----------|--------|
 | HWP 5.0+ | OLE/CFB | ✅ Supported |
 | HWPX | ZIP/XML | ✅ Supported |
-| HWP 3.x | Binary | 🚧 Planned |
+| HWP 3.x | Binary | ✅ Supported (feature: `hwp3`) |
 
 ## Structure Preservation
 
@@ -102,7 +102,7 @@ unhwp maintains document structure during conversion:
 |---------|-------------|---------|
 | `hwp5` | HWP 5.0 binary format support | ✅ |
 | `hwpx` | HWPX XML format support | ✅ |
-| `hwp3` | Legacy HWP 3.x support | ❌ |
+| `hwp3` | Legacy HWP 3.x support (EUC-KR) | ❌ |
 | `async` | Async I/O with Tokio | ❌ |
 
 ## Performance

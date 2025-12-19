@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+#### HWP 3.x Legacy Support (feature: `hwp3`)
+- HWP 3.x binary format parser with 128-byte header parsing
+- EUC-KR/CP949 text encoding support via `encoding_rs`
+- Version detection from signature string (V3.0, V3.1, etc.)
+- Compressed body support with zlib decompression
+- Control code handling (bold, italic, underline, line break)
+- Body text parsing with Korean character handling
+
 ## [0.1.0] - 2024-12-19
 
 ### Added

@@ -46,6 +46,9 @@ pub mod hwp5;
 #[cfg(feature = "hwpx")]
 pub mod hwpx;
 
+#[cfg(feature = "hwp3")]
+pub mod hwp3;
+
 #[cfg(feature = "async")]
 pub mod async_api;
 
@@ -87,6 +90,12 @@ pub fn parse_file(path: impl AsRef<Path>) -> Result<Document> {
             let mut parser = hwpx::HwpxParser::open(path)?;
             parser.parse()
         }
+        #[cfg(feature = "hwp3")]
+        FormatType::Hwp3 => {
+            let mut parser = hwp3::Hwp3Parser::open(path)?;
+            parser.parse()
+        }
+        #[cfg(not(feature = "hwp3"))]
         FormatType::Hwp3 => Err(Error::UnsupportedFormat(
             "HWP 3.x support requires 'hwp3' feature".into(),
         )),
@@ -113,6 +122,12 @@ pub fn parse_reader<R: Read + Seek>(reader: R) -> Result<Document> {
             let mut parser = hwpx::HwpxParser::from_reader(buf_reader)?;
             parser.parse()
         }
+        #[cfg(feature = "hwp3")]
+        FormatType::Hwp3 => {
+            let mut parser = hwp3::Hwp3Parser::from_reader(buf_reader)?;
+            parser.parse()
+        }
+        #[cfg(not(feature = "hwp3"))]
         FormatType::Hwp3 => Err(Error::UnsupportedFormat(
             "HWP 3.x support requires 'hwp3' feature".into(),
         )),
