@@ -26,32 +26,32 @@ pub enum TagId {
     CompatibleDocument = 30,
     LayoutCompatibility = 31,
 
-    // BodyText tags (0x32 - 0x50+)
-    ParaHeader = 50,
-    ParaText = 51,
-    ParaCharShape = 52,
-    ParaLineSeg = 53,
-    ParaRangeTag = 54,
-    CtrlHeader = 55,
-    ListHeader = 56,
-    PageDef = 57,
-    FootnoteShape = 58,
-    PageBorderFill = 59,
+    // BodyText tags (0x42 = 66+)
+    ParaHeader = 66,
+    ParaText = 67,
+    ParaCharShape = 68,
+    ParaLineSeg = 69,
+    ParaRangeTag = 70,
+    CtrlHeader = 71,
+    ListHeader = 72,
+    PageDef = 73,
+    FootnoteShape = 74,
+    PageBorderFill = 75,
 
-    // Extended control tags
-    ShapeComponent = 60,
-    Table = 61,
-    ShapeComponentLine = 62,
-    ShapeComponentRectangle = 63,
-    ShapeComponentEllipse = 64,
-    ShapeComponentArc = 65,
-    ShapeComponentPolygon = 66,
-    ShapeComponentCurve = 67,
-    ShapeComponentOle = 68,
-    ShapeComponentPicture = 69,
-    ShapeComponentContainer = 70,
-    CtrlData = 71,
-    EqEdit = 72,
+    // Extended control tags (0x4C = 76+)
+    ShapeComponent = 76,
+    Table = 77,
+    ShapeComponentLine = 78,
+    ShapeComponentRectangle = 79,
+    ShapeComponentEllipse = 80,
+    ShapeComponentArc = 81,
+    ShapeComponentPolygon = 82,
+    ShapeComponentCurve = 83,
+    ShapeComponentOle = 84,
+    ShapeComponentPicture = 85,
+    ShapeComponentContainer = 86,
+    CtrlData = 87,
+    EqEdit = 88,
 
     // Unknown tag
     Unknown = 0xFFFF,
@@ -60,6 +60,7 @@ pub enum TagId {
 impl From<u16> for TagId {
     fn from(value: u16) -> Self {
         match value {
+            // DocInfo tags (0x10 - 0x31)
             16 => TagId::DocumentProperties,
             17 => TagId::IdMappings,
             18 => TagId::BinData,
@@ -75,29 +76,31 @@ impl From<u16> for TagId {
             28 => TagId::DistributeDocData,
             30 => TagId::CompatibleDocument,
             31 => TagId::LayoutCompatibility,
-            50 => TagId::ParaHeader,
-            51 => TagId::ParaText,
-            52 => TagId::ParaCharShape,
-            53 => TagId::ParaLineSeg,
-            54 => TagId::ParaRangeTag,
-            55 => TagId::CtrlHeader,
-            56 => TagId::ListHeader,
-            57 => TagId::PageDef,
-            58 => TagId::FootnoteShape,
-            59 => TagId::PageBorderFill,
-            60 => TagId::ShapeComponent,
-            61 => TagId::Table,
-            62 => TagId::ShapeComponentLine,
-            63 => TagId::ShapeComponentRectangle,
-            64 => TagId::ShapeComponentEllipse,
-            65 => TagId::ShapeComponentArc,
-            66 => TagId::ShapeComponentPolygon,
-            67 => TagId::ShapeComponentCurve,
-            68 => TagId::ShapeComponentOle,
-            69 => TagId::ShapeComponentPicture,
-            70 => TagId::ShapeComponentContainer,
-            71 => TagId::CtrlData,
-            72 => TagId::EqEdit,
+            // BodyText tags (0x42 = 66+)
+            66 => TagId::ParaHeader,
+            67 => TagId::ParaText,
+            68 => TagId::ParaCharShape,
+            69 => TagId::ParaLineSeg,
+            70 => TagId::ParaRangeTag,
+            71 => TagId::CtrlHeader,
+            72 => TagId::ListHeader,
+            73 => TagId::PageDef,
+            74 => TagId::FootnoteShape,
+            75 => TagId::PageBorderFill,
+            // Extended control tags (0x4C = 76+)
+            76 => TagId::ShapeComponent,
+            77 => TagId::Table,
+            78 => TagId::ShapeComponentLine,
+            79 => TagId::ShapeComponentRectangle,
+            80 => TagId::ShapeComponentEllipse,
+            81 => TagId::ShapeComponentArc,
+            82 => TagId::ShapeComponentPolygon,
+            83 => TagId::ShapeComponentCurve,
+            84 => TagId::ShapeComponentOle,
+            85 => TagId::ShapeComponentPicture,
+            86 => TagId::ShapeComponentContainer,
+            87 => TagId::CtrlData,
+            88 => TagId::EqEdit,
             _ => TagId::Unknown,
         }
     }
@@ -318,28 +321,30 @@ mod tests {
 
     #[test]
     fn test_parse_record_header() {
-        // Tag ID: 50 (PARA_HEADER), Level: 0, Size: 10
-        // header = 50 | (0 << 10) | (10 << 20) = 0x00A00032
-        let data = [0x32, 0x00, 0xA0, 0x00];
+        // Tag ID: 66 (PARA_HEADER), Level: 0, Size: 10
+        // header = 66 | (0 << 10) | (10 << 20) = 0x00A00042
+        let data = [0x42, 0x00, 0xA0, 0x00];
         let (header, consumed) = RecordHeader::parse(&data).unwrap();
 
         assert_eq!(consumed, 4);
-        assert_eq!(header.tag_id, 50);
+        assert_eq!(header.tag_id, 66);
         assert_eq!(header.level, 0);
         assert_eq!(header.size, 10);
+        assert_eq!(header.tag(), TagId::ParaHeader);
     }
 
     #[test]
     fn test_parse_extended_record_header() {
-        // Tag ID: 51 (PARA_TEXT), Level: 0, Size: 0xFFF (extended)
-        // header = 51 | (0 << 10) | (0xFFF << 20) = 0xFFF00033
+        // Tag ID: 67 (PARA_TEXT), Level: 0, Size: 0xFFF (extended)
+        // header = 67 | (0 << 10) | (0xFFF << 20) = 0xFFF00043
         // Extended size: 5000
-        let data = [0x33, 0x00, 0xF0, 0xFF, 0x88, 0x13, 0x00, 0x00];
+        let data = [0x43, 0x00, 0xF0, 0xFF, 0x88, 0x13, 0x00, 0x00];
         let (header, consumed) = RecordHeader::parse(&data).unwrap();
 
         assert_eq!(consumed, 8);
-        assert_eq!(header.tag_id, 51);
+        assert_eq!(header.tag_id, 67);
         assert_eq!(header.size, 5000);
+        assert_eq!(header.tag(), TagId::ParaText);
     }
 
     #[test]
@@ -347,23 +352,25 @@ mod tests {
         // Two records: one with size 2, one with size 3
         let mut data = Vec::new();
 
-        // Record 1: Tag 50, Level 0, Size 2
-        data.extend_from_slice(&[0x32, 0x00, 0x20, 0x00]); // header
+        // Record 1: Tag 66 (ParaHeader), Level 0, Size 2
+        data.extend_from_slice(&[0x42, 0x00, 0x20, 0x00]); // header
         data.extend_from_slice(&[0xAA, 0xBB]); // data
 
-        // Record 2: Tag 51, Level 0, Size 3
-        data.extend_from_slice(&[0x33, 0x00, 0x30, 0x00]); // header
+        // Record 2: Tag 67 (ParaText), Level 0, Size 3
+        data.extend_from_slice(&[0x43, 0x00, 0x30, 0x00]); // header
         data.extend_from_slice(&[0xCC, 0xDD, 0xEE]); // data
 
         let records: Vec<_> = RecordIterator::new(&data).collect();
         assert_eq!(records.len(), 2);
 
         let r1 = records[0].as_ref().unwrap();
-        assert_eq!(r1.tag_id(), 50);
+        assert_eq!(r1.tag_id(), 66);
+        assert_eq!(r1.tag(), TagId::ParaHeader);
         assert_eq!(r1.data(), &[0xAA, 0xBB]);
 
         let r2 = records[1].as_ref().unwrap();
-        assert_eq!(r2.tag_id(), 51);
+        assert_eq!(r2.tag_id(), 67);
+        assert_eq!(r2.tag(), TagId::ParaText);
         assert_eq!(r2.data(), &[0xCC, 0xDD, 0xEE]);
     }
 }

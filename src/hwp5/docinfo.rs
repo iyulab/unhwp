@@ -134,9 +134,6 @@ fn parse_face_name(record: &Record) -> Result<String> {
 /// Parses HWPTAG_CHAR_SHAPE record.
 fn parse_char_shape(record: &Record) -> Result<CharShapeData> {
     let data = record.data();
-    if data.len() < 72 {
-        return Err(crate::error::Error::InvalidData("CharShape too small".into()));
-    }
 
     // CharShape structure (simplified):
     // Offset 0-13: Face name IDs for different scripts (7 x u16)
@@ -149,14 +146,27 @@ fn parse_char_shape(record: &Record) -> Result<CharShapeData> {
     // Offset 78-81: Shadow gap X (i8), shadow gap Y (i8), text color (3 bytes)
     // ...
 
+    // Need at least 2 bytes for face name index
+    if data.len() < 2 {
+        return Err(crate::error::Error::InvalidData("CharShape too small".into()));
+    }
+
     let face_name_index = Some(u16::from_le_bytes([data[0], data[1]]));
 
     // Base size at offset 70 (in HWP units, 1/7200 inch)
-    let base_size = i32::from_le_bytes([data[70], data[71], data[72], data[73]]);
-    let font_size = Some((base_size as f32) / 100.0); // Convert to points (approximate)
+    let font_size = if data.len() >= 74 {
+        let size = i32::from_le_bytes([data[70], data[71], data[72], data[73]]);
+        Some((size as f32) / 100.0)
+    } else {
+        None
+    };
 
     // Properties at offset 74
-    let properties = u32::from_le_bytes([data[74], data[75], data[76], data[77]]);
+    let properties = if data.len() >= 78 {
+        u32::from_le_bytes([data[74], data[75], data[76], data[77]])
+    } else {
+        0
+    };
 
     let bold = properties & (1 << 0) != 0;
     let italic = properties & (1 << 1) != 0;
