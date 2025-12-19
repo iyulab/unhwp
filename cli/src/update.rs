@@ -78,6 +78,7 @@ pub fn run_update(check_only: bool, force: bool) -> Result<(), Box<dyn std::erro
         .repo_owner(REPO_OWNER)
         .repo_name(REPO_NAME)
         .bin_name(BIN_NAME)
+        .identifier(&format!("unhwp-cli-{}", target))
         .target(&target)
         .current_version(current_version)
         .show_download_progress(true)

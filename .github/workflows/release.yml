@@ -76,22 +76,29 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path artifacts
-          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.lib_name }}" -Destination "artifacts/"
-          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.cli_name }}" -Destination "artifacts/"
+          New-Item -ItemType Directory -Force -Path artifacts-lib
+          New-Item -ItemType Directory -Force -Path artifacts-cli
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.lib_name }}" -Destination "artifacts-lib/"
+          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.cli_name }}" -Destination "artifacts-cli/"
 
       - name: Prepare artifacts (Unix)
         if: matrix.os != 'windows-latest'
         run: |
-          mkdir -p artifacts
-          cp "target/${{ matrix.target }}/release/${{ matrix.lib_name }}" artifacts/
-          cp "target/${{ matrix.target }}/release/${{ matrix.cli_name }}" artifacts/
+          mkdir -p artifacts-lib artifacts-cli
+          cp "target/${{ matrix.target }}/release/${{ matrix.lib_name }}" artifacts-lib/
+          cp "target/${{ matrix.target }}/release/${{ matrix.cli_name }}" artifacts-cli/
 
-      - name: Upload artifacts
+      - name: Upload lib artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: unhwp-${{ matrix.target }}
-          path: artifacts/
+          name: unhwp-lib-${{ matrix.target }}
+          path: artifacts-lib/
+
+      - name: Upload cli artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: unhwp-cli-${{ matrix.target }}
+          path: artifacts-cli/
 
   publish-crates:
     name: Publish to crates.io
@@ -126,14 +133,27 @@ jobs:
       - name: Prepare release assets
         run: |
           cd artifacts
-          for dir in */; do
+          # Package lib artifacts
+          for dir in unhwp-lib-*/; do
             target="${dir%/}"
-            target="${target#unhwp-}"
+            target="${target#unhwp-lib-}"
             cd "$dir"
             if [[ "$target" == *"windows"* ]]; then
-              zip "../unhwp-$target.zip" *
+              zip "../unhwp-lib-$target.zip" *
             else
-              tar -czvf "../unhwp-$target.tar.gz" *
+              tar -czvf "../unhwp-lib-$target.tar.gz" *
+            fi
+            cd ..
+          done
+          # Package cli artifacts
+          for dir in unhwp-cli-*/; do
+            target="${dir%/}"
+            target="${target#unhwp-cli-}"
+            cd "$dir"
+            if [[ "$target" == *"windows"* ]]; then
+              zip "../unhwp-cli-$target.zip" *
+            else
+              tar -czvf "../unhwp-cli-$target.tar.gz" *
             fi
             cd ..
           done
@@ -148,17 +168,21 @@ jobs:
 
             ### Downloads
 
+            #### CLI (Command-line tool)
             | Platform | Architecture | File |
             |----------|--------------|------|
-            | Windows | x64 | `unhwp-x86_64-pc-windows-msvc.zip` |
-            | Linux | x64 | `unhwp-x86_64-unknown-linux-gnu.tar.gz` |
-            | macOS | Intel | `unhwp-x86_64-apple-darwin.tar.gz` |
-            | macOS | Apple Silicon | `unhwp-aarch64-apple-darwin.tar.gz` |
+            | Windows | x64 | `unhwp-cli-x86_64-pc-windows-msvc.zip` |
+            | Linux | x64 | `unhwp-cli-x86_64-unknown-linux-gnu.tar.gz` |
+            | macOS | Intel | `unhwp-cli-x86_64-apple-darwin.tar.gz` |
+            | macOS | Apple Silicon | `unhwp-cli-aarch64-apple-darwin.tar.gz` |
 
-            ### Contents
-
-            - `unhwp.dll` / `libunhwp.so` / `libunhwp.dylib` - C-ABI library for FFI integration (C#, Python, etc.)
-            - `unhwp` - Command-line tool with self-update support
+            #### Library (FFI / C-ABI)
+            | Platform | Architecture | File |
+            |----------|--------------|------|
+            | Windows | x64 | `unhwp-lib-x86_64-pc-windows-msvc.zip` |
+            | Linux | x64 | `unhwp-lib-x86_64-unknown-linux-gnu.tar.gz` |
+            | macOS | Intel | `unhwp-lib-x86_64-apple-darwin.tar.gz` |
+            | macOS | Apple Silicon | `unhwp-lib-aarch64-apple-darwin.tar.gz` |
 
             ### Installation
 
@@ -167,15 +191,14 @@ jobs:
             cargo install unhwp-cli
             ```
 
-            #### Self-Update
-            The CLI supports automatic updates:
+            #### CLI Self-Update
             ```bash
             unhwp update        # Update to latest version
             unhwp update --check  # Check for updates only
             ```
 
             #### C# / .NET
-            Download the appropriate library for your platform and follow the [C# Integration Guide](https://github.com/iyulab/unhwp/blob/main/docs/csharp-integration.md).
+            Download `unhwp-lib-*.zip` for your platform and follow the [C# Integration Guide](https://github.com/iyulab/unhwp/blob/main/docs/csharp-integration.md).
           files: |
             artifacts/*.zip
             artifacts/*.tar.gz
