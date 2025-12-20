@@ -54,7 +54,7 @@ impl Default for RenderOptions {
         Self {
             image_dir: None,
             image_path_prefix: "assets/".to_string(),
-            table_fallback: TableFallback::Html,
+            table_fallback: TableFallback::default(),
             max_heading_level: 4,
             include_frontmatter: false,
             preserve_line_breaks: true,
@@ -146,9 +146,10 @@ impl RenderOptions {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TableFallback {
     /// Render as HTML table with rowspan/colspan.
-    #[default]
     Html,
     /// Render as simplified Markdown table (ignore merges).
+    /// This is the default as it produces cleaner output for LLM training.
+    #[default]
     SimplifiedMarkdown,
     /// Skip tables with merged cells entirely.
     Skip,
