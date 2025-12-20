@@ -8,61 +8,68 @@ use crate::model::{
 };
 
 /// Control characters in HWP text.
-/// Characters in range 0x0001-0x001F have special meanings.
+/// Characters in range 0x0000-0x001F have special meanings.
 ///
-/// According to HWP 5.0 specification:
-/// - Char controls (1 WCHAR): 0x0001, 0x0004, 0x0009-0x000A, 0x000D-0x0018, 0x001E-0x001F
-/// - Inline controls (8 WCHARs): 0x0002-0x0003, 0x000B, 0x000C
-/// - Extended controls (8 WCHARs): 0x0005-0x0008
+/// According to HWP 5.0 specification (표 6):
+/// - Char controls (1 WCHAR): 0x00, 0x0A, 0x0D, 0x1E, 0x1F
+/// - Inline controls (8 WCHARs): 0x04, 0x05-0x08, 0x09, 0x0C, 0x13-0x14, 0x19-0x1D
+/// - Extended controls (8 WCHARs): 0x01, 0x02, 0x03, 0x0B, 0x0E-0x12, 0x15-0x18
 mod control_char {
-    /// Unusable character (char, 1 WCHAR)
-    pub const RESERVED: u16 = 0x0001;
-    /// Section/column definition (inline, 8 WCHARs)
-    pub const SECTION_DEF: u16 = 0x0002;
-    /// Field start (inline, 8 WCHARs)
-    pub const FIELD_START: u16 = 0x0003;
-    /// Field end (char, 1 WCHAR)
-    pub const FIELD_END: u16 = 0x0004;
-    /// Title mark / control inline (extended, 8 WCHARs)
-    pub const INLINE_CTRL_1: u16 = 0x0005;
-    /// Tab definition (extended, 8 WCHARs)
-    pub const INLINE_CTRL_2: u16 = 0x0006;
-    /// Drawing object (extended, 8 WCHARs)
-    pub const INLINE_CTRL_3: u16 = 0x0007;
-    /// Reserved (extended, 8 WCHARs)
-    pub const INLINE_CTRL_4: u16 = 0x0008;
-    /// Tab (char, 1 WCHAR)
-    pub const TAB: u16 = 0x0009;
-    /// Line break / soft return (char, 1 WCHAR)
+    // === CHAR controls (size = 1 WCHAR) - just skip the control character ===
+    /// Unusable character
+    pub const UNUSABLE: u16 = 0x0000;
+    /// Line break / soft return
     pub const LINE_BREAK: u16 = 0x000A;
-    /// Extended control (table, image, equation, etc.) - (inline, 8 WCHARs)
-    pub const EXTENDED_CONTROL: u16 = 0x000B;
-    /// Hyphen (inline, 8 WCHARs)
-    pub const HYPHEN: u16 = 0x000C;
-    /// Paragraph break (char, 1 WCHAR)
+    /// Paragraph break
     pub const PARA_BREAK: u16 = 0x000D;
-    /// Page break in column (char, 1 WCHAR)
-    pub const PAGE_BREAK_COL: u16 = 0x000E;
-    /// Page break in box (char, 1 WCHAR)
-    pub const PAGE_BREAK_BOX: u16 = 0x000F;
-    /// Hidden comment (char, 1 WCHAR)
-    pub const HIDDEN_COMMENT: u16 = 0x0010;
-    /// Footnote/endnote (char, 1 WCHAR)
-    pub const FOOTNOTE: u16 = 0x0011;
-    /// Auto numbering (char, 1 WCHAR)
-    pub const AUTO_NUMBERING: u16 = 0x0012;
-    /// Page control (char, 1 WCHAR)
-    pub const PAGE_CTRL: u16 = 0x0015;
-    /// Bookmark (char, 1 WCHAR)
-    pub const BOOKMARK: u16 = 0x0016;
-    /// OLE overlay/underlay (char, 1 WCHAR)
-    pub const OLE_OVERLAY: u16 = 0x0017;
-    /// Title mark (char, 1 WCHAR)
-    pub const TITLE_MARK: u16 = 0x0018;
-    /// Non-breaking space (char, 1 WCHAR)
+    /// Non-breaking space
     pub const NBSP: u16 = 0x001E;
-    /// Fixed-width space (char, 1 WCHAR)
+    /// Fixed-width space
     pub const FIXED_SPACE: u16 = 0x001F;
+
+    // === INLINE controls (size = 8 WCHARs) - skip 14 more bytes after control ===
+    /// Field end (hyperlink end, etc.)
+    pub const FIELD_END: u16 = 0x0004;
+    /// Reserved inline 1
+    pub const INLINE_RESERVED_1: u16 = 0x0005;
+    /// Reserved inline 2
+    pub const INLINE_RESERVED_2: u16 = 0x0006;
+    /// Reserved inline 3
+    pub const INLINE_RESERVED_3: u16 = 0x0007;
+    /// Title mark inline
+    pub const INLINE_TITLE_MARK: u16 = 0x0008;
+    /// Tab
+    pub const TAB: u16 = 0x0009;
+    /// Hyphen / reserved
+    pub const HYPHEN: u16 = 0x000C;
+
+    // === EXTENDED controls (size = 8 WCHARs) - skip 14 more bytes after control ===
+    /// Reserved extended
+    pub const RESERVED: u16 = 0x0001;
+    /// Section/column definition
+    pub const SECTION_DEF: u16 = 0x0002;
+    /// Field start (hyperlink, etc.)
+    pub const FIELD_START: u16 = 0x0003;
+    /// Drawing object/table (GSO)
+    pub const EXTENDED_CONTROL: u16 = 0x000B;
+    /// Reserved extended
+    pub const EXT_RESERVED_0E: u16 = 0x000E;
+    /// Hidden comment
+    pub const HIDDEN_COMMENT: u16 = 0x000F;
+    /// Reserved
+    pub const EXT_RESERVED_10: u16 = 0x0010;
+    /// Footnote/endnote
+    pub const FOOTNOTE: u16 = 0x0011;
+    /// Auto numbering
+    pub const AUTO_NUMBERING: u16 = 0x0012;
+    /// Page control
+    pub const PAGE_CTRL: u16 = 0x0015;
+    /// Bookmark
+    pub const BOOKMARK: u16 = 0x0016;
+    /// OLE overlay / 덧말
+    pub const OLE_OVERLAY: u16 = 0x0017;
+    /// Title mark extended
+    pub const TITLE_MARK: u16 = 0x0018;
 }
 
 /// Parses a BodyText section stream into a Section.
@@ -454,6 +461,10 @@ impl ParagraphContext {
 }
 
 /// Parses PARA_TEXT record content.
+///
+/// Control character handling per HWP 5.0 specification (표 6):
+/// - Char controls (size=1): 0x00, 0x0A, 0x0D, 0x1E, 0x1F
+/// - Inline/Extended controls (size=8): All others in 0x01-0x1D range
 fn parse_para_text(
     data: &[u8],
     context: &mut ParagraphContext,
@@ -473,13 +484,29 @@ fn parse_para_text(
         i += 2;
 
         match ch {
+            // === CHAR controls (size = 1 WCHAR) ===
+            control_char::UNUSABLE => {
+                // Null/unusable - end of meaningful text
+                break;
+            }
+
             control_char::LINE_BREAK => {
                 context.push_line_break();
             }
 
+            control_char::PARA_BREAK => {
+                // End of paragraph text
+                break;
+            }
+
+            control_char::NBSP | control_char::FIXED_SPACE => {
+                context.push_char(' ');
+            }
+
+            // === EXTENDED CONTROL (0x0B) - special handling for GSO ===
             control_char::EXTENDED_CONTROL => {
-                // EXTENDED_CONTROL is followed by 7 more WCHARs (14 bytes) of inline data
-                // Structure: [instance_id(4)] [ctrl_type(4)] [reserved(6)]
+                // Extended control is followed by 7 more WCHARs (14 bytes) of inline data
+                // Structure: [ctrl_type(4)] [instance_id(4)] [reserved(6)]
                 if i + 14 > data.len() {
                     break;
                 }
@@ -487,7 +514,7 @@ fn parse_para_text(
                 context.flush_text();
 
                 // Check control type at offset 0-3 of the inline data
-                // GSO identifier: " osg" = [0x20, 0x6F, 0x73, 0x67]
+                // GSO identifier: " osg" = [0x20, 0x6F, 0x73, 0x67] or "gso "
                 let ctrl_type = &data[i..i + 4];
                 let is_gso = ctrl_type == b" osg" || ctrl_type == b"gso ";
 
@@ -503,61 +530,57 @@ fn parse_para_text(
                 i += 14; // Skip remaining 7 WCHARs
             }
 
-            // All controls that consume 8 WCHARs total (including the control char itself)
-            // Inline controls: 0x0002, 0x0003, 0x000B, 0x000C
-            // Extended controls: 0x0005-0x0008
-            control_char::SECTION_DEF
-            | control_char::FIELD_START
-            | control_char::INLINE_CTRL_1
-            | control_char::INLINE_CTRL_2
-            | control_char::INLINE_CTRL_3
-            | control_char::INLINE_CTRL_4
-            | control_char::HYPHEN => {
-                // Skip next 7 WCHARs (14 bytes)
-                i += 14;
-            }
-
-            control_char::PARA_BREAK => {
-                // End of paragraph text
-                break;
-            }
-
+            // === TAB control (0x09) - inline but we render it ===
             control_char::TAB => {
+                // Tab is inline control but we just render it as tab character
+                // Skip the 14 bytes of inline data after the tab
+                if i + 14 <= data.len() {
+                    i += 14;
+                }
                 context.push_char('\t');
             }
 
-            control_char::NBSP | control_char::FIXED_SPACE => {
-                context.push_char(' ');
+            // === INLINE controls (size = 8 WCHARs) - skip 14 bytes ===
+            control_char::FIELD_END // 0x04 - hyperlink end, etc.
+            | control_char::INLINE_RESERVED_1 // 0x05
+            | control_char::INLINE_RESERVED_2 // 0x06
+            | control_char::INLINE_RESERVED_3 // 0x07
+            | control_char::INLINE_TITLE_MARK // 0x08
+            | control_char::HYPHEN // 0x0C
+            | 0x0013 // reserved inline
+            | 0x0014 // reserved inline
+            | 0x0019..=0x001D // reserved inline range
+            => {
+                // Inline controls: skip next 7 WCHARs (14 bytes)
+                if i + 14 <= data.len() {
+                    i += 14;
+                }
             }
 
-            // Char controls (1 WCHAR) - just skip the control character
-            // Includes: 0x0001, 0x0004, 0x000E-0x0018, 0x001A-0x001D
-            control_char::RESERVED
-            | control_char::FIELD_END
-            | control_char::PAGE_BREAK_COL
-            | control_char::PAGE_BREAK_BOX
-            | control_char::HIDDEN_COMMENT
-            | control_char::FOOTNOTE
-            | control_char::AUTO_NUMBERING
-            | 0x0013
-            | 0x0014
-            | control_char::PAGE_CTRL
-            | control_char::BOOKMARK
-            | control_char::OLE_OVERLAY
-            | control_char::TITLE_MARK
-            | 0x0019..=0x001D => {
-                // Skip silently - these are 1 WCHAR char controls
-            }
-
-            0x0000 => {
-                // Null terminator - end of meaningful text
-                break;
+            // === EXTENDED controls (size = 8 WCHARs) - skip 14 bytes ===
+            control_char::RESERVED // 0x01
+            | control_char::SECTION_DEF // 0x02
+            | control_char::FIELD_START // 0x03
+            | control_char::EXT_RESERVED_0E // 0x0E
+            | control_char::HIDDEN_COMMENT // 0x0F
+            | control_char::EXT_RESERVED_10 // 0x10
+            | control_char::FOOTNOTE // 0x11
+            | control_char::AUTO_NUMBERING // 0x12
+            | control_char::PAGE_CTRL // 0x15
+            | control_char::BOOKMARK // 0x16
+            | control_char::OLE_OVERLAY // 0x17
+            | control_char::TITLE_MARK // 0x18
+            => {
+                // Extended controls: skip next 7 WCHARs (14 bytes)
+                if i + 14 <= data.len() {
+                    i += 14;
+                }
             }
 
             _ => {
-                // Regular character
-                if let Some(ch) = char::from_u32(ch as u32) {
-                    context.push_char(ch);
+                // Regular character (code >= 0x20)
+                if let Some(c) = char::from_u32(ch as u32) {
+                    context.push_char(c);
                 }
             }
         }
