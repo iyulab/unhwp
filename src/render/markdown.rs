@@ -123,8 +123,28 @@ impl MarkdownRenderer {
 
         let style = &para.style;
 
-        // Heading prefix
-        if style.heading_level > 0 {
+        // Check if paragraph content looks like a list item (starts with list-like markers)
+        let looks_like_list_item = para.plain_text().trim_start().starts_with(['-', '*', '>', '※', '○', '•', '●']);
+
+        // Determine if heading should be applied
+        // Skip heading markers for:
+        // 1. Empty headings (no text content at all)
+        // 2. Image-only paragraphs (images should not have heading markers)
+        // 3. Paragraphs with list styles set
+        // 4. Paragraphs that look like list items (start with list markers)
+        let should_apply_heading = style.heading_level > 0
+            && para.has_text_content()
+            && !para.is_image_only()
+            && style.list_style.is_none()
+            && !looks_like_list_item;
+
+        // Skip empty headings entirely - don't output anything
+        if style.heading_level > 0 && !para.has_text_content() && !para.is_image_only() {
+            return;
+        }
+
+        // Heading prefix (only for valid headings)
+        if should_apply_heading {
             let level = style.heading_level.min(self.options.max_heading_level);
             output.push_str(&"#".repeat(level as usize));
             output.push(' ');
@@ -377,7 +397,7 @@ fn escape_yaml(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Section, TextStyle};
+    use crate::model::{ImageRef, Section, TextStyle};
 
     #[test]
     fn test_render_simple_paragraph() {
@@ -432,5 +452,83 @@ mod tests {
     fn test_escape_markdown() {
         assert_eq!(escape_markdown("*bold*"), "\\*bold\\*");
         assert_eq!(escape_markdown("[link]"), "\\[link\\]");
+    }
+
+    #[test]
+    fn test_empty_heading_skipped() {
+        // Empty headings should not be output
+        let mut doc = Document::new();
+        let mut section = Section::new(0);
+
+        // Create an empty heading (heading_level > 0 but no content)
+        let para = Paragraph::with_style(crate::model::ParagraphStyle::heading(3));
+        section.push_paragraph(para);
+
+        // Also add a normal paragraph for output
+        section.push_paragraph(Paragraph::text("Normal content"));
+        doc.sections.push(section);
+
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        let result = renderer.render(&doc).unwrap();
+
+        // Should NOT contain empty heading markers
+        assert!(
+            !result.contains("###"),
+            "Empty heading should be skipped: {}",
+            result
+        );
+        // Should still contain normal content
+        assert!(result.contains("Normal content"));
+    }
+
+    #[test]
+    fn test_image_only_heading_no_markers() {
+        // Image-only paragraphs should not have heading markers
+        let mut doc = Document::new();
+        let mut section = Section::new(0);
+
+        // Create a paragraph with heading style but only an image
+        let mut para = Paragraph::with_style(crate::model::ParagraphStyle::heading(2));
+        para.content
+            .push(InlineContent::Image(ImageRef::new("test_image")));
+        section.push_paragraph(para);
+        doc.sections.push(section);
+
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        let result = renderer.render(&doc).unwrap();
+
+        // Should contain the image but NOT heading markers
+        assert!(
+            result.contains("![image]"),
+            "Image should be rendered: {}",
+            result
+        );
+        assert!(
+            !result.contains("##"),
+            "Image-only paragraph should not have heading markers: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_heading_with_text_works() {
+        // Normal headings with text should still work
+        let mut doc = Document::new();
+        let mut section = Section::new(0);
+
+        let mut para = Paragraph::with_style(crate::model::ParagraphStyle::heading(4));
+        para.content
+            .push(InlineContent::Text(TextRun::new("Real Heading")));
+        section.push_paragraph(para);
+        doc.sections.push(section);
+
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        let result = renderer.render(&doc).unwrap();
+
+        assert!(
+            result.contains("#### Real Heading"),
+            "Normal heading should work: {}",
+            result
+        );
     }
 }

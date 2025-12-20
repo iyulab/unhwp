@@ -115,6 +115,44 @@ impl Paragraph {
                 _ => false,
             })
     }
+
+    /// Returns true if this paragraph has meaningful text content.
+    ///
+    /// Returns false if the paragraph is empty or contains only:
+    /// - Images
+    /// - Line breaks
+    /// - Empty text runs
+    /// - Equations without text
+    ///
+    /// This is useful for determining whether heading markers should be applied.
+    pub fn has_text_content(&self) -> bool {
+        self.content.iter().any(|c| match c {
+            InlineContent::Text(run) => !run.text.trim().is_empty(),
+            InlineContent::Link { text, .. } => !text.trim().is_empty(),
+            InlineContent::Footnote(text) => !text.trim().is_empty(),
+            _ => false,
+        })
+    }
+
+    /// Returns true if this paragraph contains only images (and possibly line breaks).
+    ///
+    /// This is used to determine if a paragraph should not have heading markers.
+    pub fn is_image_only(&self) -> bool {
+        if self.content.is_empty() {
+            return false;
+        }
+
+        let has_images = self.content.iter().any(|c| matches!(c, InlineContent::Image(_)));
+        let has_non_empty_text = self.content.iter().any(|c| match c {
+            InlineContent::Text(run) => !run.text.trim().is_empty(),
+            InlineContent::Link { text, .. } => !text.trim().is_empty(),
+            InlineContent::Footnote(text) => !text.trim().is_empty(),
+            InlineContent::Equation(_) => true,
+            _ => false,
+        });
+
+        has_images && !has_non_empty_text
+    }
 }
 
 /// Reference to an embedded image.

@@ -218,29 +218,34 @@ fn parse_para_shape(record: &Record) -> Result<ParaShapeData> {
         ));
     }
 
-    // ParaShape structure (simplified):
-    // Offset 0-3: Properties 1 (u32) - alignment, etc.
+    // ParaShape structure (HWP 5.0 spec 표 43):
+    // Offset 0-3: Properties 1 (u32)
+    //   - bit 0-1: Line spacing type (0=percent, 1=fixed, 2=margin-only)
+    //   - bit 2-4: Alignment (0=justify, 1=left, 2=right, 3=center, 4=distribute, 5=split)
+    //   - bit 23-24: Head shape type (0=none, 1=outline, 2=numbering, 3=bullet)
+    //   - bit 25-27: Paragraph level (1-7 for outline/numbering)
     // Offset 4-7: Left margin
     // Offset 8-11: Right margin
     // Offset 12-15: Indent
     // Offset 16-19: Top margin (space before)
     // Offset 20-23: Bottom margin (space after)
-    // Offset 24-27: Line spacing
+    // Offset 24-27: Line spacing value
     // Offset 28-29: Tab definition ID
     // Offset 30-31: Numbering/bullet ID
     // Offset 32-33: Border fill ID
-    // Offset 34-35: Border offset (left)
     // ...
-    // Offset 50-53: Properties 3 (u32) - outline level, etc.
+    // Offset 50-53: Properties 3 (u32) - extended properties (5.0.2.5+)
 
     let properties1 = u32::from_le_bytes([data[0], data[1], data[2], data[3]]);
 
-    // Alignment is in bits 0-1
-    let alignment = match properties1 & 0x03 {
+    // Alignment is in bits 2-4 (0=justify, 1=left, 2=right, 3=center, 4=distribute, 5=split)
+    let alignment = match (properties1 >> 2) & 0x07 {
         0 => Alignment::Justify,
         1 => Alignment::Left,
         2 => Alignment::Right,
         3 => Alignment::Center,
+        4 => Alignment::Justify, // Distribute -> Justify fallback
+        5 => Alignment::Justify, // Split -> Justify fallback
         _ => Alignment::Left,
     };
 
@@ -254,24 +259,35 @@ fn parse_para_shape(record: &Record) -> Result<ParaShapeData> {
 
     // Line spacing
     let line_spacing_raw = i32::from_le_bytes([data[24], data[25], data[26], data[27]]);
-    // Line spacing type is in properties1 bits 4-5
-    let line_spacing_type = (properties1 >> 4) & 0x03;
+    // Line spacing type is in properties1 bits 0-1 (for newer versions)
+    let line_spacing_type = properties1 & 0x03;
     let line_spacing = match line_spacing_type {
         0 => Some((line_spacing_raw as f32) / 100.0), // Percentage
         1 => Some((line_spacing_raw as f32) / 7200.0 * 72.0), // Fixed (points)
         _ => None,
     };
 
-    // Outline level from Properties3 (offset 50)
-    let outline_level = if data.len() >= 54 {
-        let props3 = u32::from_le_bytes([data[50], data[51], data[52], data[53]]);
-        let level = (props3 & 0x07) as u8;
-        if level > 0 && level <= 6 {
+    // Outline level from Properties1:
+    // - bit 23-24: Paragraph head shape type (0=none, 1=outline, 2=numbering, 3=bullet)
+    // - bit 25-27: Paragraph level (0-7)
+    //   - Level 0: 바탕글 (normal text)
+    //   - Level 1-6: 개요 1-6 (heading 1-6)
+    //   - Level 7: 바탕글 변형 (normal text variant)
+    //
+    // Only treat as heading if head_shape_type == 1 (outline) AND level is 1-6
+    let head_shape_type = (properties1 >> 23) & 0x03;
+    let outline_level = if head_shape_type == 1 {
+        // This is an outline-styled paragraph, extract the level (bits 25-27)
+        let level = ((properties1 >> 25) & 0x07) as u8;
+        if level >= 1 && level <= 6 {
+            // Levels 1-6 are actual headings
             Some(level)
         } else {
+            // Level 0 (바탕글) or 7 (바탕글 변형) are normal text
             None
         }
     } else {
+        // Not an outline style (none, numbering, or bullet)
         None
     };
 

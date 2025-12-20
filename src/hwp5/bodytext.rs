@@ -295,8 +295,8 @@ fn find_cell_end(records: &[Record], start_idx: usize, cell_level: u16) -> usize
 /// Parses cell content from a slice of records starting with ListHeader
 fn parse_cell_content(records: &[Record], styles: &StyleRegistry) -> CellData {
     let mut paragraphs = Vec::new();
-    let rowspan = 1u32;
-    let colspan = 1u32;
+    let mut rowspan = 1u32;
+    let mut colspan = 1u32;
 
     if records.is_empty() {
         return CellData {
@@ -308,14 +308,30 @@ fn parse_cell_content(records: &[Record], styles: &StyleRegistry) -> CellData {
 
     // First record is ListHeader with cell properties
     let list_header = &records[0];
-    let _data = list_header.data();
+    let data = list_header.data();
 
-    // ListHeader structure for table cells:
-    // Offset 0-1: Number of paragraphs
-    // Offset 2-5: TextWidth
-    // For cells, colspan/rowspan is stored in a separate CellSplit record (not ListHeader)
-    // We leave colspan/rowspan as 1 for now - merged cells require additional parsing
-    // TODO: Parse CELL_SPLIT record to get actual rowspan/colspan
+    // ListHeader structure for table cells (based on pyhwp reference):
+    // Offset 0-1: Number of paragraphs (UINT16)
+    // Offset 2-3: unknown1 (UINT16)
+    // Offset 4-7: listflags (UINT32)
+    // Offset 8-9: col - column address (UINT16)
+    // Offset 10-11: row - row address (UINT16)
+    // Offset 12-13: colspan (UINT16)
+    // Offset 14-15: rowspan (UINT16)
+    // Offset 16+: width, height, padding, etc.
+    if data.len() >= 16 {
+        // Parse colspan and rowspan
+        colspan = u16::from_le_bytes([data[12], data[13]]) as u32;
+        rowspan = u16::from_le_bytes([data[14], data[15]]) as u32;
+
+        // Ensure minimum values of 1
+        if colspan == 0 {
+            colspan = 1;
+        }
+        if rowspan == 0 {
+            rowspan = 1;
+        }
+    }
 
     // Parse paragraphs within the cell
     // Process all remaining records - they belong to this cell

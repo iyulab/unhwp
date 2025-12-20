@@ -607,6 +607,7 @@ fn analyze_line_frequencies<'a>(
 /// - Clean orphan captions
 /// - Filter empty table structures
 /// - Preserve YAML frontmatter (pulldown-cmark doesn't handle it natively)
+/// - Preserve markdown table syntax (pipe characters not escaped)
 pub fn stage3_filter_structure(input: &str, options: &CleanupOptions) -> String {
     use pulldown_cmark::{Event, Options, Parser, Tag};
 
@@ -617,7 +618,8 @@ pub fn stage3_filter_structure(input: &str, options: &CleanupOptions) -> String 
         (None, input)
     };
 
-    let parser_options = Options::empty();
+    // Enable tables extension so pipe characters in tables are preserved
+    let parser_options = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH;
     let parser = Parser::new_ext(content, parser_options);
 
     let mut events: Vec<Event> = Vec::new();
@@ -1171,6 +1173,38 @@ mod tests {
         assert!(
             result.contains("format: \"5.0.4.0\""),
             "Format value should be preserved"
+        );
+    }
+
+    #[test]
+    fn test_table_pipe_preservation() {
+        // Table pipe characters should NOT be escaped
+        let input = "| Header 1 | Header 2 |\n|----------|----------|\n| Cell 1 | Cell 2 |";
+        let options = CleanupOptions::default();
+        let result = stage3_filter_structure(input, &options);
+
+        // Pipes should NOT be escaped to \|
+        assert!(
+            !result.contains("\\|"),
+            "Table pipes should not be escaped: {}",
+            result
+        );
+        // Table structure should be preserved
+        assert!(result.contains("|"), "Table pipes should be preserved");
+    }
+
+    #[test]
+    fn test_table_in_full_pipeline() {
+        // Full pipeline should preserve tables correctly
+        let input = "# Title\n\n| Col A | Col B |\n|-------|-------|\n| Data 1 | Data 2 |\n\nParagraph.";
+        let options = CleanupOptions::default();
+        let result = cleanup(input, &options);
+
+        // Table should not have escaped pipes
+        assert!(
+            !result.contains("\\|"),
+            "Full pipeline should not escape table pipes: {}",
+            result
         );
     }
 }
