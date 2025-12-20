@@ -13,36 +13,207 @@ A high-performance Rust library for extracting HWP/HWPX Korean word processor do
 - **Multiple output formats**: Markdown, Plain Text, JSON (with full metadata)
 - **Structure preservation**: Headings, lists, tables, inline formatting
 - **Asset extraction**: Images and binary resources
+- **Self-update**: Built-in update mechanism via GitHub releases
 - **C-ABI FFI**: Native library for C#, Python, and other languages
 - **Parallel processing**: Uses Rayon for multi-section documents
 - **Async support**: Optional Tokio integration
 
+---
+
+## Table of Contents
+
+- [Installation](#installation)
+  - [Pre-built Binaries (Recommended)](#pre-built-binaries-recommended)
+  - [Updating](#updating)
+  - [Install via Cargo](#install-via-cargo)
+- [CLI Usage](#cli-usage)
+- [Rust Library Usage](#rust-library-usage)
+- [C# / .NET Integration](#c--net-integration)
+- [Output Formats](#output-formats)
+- [Feature Flags](#feature-flags)
+- [License](#license)
+
+---
+
 ## Installation
 
-### Rust
+### Pre-built Binaries (Recommended)
 
-```bash
-cargo add unhwp
+Download the latest release from [GitHub Releases](https://github.com/iyulab/unhwp/releases/latest).
+
+#### Windows (x64)
+
+```powershell
+# Download and extract
+Invoke-WebRequest -Uri "https://github.com/iyulab/unhwp/releases/latest/download/unhwp-cli-x86_64-pc-windows-msvc.zip" -OutFile "unhwp.zip"
+Expand-Archive -Path "unhwp.zip" -DestinationPath "."
+
+# Move to a directory in PATH (optional)
+Move-Item -Path "unhwp.exe" -Destination "$env:LOCALAPPDATA\Microsoft\WindowsApps\"
+
+# Verify installation
+unhwp --version
 ```
 
-### CLI
+Or manually:
+1. Download `unhwp-cli-x86_64-pc-windows-msvc.zip`
+2. Extract `unhwp.exe`
+3. Add to PATH or run directly
+
+#### Linux (x64)
 
 ```bash
-cargo install unhwp
+# Download and extract
+curl -LO https://github.com/iyulab/unhwp/releases/latest/download/unhwp-cli-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf unhwp-cli-x86_64-unknown-linux-gnu.tar.gz
+
+# Install to /usr/local/bin (requires sudo)
+sudo mv unhwp /usr/local/bin/
+
+# Or install to user directory
+mkdir -p ~/.local/bin
+mv unhwp ~/.local/bin/
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+
+# Verify installation
+unhwp --version
 ```
 
-### Pre-built Binaries
+#### macOS
 
-Download from [GitHub Releases](https://github.com/iyulab/unhwp/releases):
+```bash
+# Intel Mac
+curl -LO https://github.com/iyulab/unhwp/releases/latest/download/unhwp-cli-x86_64-apple-darwin.tar.gz
+tar -xzf unhwp-cli-x86_64-apple-darwin.tar.gz
+
+# Apple Silicon (M1/M2/M3)
+curl -LO https://github.com/iyulab/unhwp/releases/latest/download/unhwp-cli-aarch64-apple-darwin.tar.gz
+tar -xzf unhwp-cli-aarch64-apple-darwin.tar.gz
+
+# Install
+sudo mv unhwp /usr/local/bin/
+
+# Verify
+unhwp --version
+```
+
+#### Available Binaries
 
 | Platform | Architecture | File |
 |----------|--------------|------|
-| Windows | x64 | `unhwp-x86_64-pc-windows-msvc.zip` |
-| Linux | x64 | `unhwp-x86_64-unknown-linux-gnu.tar.gz` |
-| macOS | Intel | `unhwp-x86_64-apple-darwin.tar.gz` |
-| macOS | Apple Silicon | `unhwp-aarch64-apple-darwin.tar.gz` |
+| Windows | x64 | `unhwp-cli-x86_64-pc-windows-msvc.zip` |
+| Linux | x64 | `unhwp-cli-x86_64-unknown-linux-gnu.tar.gz` |
+| macOS | Intel | `unhwp-cli-x86_64-apple-darwin.tar.gz` |
+| macOS | Apple Silicon | `unhwp-cli-aarch64-apple-darwin.tar.gz` |
 
-## Quick Start
+### Updating
+
+unhwp includes a built-in self-update mechanism:
+
+```bash
+# Check for updates
+unhwp update --check
+
+# Update to latest version
+unhwp update
+
+# Force reinstall (even if on latest)
+unhwp update --force
+```
+
+The update command automatically:
+- Detects your platform
+- Downloads the appropriate binary from GitHub Releases
+- Replaces the current executable
+- Preserves your settings
+
+### Install via Cargo
+
+If you have Rust installed:
+
+```bash
+# Install CLI
+cargo install unhwp-cli
+
+# Add library to your project
+cargo add unhwp
+```
+
+---
+
+## CLI Usage
+
+### Basic Conversion
+
+```bash
+# Convert HWP/HWPX to Markdown (creates <filename>_output/ directory)
+unhwp document.hwp
+
+# Specify output directory
+unhwp document.hwp ./output
+
+# Using subcommand
+unhwp convert document.hwp -o ./output
+```
+
+### Output Structure
+
+```
+document_output/
+├── extract.md      # Markdown output
+├── extract.txt     # Plain text output
+├── content.json    # Full structured JSON
+└── images/         # Extracted images
+    ├── image1.png
+    └── image2.jpg
+```
+
+### Cleanup Options (for LLM Training Data)
+
+```bash
+# Default cleanup - balanced normalization
+unhwp document.hwp --cleanup
+
+# Minimal cleanup - essential normalization only
+unhwp document.hwp --cleanup-minimal
+
+# Aggressive cleanup - maximum purification
+unhwp document.hwp --cleanup-aggressive
+```
+
+### Commands
+
+```bash
+unhwp --help                    # Show help
+unhwp --version                 # Show version
+unhwp version                   # Show detailed version info
+unhwp update --check            # Check for updates
+unhwp update                    # Self-update to latest version
+unhwp convert FILE [OPTIONS]    # Convert with explicit subcommand
+```
+
+### Examples
+
+```bash
+# Basic conversion
+unhwp report.hwp
+
+# Convert with cleanup for AI training
+unhwp report.hwp ./cleaned --cleanup-aggressive
+
+# Batch conversion (shell)
+for f in *.hwp; do unhwp "$f" --cleanup; done
+
+# Batch conversion (PowerShell)
+Get-ChildItem *.hwp | ForEach-Object { unhwp $_.FullName --cleanup }
+```
+
+---
+
+## Rust Library Usage
+
+### Quick Start
 
 ```rust
 use unhwp::{parse_file, to_markdown};
@@ -104,24 +275,122 @@ let markdown = Unhwp::new()
 
 ## C# / .NET Integration
 
-unhwp provides C-ABI compatible bindings for use with P/Invoke:
+unhwp provides C-ABI compatible bindings for seamless integration with C# and .NET applications.
+
+### Getting the Native Library
+
+Build from source or download from [GitHub Releases](https://github.com/iyulab/unhwp/releases):
+
+| Platform | Library File |
+|----------|-------------|
+| Windows x64 | `unhwp.dll` |
+| Linux x64 | `libunhwp.so` |
+| macOS | `libunhwp.dylib` |
+
+```bash
+# Build native library from source
+cargo build --release
+# Output: target/release/unhwp.dll (Windows)
+#         target/release/libunhwp.so (Linux)
+#         target/release/libunhwp.dylib (macOS)
+```
+
+### Quick Start
 
 ```csharp
+using Unhwp;
+
+// Parse document once, access multiple outputs
 using var doc = HwpDocument.Parse("document.hwp");
 
-// Access multiple output formats
+// Get Markdown
 string markdown = doc.Markdown;
-string text = doc.RawText;
-string json = doc.RawContent;  // Full structured JSON
+File.WriteAllText("output.md", markdown);
 
-// Extract images
+// Get plain text
+string text = doc.RawText;
+
+// Get full structured JSON (metadata, styles, formatting)
+string json = doc.RawContent;
+
+// Extract all images
 foreach (var image in doc.Images)
 {
     image.SaveTo($"./images/{image.Name}");
+    Console.WriteLine($"Saved: {image.Name} ({image.Size} bytes)");
+}
+
+// Document statistics
+Console.WriteLine($"Sections: {doc.SectionCount}");
+Console.WriteLine($"Paragraphs: {doc.ParagraphCount}");
+```
+
+### With Cleanup Options
+
+```csharp
+var options = new ConversionOptions
+{
+    EnableCleanup = true,
+    CleanupPreset = CleanupPreset.Aggressive,  // For LLM training
+    IncludeFrontmatter = true,
+    TableFallback = TableFallback.Html
+};
+
+using var doc = HwpDocument.Parse("document.hwp", options);
+File.WriteAllText("cleaned.md", doc.Markdown);
+```
+
+### Static Methods (Simple API)
+
+```csharp
+// One-liner conversion
+string markdown = HwpConverter.ToMarkdown("document.hwp");
+
+// With cleanup
+string cleanedMarkdown = HwpConverter.ToMarkdown("document.hwp", enableCleanup: true);
+
+// Plain text extraction
+string text = HwpConverter.ExtractText("document.hwp");
+
+// From byte array or stream
+byte[] data = File.ReadAllBytes("document.hwp");
+string md = HwpConverter.BytesToMarkdown(data);
+```
+
+### ASP.NET Core Example
+
+```csharp
+[ApiController]
+[Route("api/[controller]")]
+public class DocumentController : ControllerBase
+{
+    [HttpPost("convert")]
+    public async Task<IActionResult> ConvertHwp(IFormFile file)
+    {
+        if (file == null) return BadRequest("No file");
+
+        using var ms = new MemoryStream();
+        await file.CopyToAsync(ms);
+
+        try
+        {
+            var markdown = HwpConverter.BytesToMarkdown(ms.ToArray(), enableCleanup: true);
+            return Ok(new { markdown });
+        }
+        catch (HwpException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+    }
 }
 ```
 
-See [C# Integration Guide](docs/csharp-integration.md) for complete documentation.
+See [C# Integration Guide](docs/csharp-integration.md) for complete documentation including:
+- Full P/Invoke wrapper code
+- NuGet package setup
+- Error handling
+- Memory management
+- Thread safety
 
 ## Supported Formats
 
@@ -150,19 +419,6 @@ unhwp maintains document structure during conversion:
 | `hwpx` | HWPX XML format support | ✅ |
 | `hwp3` | Legacy HWP 3.x support (EUC-KR) | ❌ |
 | `async` | Async I/O with Tokio | ❌ |
-
-## CLI Usage
-
-```bash
-# Convert to Markdown
-unhwp-cli document.hwp -o output.md
-
-# Extract plain text
-unhwp-cli document.hwp --text
-
-# Extract with cleanup (for LLM training)
-unhwp-cli document.hwp --cleanup
-```
 
 ## Performance
 
