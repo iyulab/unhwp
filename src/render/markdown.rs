@@ -16,18 +16,14 @@ const MAX_HEADING_TEXT_LENGTH: usize = 80;
 /// Used to detect paragraphs that should not be rendered as headings.
 const LIST_MARKERS: &[char] = &[
     // ASCII markers
-    '-', '*', '>',
-    // Korean/Asian markers
-    '※', '○', '•', '●', '◦', '◎',
-    '□', '■', '▪', '▫', '◇', '◆',
-    '☐', '☑', '☒', '✓', '✗',
-    'ㅇ',  // Korean jamo (circle)
-    'ㆍ',  // Korean middle dot (U+318D)
-    '·',   // Middle dot (U+00B7)
-    '∙',   // Bullet operator (U+2219)
+    '-', '*', '>', // Korean/Asian markers
+    '※', '○', '•', '●', '◦', '◎', '□', '■', '▪', '▫', '◇', '◆', '☐', '☑', '☒', '✓', '✗',
+    'ㅇ', // Korean jamo (circle)
+    'ㆍ', // Korean middle dot (U+318D)
+    '·',  // Middle dot (U+00B7)
+    '∙',  // Bullet operator (U+2219)
     // Arrows (commonly used as list markers in Korean documents)
-    '→', '←', '↔', '⇒', '⇐', '⇔',
-    '►', '▶', '▷', '◀', '◁', '▻',
+    '→', '←', '↔', '⇒', '⇐', '⇔', '►', '▶', '▷', '◀', '◁', '▻',
 ];
 
 /// Markdown renderer.

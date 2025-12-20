@@ -75,9 +75,7 @@ mod control_char {
 /// Parses a BodyText section stream into a Section.
 pub fn parse_section(data: &[u8], section_index: usize, styles: &StyleRegistry) -> Result<Section> {
     // First, collect all records into a Vec for indexed access
-    let records: Vec<Record> = RecordIterator::new(data)
-        .filter_map(|r| r.ok())
-        .collect();
+    let records: Vec<Record> = RecordIterator::new(data).filter_map(|r| r.ok()).collect();
 
     let mut section = Section::new(section_index);
     let mut paragraph_context = ParagraphContext::new();
@@ -127,7 +125,12 @@ pub fn parse_section(data: &[u8], section_index: usize, styles: &StyleRegistry) 
 
             TagId::ParaText => {
                 let text_data = record.data();
-                parse_para_text(text_data, &mut paragraph_context, &mut picture_counter, styles)?;
+                parse_para_text(
+                    text_data,
+                    &mut paragraph_context,
+                    &mut picture_counter,
+                    styles,
+                )?;
             }
 
             TagId::ParaCharShape => {
@@ -176,8 +179,8 @@ pub fn parse_section(data: &[u8], section_index: usize, styles: &StyleRegistry) 
 /// In HWP, table cells (ListHeader) are at the SAME level as the Table record,
 /// so we look for records with level < base_level (not <=).
 fn find_block_end(records: &[Record], start_idx: usize, base_level: u16) -> usize {
-    for i in (start_idx + 1)..records.len() {
-        if records[i].level() < base_level {
+    for (i, record) in records.iter().enumerate().skip(start_idx + 1) {
+        if record.level() < base_level {
             return i;
         }
     }
@@ -285,8 +288,7 @@ struct CellData {
 
 /// Finds the end of a cell (next ListHeader at same level or lower level record)
 fn find_cell_end(records: &[Record], start_idx: usize, cell_level: u16) -> usize {
-    for i in (start_idx + 1)..records.len() {
-        let record = &records[i];
+    for (i, record) in records.iter().enumerate().skip(start_idx + 1) {
         // End when we hit another ListHeader at the same level (next cell)
         // or when we drop below the cell level (end of table)
         if record.level() < cell_level {
@@ -361,7 +363,12 @@ fn parse_cell_content(records: &[Record], styles: &StyleRegistry) -> CellData {
             }
 
             TagId::ParaText => {
-                let _ = parse_para_text(record.data(), &mut para_context, &mut picture_counter, styles);
+                let _ = parse_para_text(
+                    record.data(),
+                    &mut para_context,
+                    &mut picture_counter,
+                    styles,
+                );
             }
 
             TagId::ParaCharShape => {

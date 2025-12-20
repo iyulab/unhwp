@@ -1196,7 +1196,8 @@ mod tests {
     #[test]
     fn test_table_in_full_pipeline() {
         // Full pipeline should preserve tables correctly
-        let input = "# Title\n\n| Col A | Col B |\n|-------|-------|\n| Data 1 | Data 2 |\n\nParagraph.";
+        let input =
+            "# Title\n\n| Col A | Col B |\n|-------|-------|\n| Data 1 | Data 2 |\n\nParagraph.";
         let options = CleanupOptions::default();
         let result = cleanup(input, &options);
 

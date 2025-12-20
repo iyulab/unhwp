@@ -142,7 +142,10 @@ impl Paragraph {
             return false;
         }
 
-        let has_images = self.content.iter().any(|c| matches!(c, InlineContent::Image(_)));
+        let has_images = self
+            .content
+            .iter()
+            .any(|c| matches!(c, InlineContent::Image(_)));
         let has_non_empty_text = self.content.iter().any(|c| match c {
             InlineContent::Text(run) => !run.text.trim().is_empty(),
             InlineContent::Link { text, .. } => !text.trim().is_empty(),

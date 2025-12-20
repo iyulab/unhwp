@@ -279,7 +279,7 @@ fn parse_para_shape(record: &Record) -> Result<ParaShapeData> {
     let outline_level = if head_shape_type == 1 {
         // This is an outline-styled paragraph, extract the level (bits 25-27)
         let level = ((properties1 >> 25) & 0x07) as u8;
-        if level >= 1 && level <= 6 {
+        if (1..=6).contains(&level) {
             // Levels 1-6 are actual headings
             Some(level)
         } else {
