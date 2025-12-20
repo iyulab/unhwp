@@ -8,6 +8,28 @@ use crate::model::{
 
 use std::collections::HashMap;
 
+/// Maximum character length for a heading.
+/// Text longer than this is unlikely to be a semantic heading.
+const MAX_HEADING_TEXT_LENGTH: usize = 80;
+
+/// Common list/bullet markers including Korean characters.
+/// Used to detect paragraphs that should not be rendered as headings.
+const LIST_MARKERS: &[char] = &[
+    // ASCII markers
+    '-', '*', '>',
+    // Korean/Asian markers
+    '※', '○', '•', '●', '◦', '◎',
+    '□', '■', '▪', '▫', '◇', '◆',
+    '☐', '☑', '☒', '✓', '✗',
+    'ㅇ',  // Korean jamo (circle)
+    'ㆍ',  // Korean middle dot (U+318D)
+    '·',   // Middle dot (U+00B7)
+    '∙',   // Bullet operator (U+2219)
+    // Arrows (commonly used as list markers in Korean documents)
+    '→', '←', '↔', '⇒', '⇐', '⇔',
+    '►', '▶', '▷', '◀', '◁', '▻',
+];
+
 /// Markdown renderer.
 #[derive(Debug)]
 pub struct MarkdownRenderer {
@@ -122,9 +144,18 @@ impl MarkdownRenderer {
         }
 
         let style = &para.style;
+        let plain_text = para.plain_text();
+        let trimmed_text = plain_text.trim();
 
         // Check if paragraph content looks like a list item (starts with list-like markers)
-        let looks_like_list_item = para.plain_text().trim_start().starts_with(['-', '*', '>', '※', '○', '•', '●']);
+        let looks_like_list_item = trimmed_text
+            .chars()
+            .next()
+            .map(|c| LIST_MARKERS.contains(&c))
+            .unwrap_or(false);
+
+        // Check if text is too long to be a meaningful heading
+        let text_too_long = trimmed_text.chars().count() > MAX_HEADING_TEXT_LENGTH;
 
         // Determine if heading should be applied
         // Skip heading markers for:
@@ -132,11 +163,13 @@ impl MarkdownRenderer {
         // 2. Image-only paragraphs (images should not have heading markers)
         // 3. Paragraphs with list styles set
         // 4. Paragraphs that look like list items (start with list markers)
+        // 5. Paragraphs with text too long to be semantic headings
         let should_apply_heading = style.heading_level > 0
             && para.has_text_content()
             && !para.is_image_only()
             && style.list_style.is_none()
-            && !looks_like_list_item;
+            && !looks_like_list_item
+            && !text_too_long;
 
         // Skip empty headings entirely - don't output anything
         if style.heading_level > 0 && !para.has_text_content() && !para.is_image_only() {
@@ -528,6 +561,96 @@ mod tests {
         assert!(
             result.contains("#### Real Heading"),
             "Normal heading should work: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_korean_bullet_marker_not_heading() {
+        // Paragraphs starting with Korean bullet markers should not be headings
+        let mut doc = Document::new();
+        let mut section = Section::new(0);
+
+        // Korean jamo 'ㅇ' as bullet marker
+        let mut para = Paragraph::with_style(crate::model::ParagraphStyle::heading(2));
+        para.content
+            .push(InlineContent::Text(TextRun::new("ㅇ항목 내용입니다")));
+        section.push_paragraph(para);
+        doc.sections.push(section);
+
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        let result = renderer.render(&doc).unwrap();
+
+        assert!(
+            !result.contains("##"),
+            "Korean bullet marker should not be heading: {}",
+            result
+        );
+        assert!(
+            result.contains("ㅇ항목"),
+            "Content should still be present: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_long_text_not_heading() {
+        // Very long text (>80 chars) should not be treated as a heading
+        let mut doc = Document::new();
+        let mut section = Section::new(0);
+
+        // This text is exactly 100+ characters to ensure it exceeds MAX_HEADING_TEXT_LENGTH (80)
+        let long_text = "이것은 매우 긴 문장입니다. 제목으로 사용하기에는 너무 길어서 본문으로 처리되어야 합니다. 일반적인 제목은 짧고 간결해야 하며, 본문과 구분되어야 합니다.";
+        assert!(
+            long_text.chars().count() > 80,
+            "Test text should be longer than 80 chars"
+        );
+
+        let mut para = Paragraph::with_style(crate::model::ParagraphStyle::heading(3));
+        para.content
+            .push(InlineContent::Text(TextRun::new(long_text)));
+        section.push_paragraph(para);
+        doc.sections.push(section);
+
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        let result = renderer.render(&doc).unwrap();
+
+        assert!(
+            !result.contains("###"),
+            "Long text should not have heading markers: {}",
+            result
+        );
+        assert!(
+            result.contains("이것은 매우"),
+            "Content should still be present: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_max_heading_level_capped() {
+        // Heading levels beyond max should be capped
+        let mut doc = Document::new();
+        let mut section = Section::new(0);
+
+        let mut para = Paragraph::with_style(crate::model::ParagraphStyle::heading(6));
+        para.content
+            .push(InlineContent::Text(TextRun::new("Deep Heading")));
+        section.push_paragraph(para);
+        doc.sections.push(section);
+
+        // Default max_heading_level is now 4
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        let result = renderer.render(&doc).unwrap();
+
+        assert!(
+            result.contains("#### Deep Heading"),
+            "Heading level 6 should be capped to 4: {}",
+            result
+        );
+        assert!(
+            !result.contains("######"),
+            "Should not have 6 hash marks: {}",
             result
         );
     }

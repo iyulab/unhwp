@@ -19,6 +19,7 @@ pub struct RenderOptions {
 
     /// Maximum heading level to use (1-6).
     /// Headings beyond this level will use this level.
+    /// Default: 4 (HWP documents often misuse deep heading levels for visual styling)
     pub max_heading_level: u8,
 
     /// Whether to include metadata as YAML frontmatter.
@@ -54,7 +55,7 @@ impl Default for RenderOptions {
             image_dir: None,
             image_path_prefix: "assets/".to_string(),
             table_fallback: TableFallback::Html,
-            max_heading_level: 6,
+            max_heading_level: 4,
             include_frontmatter: false,
             preserve_line_breaks: true,
             include_empty_paragraphs: false,
@@ -130,6 +131,13 @@ impl RenderOptions {
     /// Enables aggressive cleanup (maximum purification).
     pub fn with_aggressive_cleanup(mut self) -> Self {
         self.cleanup = Some(CleanupOptions::aggressive());
+        self
+    }
+
+    /// Sets the maximum heading level (1-6).
+    /// Headings beyond this level will be capped to this level.
+    pub fn with_max_heading_level(mut self, level: u8) -> Self {
+        self.max_heading_level = level.clamp(1, 6);
         self
     }
 }
