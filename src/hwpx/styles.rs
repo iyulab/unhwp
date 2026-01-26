@@ -57,8 +57,9 @@ pub fn parse_styles(xml: &str, registry: &mut StyleRegistry) -> Result<()> {
                     "underline" if in_char_properties => {
                         if let Some((_, ref mut style)) = current_char_style {
                             // Check underline type - any non-none value means underlined
+                            // Use case-insensitive comparison (HWPML uses "NONE", not "none")
                             let utype = get_string_attr(&e, "type").unwrap_or_default();
-                            style.underline = utype != "none" && utype != "0";
+                            style.underline = !utype.eq_ignore_ascii_case("none") && utype != "0";
                             if utype.is_empty() {
                                 style.underline = true; // Default if just <underline/>
                             }
@@ -66,7 +67,16 @@ pub fn parse_styles(xml: &str, registry: &mut StyleRegistry) -> Result<()> {
                     }
                     "strikeout" | "strikethrough" if in_char_properties => {
                         if let Some((_, ref mut style)) = current_char_style {
-                            style.strikethrough = true;
+                            // Check shape/type attribute - "NONE" or "none" means no strikethrough
+                            let shape = get_string_attr(&e, "shape").unwrap_or_default();
+                            let stype = get_string_attr(&e, "type").unwrap_or_default();
+                            let is_none = shape.eq_ignore_ascii_case("none")
+                                || stype.eq_ignore_ascii_case("none")
+                                || shape == "0"
+                                || stype == "0";
+                            if !is_none {
+                                style.strikethrough = true;
+                            }
                         }
                     }
                     // Superscript/subscript (HWPML uses supscript/subscript in charShape)

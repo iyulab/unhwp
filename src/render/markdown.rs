@@ -1,9 +1,9 @@
 //! Markdown renderer implementation.
 
-use super::{RenderOptions, TableFallback};
+use super::RenderOptions;
 use crate::error::Result;
 use crate::model::{
-    Alignment, Block, Document, InlineContent, ListStyle, Paragraph, Table, TextRun,
+    Alignment, Block, Document, InlineContent, ListStyle, Paragraph, Table, TableCell, TextRun,
 };
 
 use std::collections::HashMap;
@@ -16,15 +16,31 @@ const MAX_HEADING_TEXT_LENGTH: usize = 80;
 /// Used to detect paragraphs that should not be rendered as headings.
 const LIST_MARKERS: &[char] = &[
     // ASCII markers
-    '-', '*', '>', // Korean/Asian markers
-    '※', '○', '•', '●', '◦', '◎', '□', '■', '▪', '▫', '◇', '◆', '☐', '☑', '☒', '✓', '✗',
-    'ㅇ', // Korean jamo (circle)
+    '-', '*', '>', // Korean/Asian bullet markers (for list items)
+    '•', '◦', '▪', '▫', '☐', '☑', '☒', '✓', '✗', 'ㅇ', // Korean jamo (circle)
     'ㆍ', // Korean middle dot (U+318D)
     '·',  // Middle dot (U+00B7)
     '∙',  // Bullet operator (U+2219)
     // Arrows (commonly used as list markers in Korean documents)
     '→', '←', '↔', '⇒', '⇐', '⇔', '►', '▶', '▷', '◀', '◁', '▻',
 ];
+
+/// Section markers that indicate a heading/title in Korean documents.
+/// These are distinct from list markers and suggest the start of a new section.
+const SECTION_MARKERS: &[char] = &[
+    '◎', // Double circle - commonly used for main sections
+    '※', // Reference mark - used for notes/sections
+    '◇', // Diamond outline
+    '◆', // Diamond filled
+    '■', // Black square - often section headers
+    '□', // White square - often section headers
+    '●', // Black circle - can be section or list (context-dependent)
+    '○', // White circle - can be section or list (context-dependent)
+];
+
+/// Maximum length for a section-marker heading to be auto-detected.
+/// Longer text is likely a paragraph, not a heading.
+const MAX_SECTION_MARKER_HEADING_LENGTH: usize = 60;
 
 /// Markdown renderer.
 #[derive(Debug)]
@@ -142,16 +158,29 @@ impl MarkdownRenderer {
         let style = &para.style;
         let plain_text = para.plain_text();
         let trimmed_text = plain_text.trim();
+        let first_char = trimmed_text.chars().next();
 
         // Check if paragraph content looks like a list item (starts with list-like markers)
-        let looks_like_list_item = trimmed_text
-            .chars()
-            .next()
+        let looks_like_list_item = first_char
             .map(|c| LIST_MARKERS.contains(&c))
             .unwrap_or(false);
 
+        // Check if paragraph starts with a section marker (potential heading)
+        let starts_with_section_marker = first_char
+            .map(|c| SECTION_MARKERS.contains(&c))
+            .unwrap_or(false);
+
         // Check if text is too long to be a meaningful heading
-        let text_too_long = trimmed_text.chars().count() > MAX_HEADING_TEXT_LENGTH;
+        let text_length = trimmed_text.chars().count();
+        let text_too_long = text_length > MAX_HEADING_TEXT_LENGTH;
+
+        // Auto-detect section marker headings:
+        // If text starts with a section marker and is short enough, treat as heading
+        let is_section_marker_heading = starts_with_section_marker
+            && text_length <= MAX_SECTION_MARKER_HEADING_LENGTH
+            && text_length > 1  // Must have more than just the marker
+            && style.heading_level == 0  // Only auto-detect if not already a heading
+            && style.list_style.is_none();
 
         // Determine if heading should be applied
         // Skip heading markers for:
@@ -160,7 +189,7 @@ impl MarkdownRenderer {
         // 3. Paragraphs with list styles set
         // 4. Paragraphs that look like list items (start with list markers)
         // 5. Paragraphs with text too long to be semantic headings
-        let should_apply_heading = style.heading_level > 0
+        let should_apply_heading = (style.heading_level > 0 || is_section_marker_heading)
             && para.has_text_content()
             && !para.is_image_only()
             && style.list_style.is_none()
@@ -174,12 +203,18 @@ impl MarkdownRenderer {
 
         // Heading prefix (only for valid headings)
         if should_apply_heading {
-            let level = style.heading_level.min(self.options.max_heading_level);
+            // Use heading level from style, or default to h2 for auto-detected section markers
+            let level = if style.heading_level > 0 {
+                style.heading_level.min(self.options.max_heading_level)
+            } else {
+                2 // Default level for section marker headings
+            };
             output.push_str(&"#".repeat(level as usize));
             output.push(' ');
         }
 
         // List prefix
+        let is_list_item = style.list_style.is_some();
         if let Some(ref list_style) = style.list_style {
             let indent = "  ".repeat(style.indent_level as usize);
             output.push_str(&indent);
@@ -204,7 +239,12 @@ impl MarkdownRenderer {
 
         // End paragraph
         output.push('\n');
-        if self.options.paragraph_spacing && style.heading_level == 0 {
+
+        // Add blank line between paragraphs for proper Markdown separation
+        // But NOT after list items (consecutive list items should be adjacent)
+        // and NOT after headings (blank line added before next content is enough)
+        let is_heading = should_apply_heading || style.heading_level > 0;
+        if self.options.paragraph_spacing && !is_heading && !is_list_item {
             output.push('\n');
         }
     }
@@ -277,10 +317,8 @@ impl MarkdownRenderer {
             prefix.push('*');
             suffix.insert(0, '*');
         }
-        if style.underline {
-            prefix.push_str("<u>");
-            suffix.insert_str(0, "</u>");
-        }
+        // Note: Markdown doesn't support underline natively.
+        // We skip underline formatting as <u> tags are not standard markdown.
         if style.strikethrough {
             prefix.push_str("~~");
             suffix.insert_str(0, "~~");
@@ -305,27 +343,30 @@ impl MarkdownRenderer {
             return;
         }
 
-        // Check if table has merged cells
-        if table.has_merged_cells() {
-            match self.options.table_fallback {
-                TableFallback::Html => {
-                    self.render_table_html(table, output);
-                    return;
-                }
-                TableFallback::Skip => {
-                    output.push_str("<!-- Complex table omitted -->\n\n");
-                    return;
-                }
-                TableFallback::SimplifiedMarkdown => {
-                    // Continue with simplified rendering
-                }
+        // Single-row tables are typically used as decorative boxes, not actual tables.
+        // Render them as plain text instead.
+        if table.rows.len() == 1 {
+            let row = &table.rows[0];
+            let texts: Vec<String> = row
+                .cells
+                .iter()
+                .map(|cell| self.render_cell_content(cell))
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !texts.is_empty() {
+                output.push_str(&texts.join(" "));
+                output.push_str("\n\n");
             }
+            return;
         }
 
-        self.render_table_markdown(table, output);
+        // Render all tables as markdown, including those with rowspan
+        // Rowspan cells are expanded: content appears in first row, subsequent rows get empty cells
+        self.render_table_markdown_with_rowspan(table, output);
     }
 
-    /// Renders a simple table as Markdown.
+    /// Renders a simple table as Markdown (without colspan handling).
+    #[allow(dead_code)]
     fn render_table_markdown(&self, table: &Table, output: &mut String) {
         let _col_count = table.column_count();
 
@@ -358,7 +399,195 @@ impl MarkdownRenderer {
         output.push('\n');
     }
 
-    /// Renders a table with merged cells as HTML.
+    /// Renders a table as plain text (for complex tables with rowspan).
+    #[allow(dead_code)]
+    fn render_table_as_text(&self, table: &Table, output: &mut String) {
+        for row in &table.rows {
+            let texts: Vec<String> = row
+                .cells
+                .iter()
+                .map(|cell| self.render_cell_content(cell))
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !texts.is_empty() {
+                output.push_str(&texts.join(" | "));
+                output.push_str("\n\n");
+            }
+        }
+    }
+
+    /// Renders a table as Markdown, handling both rowspan and colspan.
+    /// Rowspan cells have content in first row only; subsequent rows get empty cells.
+    fn render_table_markdown_with_rowspan(&self, table: &Table, output: &mut String) {
+        // First, build a grid that expands rowspan/colspan
+        // Each cell in grid: (content_string, alignment, is_continuation)
+        // is_continuation = true means this cell is part of a rowspan from above
+
+        // Calculate total columns considering colspan
+        let total_cols = table.rows.iter()
+            .map(|row| row.cells.iter().map(|c| c.colspan as usize).sum::<usize>())
+            .max()
+            .unwrap_or(0);
+
+        if total_cols == 0 {
+            return;
+        }
+
+        // Build expanded grid
+        // Track which cells are "occupied" by rowspan from previous rows
+        // rowspan_remaining[col] = (remaining_rows, content, alignment)
+        let mut rowspan_remaining: Vec<Option<(u32, String, Alignment)>> = vec![None; total_cols];
+
+        for (row_idx, row) in table.rows.iter().enumerate() {
+            let mut col_idx = 0;
+            let mut cell_iter = row.cells.iter();
+            let mut row_output = String::from("|");
+            let mut alignments: Vec<Alignment> = Vec::new();
+
+            while col_idx < total_cols {
+                // Check if this column is occupied by rowspan from above
+                if let Some((remaining, _, align)) = &rowspan_remaining[col_idx] {
+                    if *remaining > 0 {
+                        // This cell is a continuation of rowspan - render empty
+                        row_output.push_str(" |");
+                        alignments.push(*align);
+                        rowspan_remaining[col_idx] = if *remaining > 1 {
+                            Some((*remaining - 1, String::new(), *align))
+                        } else {
+                            None
+                        };
+                        col_idx += 1;
+                        continue;
+                    }
+                }
+
+                // Get next cell from the row
+                if let Some(cell) = cell_iter.next() {
+                    let text = self.render_cell_content(cell);
+                    row_output.push_str(&format!(" {} |", text.trim()));
+                    alignments.push(cell.alignment);
+
+                    // Handle colspan - add empty cells
+                    for _ in 1..cell.colspan {
+                        row_output.push_str(" |");
+                        alignments.push(cell.alignment);
+                    }
+
+                    // Handle rowspan - mark columns as occupied for future rows
+                    if cell.rowspan > 1 {
+                        for c in col_idx..(col_idx + cell.colspan as usize).min(total_cols) {
+                            rowspan_remaining[c] = Some((cell.rowspan - 1, String::new(), cell.alignment));
+                        }
+                    }
+
+                    col_idx += cell.colspan as usize;
+                } else {
+                    // No more cells in row, fill with empty
+                    row_output.push_str(" |");
+                    alignments.push(Alignment::Left);
+                    col_idx += 1;
+                }
+            }
+
+            output.push_str(&row_output);
+            output.push('\n');
+
+            // Add separator after header row
+            if row_idx == 0 {
+                output.push('|');
+                for align in &alignments {
+                    let sep = match align {
+                        Alignment::Left => " :--- |",
+                        Alignment::Center => " :---: |",
+                        Alignment::Right => " ---: |",
+                        Alignment::Justify => " --- |",
+                    };
+                    output.push_str(sep);
+                }
+                output.push('\n');
+            }
+        }
+
+        output.push('\n');
+    }
+
+    /// Renders a table as Markdown, handling colspan by adding empty cells.
+    #[allow(dead_code)]
+    fn render_table_markdown_with_colspan(&self, table: &Table, output: &mut String) {
+        for (row_idx, row) in table.rows.iter().enumerate() {
+            output.push('|');
+
+            for cell in &row.cells {
+                let text = self.render_cell_content(cell);
+                output.push_str(&format!(" {} |", text.trim()));
+
+                // Add empty cells for colspan > 1
+                for _ in 1..cell.colspan {
+                    output.push_str(" |");
+                }
+            }
+
+            output.push('\n');
+
+            // Add separator after header row
+            if row_idx == 0 {
+                output.push('|');
+                for cell in &row.cells {
+                    let sep = match cell.alignment {
+                        Alignment::Left => ":---",
+                        Alignment::Center => ":---:",
+                        Alignment::Right => "---:",
+                        Alignment::Justify => "---",
+                    };
+                    output.push_str(&format!(" {} |", sep));
+
+                    // Add separators for colspan cells
+                    for _ in 1..cell.colspan {
+                        output.push_str(&format!(" {} |", sep));
+                    }
+                }
+                output.push('\n');
+            }
+        }
+
+        output.push('\n');
+    }
+
+    /// Renders the content of a table cell, including text and images.
+    fn render_cell_content(&self, cell: &TableCell) -> String {
+        let mut content = String::new();
+        
+        for para in &cell.content {
+            for item in &para.content {
+                match item {
+                    InlineContent::Text(run) => {
+                        content.push_str(&run.text);
+                    }
+                    InlineContent::Image(img) => {
+                        let alt = img.alt_text.as_deref().unwrap_or("image");
+                        let filename = self
+                            .image_id_to_filename
+                            .get(&img.id)
+                            .cloned()
+                            .unwrap_or_else(|| img.id.clone());
+                        let path = format!("{}{}", self.options.image_path_prefix, filename);
+                        content.push_str(&format!("![{}]({})", alt, path));
+                    }
+                    InlineContent::LineBreak => {
+                        content.push(' ');
+                    }
+                    _ => {}
+                }
+            }
+            content.push(' '); // Space between paragraphs in cell
+        }
+        
+        // Normalize whitespace
+        content.replace('\n', " ").trim().to_string()
+    }
+
+    /// Renders a table with merged cells as HTML (for future use).
+    #[allow(dead_code)]
     fn render_table_html(&self, table: &Table, output: &mut String) {
         output.push_str("<table>\n");
 
@@ -398,21 +627,32 @@ impl MarkdownRenderer {
     }
 }
 
-/// Escapes special Markdown characters.
-fn escape_markdown(text: &str) -> String {
-    let mut result = String::with_capacity(text.len());
-
-    for ch in text.chars() {
-        match ch {
-            '\\' | '`' | '*' | '_' | '{' | '}' | '[' | ']' | '(' | ')' | '#' | '+' | '-' | '.'
-            | '!' | '|' => {
+/// Escape Markdown special characters.
+///
+/// Only escapes characters that are **always** special in Markdown regardless of position:
+/// - `\` - escape character
+/// - `` ` `` - inline code
+/// - `*` and `_` - emphasis/bold
+/// - `|` - table delimiter
+///
+/// Characters that are NOT escaped (only special in specific contexts):
+/// - `()`, `[]`, `{}` - only special in link/image syntax `[text](url)`
+/// - `#` - only special at start of line (headings)
+/// - `+`, `-` - only special at start of line (lists) or `---` (rules)
+/// - `!` - only special before `[` (images)
+/// - `.` - only special in ordered lists at line start (e.g., "1.")
+fn escape_markdown(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            // Only escape characters that are ALWAYS special regardless of position
+            '\\' | '`' | '*' | '_' | '|' => {
                 result.push('\\');
-                result.push(ch);
+                result.push(c);
             }
-            _ => result.push(ch),
+            _ => result.push(c),
         }
     }
-
     result
 }
 
@@ -426,7 +666,7 @@ fn escape_yaml(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{ImageRef, Section, TextStyle};
+    use crate::model::{Block, ImageRef, Section, Table, TableCell, TableRow, TextStyle};
 
     #[test]
     fn test_render_simple_paragraph() {
@@ -480,7 +720,9 @@ mod tests {
     #[test]
     fn test_escape_markdown() {
         assert_eq!(escape_markdown("*bold*"), "\\*bold\\*");
-        assert_eq!(escape_markdown("[link]"), "\\[link\\]");
+        // [] are not escaped - only special in link/image syntax context
+        assert_eq!(escape_markdown("[link]"), "[link]");
+        assert_eq!(escape_markdown("a|b|c"), "a\\|b\\|c");
     }
 
     #[test]
@@ -647,6 +889,141 @@ mod tests {
         assert!(
             !result.contains("######"),
             "Should not have 6 hash marks: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_single_row_table_as_plain_text() {
+        // Single-row tables (used as decorative boxes) should render as plain text
+        let mut doc = Document::new();
+        let mut section = Section::new(0);
+
+        let table = Table {
+            rows: vec![TableRow {
+                cells: vec![TableCell::text("박스 안의"), TableCell::text("텍스트")],
+                is_header: false,
+            }],
+            column_widths: vec![],
+            has_header: false,
+        };
+        section.content.push(Block::Table(table));
+        doc.sections.push(section);
+
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        let result = renderer.render(&doc).unwrap();
+
+        // Should NOT contain table markers
+        assert!(
+            !result.contains("|"),
+            "Single-row table should not use pipe syntax: {}",
+            result
+        );
+        assert!(
+            !result.contains(":---"),
+            "Single-row table should not have separator: {}",
+            result
+        );
+
+        // Should contain the text
+        assert!(
+            result.contains("박스 안의"),
+            "Text content should be present: {}",
+            result
+        );
+        assert!(
+            result.contains("텍스트"),
+            "Text content should be present: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_multi_row_table_renders_as_table() {
+        // Multi-row tables should render as proper markdown tables
+        let mut doc = Document::new();
+        let mut section = Section::new(0);
+
+        let table = Table {
+            rows: vec![
+                TableRow {
+                    cells: vec![TableCell::text("Header 1"), TableCell::text("Header 2")],
+                    is_header: true,
+                },
+                TableRow {
+                    cells: vec![TableCell::text("Data 1"), TableCell::text("Data 2")],
+                    is_header: false,
+                },
+            ],
+            column_widths: vec![],
+            has_header: true,
+        };
+        section.content.push(Block::Table(table));
+        doc.sections.push(section);
+
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        let result = renderer.render(&doc).unwrap();
+
+        // Should contain table markers
+        assert!(
+            result.contains("|"),
+            "Multi-row table should use pipe syntax: {}",
+            result
+        );
+        assert!(
+            result.contains(":---"),
+            "Multi-row table should have separator: {}",
+            result
+        );
+    }
+}
+
+#[cfg(test)]
+mod section_marker_tests {
+    use super::*;
+
+    #[test]
+    fn test_section_marker_detection() {
+        let marker = '◎';
+        assert!(
+            SECTION_MARKERS.contains(&marker),
+            "◎ should be in SECTION_MARKERS"
+        );
+        assert!(
+            !LIST_MARKERS.contains(&marker),
+            "◎ should NOT be in LIST_MARKERS"
+        );
+    }
+
+    #[test]
+    fn test_section_marker_heading_auto_detection() {
+        use crate::model::{
+            Block, Document, InlineContent, Paragraph, ParagraphStyle, Section, TextRun, TextStyle,
+        };
+
+        let doc = Document {
+            sections: vec![Section {
+                content: vec![Block::Paragraph(Paragraph {
+                    style: ParagraphStyle {
+                        heading_level: 0, // Not marked as heading in HWP
+                        ..Default::default()
+                    },
+                    content: vec![InlineContent::Text(TextRun {
+                        text: "◎ Section Title".to_string(),
+                        style: TextStyle::default(),
+                    })],
+                })],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        let result = renderer.render(&doc).unwrap();
+
+        assert!(
+            result.contains("## ◎ Section Title"),
+            "Section marker should be rendered as h2 heading, got: {}",
             result
         );
     }

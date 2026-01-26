@@ -132,6 +132,7 @@ const BULLET_MAPPINGS: &[(char, &str)] = &[
 /// - Control character removal
 /// - PUA character handling
 /// - Fullwidth space normalization
+/// - NBSP (U+00A0) to regular space
 pub fn stage1_normalize_string(input: &str, options: &CleanupOptions) -> String {
     let mut result = String::with_capacity(input.len());
 
@@ -156,6 +157,12 @@ pub fn stage1_normalize_string(input: &str, options: &CleanupOptions) -> String 
         // Normalize fullwidth characters
         if let Some(normalized) = normalize_fullwidth(c) {
             result.push(normalized);
+            continue;
+        }
+
+        // Normalize NBSP (U+00A0) to regular space
+        if c == '\u{00A0}' {
+            result.push(' ');
             continue;
         }
 
@@ -780,24 +787,24 @@ fn is_empty_emphasis(
 // Stage 4: Final Normalization
 // ============================================================================
 
-static RE_MULTIPLE_NEWLINES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n{3,}").unwrap());
+static RE_MULTIPLE_NEWLINES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n{2,}").unwrap());
 
 static RE_MULTIPLE_SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[ \t]+").unwrap());
 
-static RE_TRAILING_WHITESPACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[ \t]+$").unwrap());
 
 /// Stage 4: Final normalization
 ///
-/// - Reduce consecutive newlines (3+ -> 2)
+/// - Reduce consecutive newlines (2+ -> 1)
 /// - Normalize multiple spaces
 /// - Remove orphan lines
-/// - Clean trailing whitespace
+/// - Trim each line
+/// - Merge consecutive list items (no blank lines between)
 pub fn stage4_final_normalize(input: &str, _options: &CleanupOptions) -> String {
     let mut result = input.to_string();
 
-    // Reduce consecutive newlines
+    // Reduce consecutive newlines (2+ -> 1)
     result = RE_MULTIPLE_NEWLINES
-        .replace_all(&result, "\n\n")
+        .replace_all(&result, "\n")
         .to_string();
 
     // Process line by line
@@ -805,37 +812,96 @@ pub fn stage4_final_normalize(input: &str, _options: &CleanupOptions) -> String 
     let mut cleaned_lines: Vec<String> = Vec::with_capacity(lines.len());
 
     for line in lines {
-        // Skip orphan lines (< 3 chars, not markers, not sentence endings)
+        // Trim each line
         let trimmed = line.trim();
+        
+        // Skip orphan lines (< 3 chars, not markers, not sentence endings)
         if is_orphan_line(trimmed) {
             continue;
         }
 
-        // Normalize multiple spaces within line (but preserve leading indentation for code)
-        let cleaned = if trimmed.starts_with("    ") || trimmed.starts_with('\t') {
-            // Preserve code block indentation
-            let leading = &line[..line.len() - line.trim_start().len()];
-            format!(
-                "{}{}",
-                leading,
-                RE_MULTIPLE_SPACES.replace_all(trimmed, " ")
-            )
-        } else {
-            RE_MULTIPLE_SPACES.replace_all(trimmed, " ").to_string()
-        };
+        // Normalize multiple spaces within line
+        let cleaned = RE_MULTIPLE_SPACES.replace_all(trimmed, " ").to_string();
 
-        // Remove trailing whitespace
-        let final_line = RE_TRAILING_WHITESPACE.replace(&cleaned, "").to_string();
-
-        cleaned_lines.push(final_line);
+        cleaned_lines.push(cleaned);
     }
 
     result = cleaned_lines.join("\n");
 
     // Final pass: reduce any remaining consecutive newlines
-    RE_MULTIPLE_NEWLINES
-        .replace_all(&result, "\n\n")
-        .to_string()
+    result = RE_MULTIPLE_NEWLINES
+        .replace_all(&result, "\n")
+        .to_string();
+
+    // Merge consecutive list items (remove blank lines between list markers)
+    // List markers: "- ", "* ", "+ ", "1. ", "2. ", etc.
+    result = merge_consecutive_list_items(&result);
+
+    result
+}
+
+/// Merges consecutive list items by removing blank lines between them.
+/// This ensures markdown list items are properly formatted without extra spacing.
+fn merge_consecutive_list_items(input: &str) -> String {
+    let lines: Vec<&str> = input.lines().collect();
+    let mut result: Vec<String> = Vec::with_capacity(lines.len());
+    
+    for (i, line) in lines.iter().enumerate() {
+        // Check if previous non-empty line was also a list item
+        let prev_was_list = if i > 0 {
+            // Look back for the previous non-empty line
+            let mut prev_idx = i - 1;
+            loop {
+                let prev_line = lines[prev_idx].trim();
+                if !prev_line.is_empty() {
+                    break is_list_line(prev_line);
+                }
+                if prev_idx == 0 {
+                    break false;
+                }
+                prev_idx -= 1;
+            }
+        } else {
+            false
+        };
+        
+        // Skip empty lines between consecutive list items
+        if line.trim().is_empty() && prev_was_list {
+            // Check if next non-empty line is also a list item
+            let next_is_list = lines.iter().skip(i + 1)
+                .find(|l| !l.trim().is_empty())
+                .map(|l| is_list_line(l))
+                .unwrap_or(false);
+            
+            if next_is_list {
+                continue; // Skip this empty line
+            }
+        }
+        
+        result.push(line.to_string());
+    }
+    
+    result.join("\n")
+}
+
+/// Check if a line is a list item (starts with list markers)
+fn is_list_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    
+    // Unordered list markers
+    if trimmed.starts_with("- ") || trimmed.starts_with("* ") || trimmed.starts_with("+ ") {
+        return true;
+    }
+    
+    // Ordered list markers (1. 2. 3. etc.)
+    if let Some(dot_pos) = trimmed.find(". ") {
+        let prefix = &trimmed[..dot_pos];
+        if prefix.chars().all(|c| c.is_ascii_digit()) && !prefix.is_empty() {
+            return true;
+        }
+    }
+    
+    false
 }
 
 /// Check if line is an orphan (meaningless fragment)
@@ -984,6 +1050,27 @@ mod tests {
     }
 
     #[test]
+    fn test_nbsp_normalization() {
+        let input = "non\u{00A0}breaking\u{00A0}space";
+        let result = stage1_normalize_string(input, &CleanupOptions::default());
+        assert_eq!(result, "non breaking space"); // NBSP normalized to regular space
+    }
+
+    #[test]
+    fn test_consecutive_list_items() {
+        let input = "- item 1\n\n- item 2\n\n- item 3";
+        let result = stage4_final_normalize(input, &CleanupOptions::default());
+        assert_eq!(result, "- item 1\n- item 2\n- item 3"); // No blank lines between list items
+    }
+
+    #[test]
+    fn test_ordered_list_items() {
+        let input = "1. first\n\n2. second\n\n3. third";
+        let result = stage4_final_normalize(input, &CleanupOptions::default());
+        assert_eq!(result, "1. first\n2. second\n3. third");
+    }
+
+    #[test]
     fn test_page_number_hyphen() {
         let input = "본문\n\n- 15 -\n\n다음 내용";
         let result = stage2_clean_lines(input, &CleanupOptions::default());
@@ -1023,8 +1110,9 @@ mod tests {
     fn test_multiple_newlines() {
         let input = "첫번째\n\n\n\n\n두번째";
         let result = stage4_final_normalize(input, &CleanupOptions::default());
-        assert!(!result.contains("\n\n\n"));
-        assert!(result.contains("\n\n"));
+        assert!(!result.contains("\n\n")); // 2+ newlines -> 1
+        assert!(result.contains("\n"));
+        assert_eq!(result, "첫번째\n두번째");
     }
 
     #[test]

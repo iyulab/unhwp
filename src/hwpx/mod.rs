@@ -203,16 +203,24 @@ fn extract_metadata_field(xml: &str, field: &str) -> Option<String> {
     }
 
     // Try meta with name attribute
+    // Format: <opf:meta name="creator" content="text">actual value</opf:meta>
+    // The actual value is in the element text, not the content attribute
     let name_attr = format!("name=\"{}\"", field);
     if let Some(start) = xml.find(&name_attr) {
-        // Look for content attribute
         let rest = &xml[start..];
-        if let Some(content_start) = rest.find("content=\"") {
-            let after_content = &rest[content_start + 9..];
-            if let Some(end) = after_content.find('"') {
-                let value = after_content[..end].trim().to_string();
-                if !value.is_empty() {
-                    return Some(value);
+        // Find the closing > of the opening tag
+        if let Some(tag_end) = rest.find('>') {
+            // Check if it's a self-closing tag
+            if rest[..tag_end].ends_with('/') {
+                // Self-closing, no text content
+            } else {
+                // Look for text content between > and </
+                let after_tag = &rest[tag_end + 1..];
+                if let Some(close_start) = after_tag.find("</") {
+                    let text_value = after_tag[..close_start].trim().to_string();
+                    if !text_value.is_empty() {
+                        return Some(text_value);
+                    }
                 }
             }
         }

@@ -241,40 +241,62 @@ fn parse_table_records(records: &[Record], styles: &StyleRegistry) -> Option<Tab
         }
     }
 
-    // Build the table from collected cells
-    let mut table = Table::new();
-    let total_cells = row_count * col_count;
+    // Build a 2D grid initialized with None
+    let mut grid: Vec<Vec<Option<usize>>> = vec![vec![None; col_count]; row_count];
 
-    for row_idx in 0..row_count {
+    // Place each cell at its row/col position
+    for (cell_idx, cell_data) in cells_data.iter().enumerate() {
+        let r = cell_data.row as usize;
+        let c = cell_data.col as usize;
+
+        // Check bounds
+        if r < row_count && c < col_count {
+            grid[r][c] = Some(cell_idx);
+
+            // Mark cells covered by rowspan/colspan as occupied (with None)
+            // These will remain None, indicating they're part of a merged cell
+            for dr in 0..cell_data.rowspan as usize {
+                for dc in 0..cell_data.colspan as usize {
+                    if dr == 0 && dc == 0 {
+                        continue; // Skip the cell itself
+                    }
+                    let nr = r + dr;
+                    let nc = c + dc;
+                    if nr < row_count && nc < col_count {
+                        // Leave as None (already initialized)
+                    }
+                }
+            }
+        }
+    }
+
+    // Build the table from the grid
+    let mut table = Table::new();
+
+    for (row_idx, grid_row) in grid.iter().enumerate() {
         let mut row = TableRow::new();
         row.is_header = row_idx == 0;
 
-        for col_idx in 0..col_count {
-            let cell_idx = row_idx * col_count + col_idx;
-            let cell = if cell_idx < cells_data.len() {
+        for &cell_idx_opt in grid_row {
+            if let Some(cell_idx) = cell_idx_opt {
                 let cell_data = &cells_data[cell_idx];
-                TableCell {
+                let cell = TableCell {
                     content: cell_data.paragraphs.clone(),
                     rowspan: cell_data.rowspan,
                     colspan: cell_data.colspan,
                     ..Default::default()
-                }
+                };
+                row.cells.push(cell);
             } else {
-                TableCell::new()
-            };
-            row.cells.push(cell);
+                // Empty cell (part of a merged region or missing data)
+                // Skip it - the colspan/rowspan from the parent cell handles this
+            }
         }
         table.rows.push(row);
     }
 
     // Set header flag if we have at least one row
     table.has_header = !table.rows.is_empty();
-
-    // If we couldn't parse cells properly but have cell data,
-    // try to infer structure from actual cell count
-    if cells_data.len() > total_cells && total_cells > 0 {
-        // Cells might include merged cell placeholders, keep as is
-    }
 
     Some(table)
 }
@@ -284,6 +306,8 @@ struct CellData {
     paragraphs: Vec<Paragraph>,
     rowspan: u32,
     colspan: u32,
+    row: u16,
+    col: u16,
 }
 
 /// Finds the end of a cell (next ListHeader at same level or lower level record)
@@ -306,12 +330,16 @@ fn parse_cell_content(records: &[Record], styles: &StyleRegistry) -> CellData {
     let mut paragraphs = Vec::new();
     let mut rowspan = 1u32;
     let mut colspan = 1u32;
+    let mut row = 0u16;
+    let mut col = 0u16;
 
     if records.is_empty() {
         return CellData {
             paragraphs,
             rowspan,
             colspan,
+            row,
+            col,
         };
     }
 
@@ -329,6 +357,10 @@ fn parse_cell_content(records: &[Record], styles: &StyleRegistry) -> CellData {
     // Offset 14-15: rowspan (UINT16)
     // Offset 16+: width, height, padding, etc.
     if data.len() >= 16 {
+        // Parse col and row addresses
+        col = u16::from_le_bytes([data[8], data[9]]);
+        row = u16::from_le_bytes([data[10], data[11]]);
+
         // Parse colspan and rowspan
         colspan = u16::from_le_bytes([data[12], data[13]]) as u32;
         rowspan = u16::from_le_bytes([data[14], data[15]]) as u32;
@@ -388,6 +420,8 @@ fn parse_cell_content(records: &[Record], styles: &StyleRegistry) -> CellData {
         paragraphs,
         rowspan,
         colspan,
+        row,
+        col,
     }
 }
 

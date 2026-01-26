@@ -29,12 +29,9 @@ struct RunAttrs {
     char_pr_id: Option<u32>,
 }
 
-/// Extracted cell attributes from XML.
+/// Marker type for cell attributes (colspan/rowspan parsed from child elements).
 #[derive(Default)]
-struct CellAttrs {
-    rowspan: u32,
-    colspan: u32,
-}
+struct CellAttrs;
 
 /// Section parser state machine.
 struct SectionParser<'a> {
@@ -65,7 +62,7 @@ impl<'a> SectionParser<'a> {
                                 style_id: get_attr_u32(&e, "styleIDRef"),
                             };
                             buf.clear();
-                            let para = self.parse_paragraph(attrs)?;
+                            let para = self.parse_paragraph(attrs, Some(section))?;
                             if !para.is_empty() {
                                 section.content.push(Block::Paragraph(para));
                             }
@@ -89,7 +86,7 @@ impl<'a> SectionParser<'a> {
     }
 
     /// Parses a <hp:p> paragraph element.
-    fn parse_paragraph(&mut self, attrs: ParaAttrs) -> Result<Paragraph> {
+    fn parse_paragraph(&mut self, attrs: ParaAttrs, section: Option<&mut Section>) -> Result<Paragraph> {
         // Build paragraph style from references
         let mut para_style = ParagraphStyle::default();
 
@@ -109,6 +106,9 @@ impl<'a> SectionParser<'a> {
 
         let mut paragraph = Paragraph::with_style(para_style);
         let mut buf = Vec::new();
+        
+        // Collect tables found in runs (to add to section after paragraph)
+        let mut tables_found: Vec<Table> = Vec::new();
 
         // Parse paragraph content
         loop {
@@ -122,7 +122,7 @@ impl<'a> SectionParser<'a> {
                                 char_pr_id: get_attr_u32(&e, "charPrIDRef"),
                             };
                             buf.clear();
-                            let run = self.parse_run(run_attrs, &mut paragraph)?;
+                            let run = self.parse_run(run_attrs, &mut paragraph, &mut tables_found)?;
                             if !run.text.is_empty() {
                                 paragraph.content.push(InlineContent::Text(run));
                             }
@@ -135,7 +135,7 @@ impl<'a> SectionParser<'a> {
                         "ctrl" => {
                             // Control element (table, image, etc.)
                             buf.clear();
-                            self.parse_control(&mut paragraph)?;
+                            self.parse_control(&mut paragraph, &mut tables_found)?;
                         }
                         _ => {}
                     }
@@ -152,12 +152,19 @@ impl<'a> SectionParser<'a> {
             }
             buf.clear();
         }
+        
+        // Add any tables found to section
+        if let Some(sec) = section {
+            for table in tables_found {
+                sec.content.push(Block::Table(table));
+            }
+        }
 
         Ok(paragraph)
     }
 
     /// Parses a <hp:run> text run element, returning the text run and any images found.
-    fn parse_run(&mut self, attrs: RunAttrs, paragraph: &mut Paragraph) -> Result<TextRun> {
+    fn parse_run(&mut self, attrs: RunAttrs, paragraph: &mut Paragraph, tables: &mut Vec<Table>) -> Result<TextRun> {
         let text_style = attrs
             .char_pr_id
             .and_then(|id| self.styles.get_char_style(id))
@@ -167,6 +174,8 @@ impl<'a> SectionParser<'a> {
         let mut text = String::new();
         let mut buf = Vec::new();
         let mut in_pic = false;
+        let mut in_ctrl = false;  // Track if we're inside a control element (to skip formula fields etc.)
+        let mut in_text_element = false;  // Track if we're inside <hp:t> element
 
         loop {
             match self.reader.read_event_into(&mut buf) {
@@ -174,13 +183,11 @@ impl<'a> SectionParser<'a> {
                     let name = get_local_name(&e);
 
                     if name == "t" {
-                        // Text content element - read the text
-                        buf.clear();
-                        if let Ok(Event::Text(t)) = self.reader.read_event_into(&mut buf) {
-                            if let Ok(s) = t.unescape() {
-                                text.push_str(&s);
-                            }
-                        }
+                        // Text content element - mark we're inside <hp:t>
+                        in_text_element = true;
+                    } else if name == "ctrl" {
+                        // Control element (fieldBegin, fieldEnd, etc.) - skip its content
+                        in_ctrl = true;
                     } else if name == "pic" {
                         // Start of picture element
                         in_pic = true;
@@ -191,6 +198,11 @@ impl<'a> SectionParser<'a> {
                                 .content
                                 .push(InlineContent::Image(ImageRef::new(id)));
                         }
+                    } else if name == "tbl" {
+                        // Table inside run - parse and collect
+                        buf.clear();
+                        let table = self.parse_table()?;
+                        tables.push(table);
                     }
                 }
                 Ok(Event::Empty(e)) => {
@@ -208,14 +220,20 @@ impl<'a> SectionParser<'a> {
                     }
                 }
                 Ok(Event::Text(t)) => {
-                    // Direct text content
-                    if let Ok(s) = t.unescape() {
-                        text.push_str(&s);
+                    // Only capture text inside <hp:t> elements, not inside control elements
+                    if in_text_element && !in_ctrl {
+                        if let Ok(s) = t.unescape() {
+                            text.push_str(&s);
+                        }
                     }
                 }
                 Ok(Event::End(e)) => {
                     let name = get_local_name_end(&e);
-                    if name == "pic" {
+                    if name == "t" {
+                        in_text_element = false;
+                    } else if name == "ctrl" {
+                        in_ctrl = false;
+                    } else if name == "pic" {
                         in_pic = false;
                     } else if name == "run" {
                         break;
@@ -238,7 +256,8 @@ impl<'a> SectionParser<'a> {
     /// - eqEdit: Equations (mathematical formulas)
     /// - fn: Footnotes
     /// - en: Endnotes
-    fn parse_control(&mut self, paragraph: &mut Paragraph) -> Result<()> {
+    /// - tbl: Tables
+    fn parse_control(&mut self, paragraph: &mut Paragraph, tables: &mut Vec<Table>) -> Result<()> {
         let mut buf = Vec::new();
         let mut in_pic = false;
         let mut in_equation = false;
@@ -256,6 +275,12 @@ impl<'a> SectionParser<'a> {
                         "eqEdit" | "equation" => in_equation = true,
                         "fn" | "footnote" => in_footnote = true,
                         "en" | "endnote" => in_footnote = true, // Treat endnotes like footnotes
+                        "tbl" => {
+                            // Table inside control - parse and collect
+                            buf.clear();
+                            let table = self.parse_table()?;
+                            tables.push(table);
+                        }
                         "img" if in_pic => {
                             // Look for binaryItemIDRef attribute in <hc:img> element
                             if let Some(id) = get_attr_string(&e, "binaryItemIDRef") {
@@ -421,12 +446,8 @@ impl<'a> SectionParser<'a> {
                     let name = get_local_name(&e);
 
                     if name == "tc" {
-                        let cell_attrs = CellAttrs {
-                            rowspan: get_attr_u32(&e, "rowSpan").unwrap_or(1),
-                            colspan: get_attr_u32(&e, "colSpan").unwrap_or(1),
-                        };
                         buf.clear();
-                        let cell = self.parse_table_cell(cell_attrs)?;
+                        let cell = self.parse_table_cell(CellAttrs)?;
                         row.cells.push(cell);
                     }
                 }
@@ -447,8 +468,10 @@ impl<'a> SectionParser<'a> {
     }
 
     /// Parses a <hp:tc> table cell element.
-    fn parse_table_cell(&mut self, attrs: CellAttrs) -> Result<TableCell> {
-        let mut cell = TableCell::merged(attrs.rowspan, attrs.colspan);
+    fn parse_table_cell(&mut self, _attrs: CellAttrs) -> Result<TableCell> {
+        let mut rowspan: u32 = 1;
+        let mut colspan: u32 = 1;
+        let mut paragraphs: Vec<Paragraph> = Vec::new();
         let mut buf = Vec::new();
 
         loop {
@@ -463,9 +486,23 @@ impl<'a> SectionParser<'a> {
                             style_id: get_attr_u32(&e, "styleIDRef"),
                         };
                         buf.clear();
-                        let para = self.parse_paragraph(para_attrs)?;
+                        // Pass None for section since we're inside a table cell
+                        let para = self.parse_paragraph(para_attrs, None)?;
                         if !para.is_empty() {
-                            cell.content.push(para);
+                            paragraphs.push(para);
+                        }
+                    }
+                }
+                Ok(Event::Empty(e)) => {
+                    let name = get_local_name(&e);
+                    
+                    // cellSpan element contains colspan/rowspan as attributes
+                    if name == "cellSpan" {
+                        if let Some(cs) = get_attr_u32(&e, "colSpan") {
+                            colspan = cs;
+                        }
+                        if let Some(rs) = get_attr_u32(&e, "rowSpan") {
+                            rowspan = rs;
                         }
                     }
                 }
@@ -482,6 +519,8 @@ impl<'a> SectionParser<'a> {
             buf.clear();
         }
 
+        let mut cell = TableCell::merged(rowspan, colspan);
+        cell.content = paragraphs;
         Ok(cell)
     }
 }

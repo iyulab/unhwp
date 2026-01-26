@@ -52,6 +52,13 @@ impl Table {
         })
     }
 
+    /// Returns true if this table has any cells with rowspan > 1.
+    pub fn has_rowspan(&self) -> bool {
+        self.rows
+            .iter()
+            .any(|row| row.cells.iter().any(|cell| cell.rowspan > 1))
+    }
+
     /// Gets a cell at the specified position.
     pub fn get_cell(&self, row: usize, col: usize) -> Option<&TableCell> {
         self.rows.get(row).and_then(|r| r.cells.get(col))
