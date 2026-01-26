@@ -41,6 +41,10 @@ struct Cli {
     /// Enable aggressive cleanup (maximum purification)
     #[arg(long)]
     cleanup_aggressive: bool,
+
+    /// Check for updates before extraction, update if available
+    #[arg(long)]
+    update: bool,
 }
 
 #[derive(Subcommand)]
@@ -93,7 +97,15 @@ fn main() {
             cleanup_minimal,
             cleanup_aggressive,
         }) => {
+            // Start async update check
+            let update_rx = update::check_update_async();
+
             convert_document(&input, output, cleanup, cleanup_minimal, cleanup_aggressive);
+
+            // Check for update result after conversion completes
+            if let Some(result) = update::try_get_update_result(&update_rx) {
+                update::print_update_notification(&result);
+            }
         }
         Some(Commands::Update { check, force }) => {
             if let Err(e) = update::run_update(check, force) {
@@ -107,6 +119,22 @@ fn main() {
         None => {
             // Handle direct invocation without subcommand
             if let Some(input) = cli.input {
+                // If --update flag is set, update first then extract
+                if cli.update {
+                    println!("{}", "Checking for updates before extraction...".cyan());
+                    if let Err(e) = update::run_update(false, false) {
+                        eprintln!("{} Update check failed: {}", "Warning:".yellow().bold(), e);
+                    }
+                    println!();
+                }
+
+                // Start async update check (only if not already updating)
+                let update_rx = if !cli.update {
+                    Some(update::check_update_async())
+                } else {
+                    None
+                };
+
                 convert_document(
                     &input,
                     cli.output_dir,
@@ -114,6 +142,13 @@ fn main() {
                     cli.cleanup_minimal,
                     cli.cleanup_aggressive,
                 );
+
+                // Check for update result after conversion completes
+                if let Some(rx) = update_rx {
+                    if let Some(result) = update::try_get_update_result(&rx) {
+                        update::print_update_notification(&result);
+                    }
+                }
             } else {
                 // No input provided, show help
                 eprintln!("{}", "Usage: unhwp <INPUT> [OUTPUT_DIR] [OPTIONS]".yellow());
