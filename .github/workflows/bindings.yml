@@ -194,6 +194,7 @@ jobs:
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
           packages-dir: dist/
+          skip-existing: true
 
   publish-nuget:
     name: Publish to NuGet
@@ -240,12 +241,14 @@ jobs:
           path: ./wheels/
 
       - name: Install package
+        shell: bash
         run: |
           pip install pytest
           pip install ./wheels/*.whl
 
       - name: Run tests
         working-directory: bindings/python
+        shell: bash
         run: pytest tests/ -v --ignore=tests/test_integration.py
 
   test-nuget:
@@ -271,8 +274,9 @@ jobs:
           path: ./packages/
 
       - name: Create local NuGet source
+        shell: bash
         run: |
-          dotnet nuget add source ./packages -n local
+          dotnet nuget add source "$(pwd)/packages" -n local
 
       - name: Run tests
         working-directory: bindings/csharp
