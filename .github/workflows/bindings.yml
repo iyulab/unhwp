@@ -264,9 +264,12 @@ jobs:
           - os: windows-latest
             artifact: native-win-x64
             runtime: win-x64
-          - os: macos-latest
+          - os: macos-13
             artifact: native-osx-x64
             runtime: osx-x64
+          - os: macos-latest
+            artifact: native-osx-arm64
+            runtime: osx-arm64
 
     steps:
       - uses: actions/checkout@v4
