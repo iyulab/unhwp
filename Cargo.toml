@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "unhwp"
-version = "0.1.11"
+version = "0.1.12"
 edition = "2021"
 authors = ["iyulab"]
 description = "A high-performance library for extracting HWP/HWPX documents into structured Markdown"
