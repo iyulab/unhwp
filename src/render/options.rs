@@ -70,7 +70,8 @@ impl Default for RenderOptions {
             paragraph_spacing: true,
             escape_special_chars: false,
             cleanup: None,
-            heading_config: None,
+            // Enable statistical heading analysis by default (font-size based)
+            heading_config: Some(super::heading_analyzer::HeadingConfig::default()),
         }
     }
 }

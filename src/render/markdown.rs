@@ -26,22 +26,9 @@ const LIST_MARKERS: &[char] = &[
     '→', '←', '↔', '⇒', '⇐', '⇔', '►', '▶', '▷', '◀', '◁', '▻',
 ];
 
-/// Section markers that indicate a heading/title in Korean documents.
-/// These are distinct from list markers and suggest the start of a new section.
-const SECTION_MARKERS: &[char] = &[
-    '◎', // Double circle - commonly used for main sections
-    '※', // Reference mark - used for notes/sections
-    '◇', // Diamond outline
-    '◆', // Diamond filled
-    '■', // Black square - often section headers
-    '□', // White square - often section headers
-    '●', // Black circle - can be section or list (context-dependent)
-    '○', // White circle - can be section or list (context-dependent)
-];
-
-/// Maximum length for a section-marker heading to be auto-detected.
-/// Longer text is likely a paragraph, not a heading.
-const MAX_SECTION_MARKER_HEADING_LENGTH: usize = 60;
+// NOTE: Symbol-based section marker detection has been removed.
+// Heading detection now uses font-size-based statistical inference via HeadingAnalyzer.
+// Symbols like ※, ◎, etc. are NOT reliable heading indicators without font context.
 
 /// Markdown renderer.
 #[derive(Debug)]
@@ -290,6 +277,9 @@ impl MarkdownRenderer {
     }
 
     /// Legacy inline heading detection (used when heading_config is None).
+    ///
+    /// NOTE: This is a fallback path. The recommended approach is to use
+    /// `heading_config` which enables statistical font-size-based heading detection.
     fn compute_heading_inline(
         &self,
         para: &Paragraph,
@@ -303,25 +293,14 @@ impl MarkdownRenderer {
             .map(|c| LIST_MARKERS.contains(&c))
             .unwrap_or(false);
 
-        // Check if paragraph starts with a section marker (potential heading)
-        let starts_with_section_marker = first_char
-            .map(|c| SECTION_MARKERS.contains(&c))
-            .unwrap_or(false);
-
         // Check if text is too long to be a meaningful heading
         let text_length = trimmed_text.chars().count();
         let text_too_long = text_length > MAX_HEADING_TEXT_LENGTH;
 
-        // Auto-detect section marker headings:
-        // If text starts with a section marker and is short enough, treat as heading
-        let is_section_marker_heading = starts_with_section_marker
-            && text_length <= MAX_SECTION_MARKER_HEADING_LENGTH
-            && text_length > 1 // Must have more than just the marker
-            && style.heading_level == 0 // Only auto-detect if not already a heading
-            && style.list_style.is_none();
-
-        // Determine if heading should be applied
-        let should_apply_heading = (style.heading_level > 0 || is_section_marker_heading)
+        // Only use explicit heading_level from document styles
+        // Do NOT auto-detect headings based on symbols (※, ◎, etc.)
+        // Symbol-based detection is unreliable without font size context
+        let should_apply_heading = style.heading_level > 0
             && para.has_text_content()
             && !para.is_image_only()
             && style.list_style.is_none()
@@ -330,11 +309,7 @@ impl MarkdownRenderer {
 
         // Calculate heading level
         let level = if should_apply_heading {
-            if style.heading_level > 0 {
-                style.heading_level.min(self.options.max_heading_level)
-            } else {
-                2 // Default level for section marker headings
-            }
+            style.heading_level.min(self.options.max_heading_level)
         } else {
             0
         };
@@ -1078,38 +1053,29 @@ mod tests {
 }
 
 #[cfg(test)]
-mod section_marker_tests {
+mod font_size_heading_tests {
     use super::*;
 
     #[test]
-    fn test_section_marker_detection() {
-        let marker = '◎';
-        assert!(
-            SECTION_MARKERS.contains(&marker),
-            "◎ should be in SECTION_MARKERS"
-        );
-        assert!(
-            !LIST_MARKERS.contains(&marker),
-            "◎ should NOT be in LIST_MARKERS"
-        );
-    }
-
-    #[test]
-    fn test_section_marker_heading_auto_detection() {
+    fn test_symbol_without_large_font_is_not_heading() {
         use crate::model::{
             Block, Document, InlineContent, Paragraph, ParagraphStyle, Section, TextRun, TextStyle,
         };
 
+        // Symbol markers like ◎, ※ should NOT be headings without larger font size
         let doc = Document {
             sections: vec![Section {
                 content: vec![Block::Paragraph(Paragraph {
                     style: ParagraphStyle {
-                        heading_level: 0, // Not marked as heading in HWP
+                        heading_level: 0,
                         ..Default::default()
                     },
                     content: vec![InlineContent::Text(TextRun {
-                        text: "◎ Section Title".to_string(),
-                        style: TextStyle::default(),
+                        text: "※ This is a note, not a heading".to_string(),
+                        style: TextStyle {
+                            font_size: Some(12.0), // Same as body text
+                            ..Default::default()
+                        },
                     })],
                 })],
                 ..Default::default()
@@ -1120,10 +1086,70 @@ mod section_marker_tests {
         let renderer = MarkdownRenderer::new(RenderOptions::default());
         let result = renderer.render(&doc).unwrap();
 
+        // Should NOT be a heading (no ## prefix)
         assert!(
-            result.contains("## ◎ Section Title"),
-            "Section marker should be rendered as h2 heading, got: {}",
+            !result.contains("## ※"),
+            "Symbol with normal font size should not be heading, got: {}",
             result
+        );
+    }
+
+    #[test]
+    fn test_large_font_becomes_heading() {
+        use crate::model::{
+            Block, Document, InlineContent, Paragraph, ParagraphStyle, Section, TextRun, TextStyle,
+        };
+
+        // Create document with body text (12pt) and a larger title (16pt)
+        let doc = Document {
+            sections: vec![Section {
+                content: vec![
+                    // Body text to establish baseline
+                    Block::Paragraph(Paragraph {
+                        style: ParagraphStyle::default(),
+                        content: vec![InlineContent::Text(TextRun {
+                            text: "This is body text with normal font size.".to_string(),
+                            style: TextStyle {
+                                font_size: Some(12.0),
+                                ..Default::default()
+                            },
+                        })],
+                    }),
+                    // Larger font text should become heading
+                    Block::Paragraph(Paragraph {
+                        style: ParagraphStyle::default(),
+                        content: vec![InlineContent::Text(TextRun {
+                            text: "Section Title".to_string(),
+                            style: TextStyle {
+                                font_size: Some(16.0), // 133% of 12pt
+                                ..Default::default()
+                            },
+                        })],
+                    }),
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        let result = renderer.render(&doc).unwrap();
+
+        // Should be a heading (has ## or ### prefix)
+        assert!(
+            result.contains("# Section Title") || result.contains("## Section Title") || result.contains("### Section Title"),
+            "Large font text should become heading, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_list_markers_not_heading() {
+        // List markers should never be headings regardless of font size
+        let marker = '•';
+        assert!(
+            LIST_MARKERS.contains(&marker),
+            "• should be in LIST_MARKERS"
         );
     }
 }

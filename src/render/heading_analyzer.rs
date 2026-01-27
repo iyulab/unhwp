@@ -55,8 +55,8 @@ impl Default for HeadingConfig {
             trust_explicit_styles: true,
             analyze_sequences: true,
             min_sequence_count: 2,
-            enable_statistical_inference: false, // Opt-in for now
-            size_threshold_ratio: 1.2,
+            enable_statistical_inference: true, // Enabled by default for font-size based detection
+            size_threshold_ratio: 1.15, // 115% of base font size = heading candidate
         }
     }
 }
@@ -288,13 +288,8 @@ impl HeadingAnalyzer {
         let trimmed = plain_text.trim();
         let style = &para.style;
 
-        // P1: Explicit style with full trust (skip all exclusion checks)
-        if style.heading_level > 0 && self.config.trust_explicit_styles {
-            let level = self.cap_heading_level(style.heading_level);
-            return HeadingDecision::Explicit(level);
-        }
-
-        // P2: Exclusion conditions - bullet markers
+        // P1: Hard exclusions - these ALWAYS prevent heading regardless of styles
+        // Bullet markers are never headings
         if self.looks_like_bullet_item(trimmed) {
             return if style.heading_level > 0 {
                 HeadingDecision::Demoted
@@ -303,7 +298,7 @@ impl HeadingAnalyzer {
             };
         }
 
-        // Check text length
+        // Text too long is never a heading
         if trimmed.chars().count() > self.config.max_text_length {
             return if style.heading_level > 0 {
                 HeadingDecision::Demoted
@@ -312,7 +307,13 @@ impl HeadingAnalyzer {
             };
         }
 
-        // P3: Statistical inference (font size + bold)
+        // P2: Explicit style - trust document's heading markers (after exclusions)
+        if style.heading_level > 0 && self.config.trust_explicit_styles {
+            let level = self.cap_heading_level(style.heading_level);
+            return HeadingDecision::Explicit(level);
+        }
+
+        // P3: Statistical inference (font size based)
         if self.config.enable_statistical_inference {
             if let Some(inferred) = self.infer_heading_from_style(para) {
                 return HeadingDecision::Inferred(inferred);
@@ -330,19 +331,16 @@ impl HeadingAnalyzer {
         HeadingDecision::None
     }
 
-    /// Infer heading level from text style (font size + bold).
+    /// Infer heading level from text style (primarily font size).
     ///
     /// For a paragraph to be inferred as a heading:
-    /// - All text runs must be bold
     /// - Font size must be >= base_font_size * size_threshold_ratio
+    /// - Bold formatting is a bonus signal but not required
     fn infer_heading_from_style(&self, para: &Paragraph) -> Option<u8> {
         // Must have text content
-        if para.plain_text().trim().is_empty() {
-            return None;
-        }
-
-        // Must be all bold
-        if !para.is_all_bold() {
+        let text = para.plain_text();
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
             return None;
         }
 
@@ -357,24 +355,37 @@ impl HeadingAnalyzer {
             return None;
         }
 
-        // Infer level based on size ratio
-        let level = self.infer_level_from_size(font_size);
+        // Additional validation: heading text shouldn't be too long
+        if trimmed.chars().count() > self.config.max_text_length {
+            return None;
+        }
+
+        // Infer level based on size ratio (bold gets higher priority)
+        let level = self.infer_level_from_size(font_size, para.is_all_bold());
         Some(self.cap_heading_level(level))
     }
 
     /// Infer heading level from font size ratio.
-    fn infer_level_from_size(&self, size: f32) -> u8 {
+    /// Bold text gets a level boost (one level higher).
+    fn infer_level_from_size(&self, size: f32, is_bold: bool) -> u8 {
         let base = self.stats.base_font_size.unwrap_or(12.0);
         let ratio = size / base;
 
-        if ratio >= 2.0 {
-            1 // H1
+        let base_level = if ratio >= 1.8 {
+            1 // H1: 180%+ of base
         } else if ratio >= 1.5 {
-            2 // H2
-        } else if ratio >= 1.2 {
-            3 // H3
+            2 // H2: 150-180%
+        } else if ratio >= 1.3 {
+            3 // H3: 130-150%
         } else {
-            4 // H4
+            4 // H4: 115-130%
+        };
+
+        // Bold text can promote by one level (but not beyond H1)
+        if is_bold && base_level > 1 {
+            base_level - 1
+        } else {
+            base_level
         }
     }
 
@@ -383,7 +394,8 @@ impl HeadingAnalyzer {
     /// Note: Numbered patterns (1., 가., a.) are NOT checked here.
     /// They are handled separately in sequence analysis.
     fn looks_like_bullet_item(&self, text: &str) -> bool {
-        if text.is_empty() {
+        let trimmed = text.trim_start();
+        if trimmed.is_empty() {
             return false;
         }
 
@@ -393,7 +405,7 @@ impl HeadingAnalyzer {
             '—', '→', '▶', '►', '▷', '▹', '◁', '◀', '◃', '◂', '·', '∙',
         ];
 
-        let first_char = text.chars().next().unwrap();
+        let first_char = trimmed.chars().next().unwrap();
         BULLET_MARKERS.contains(&first_char)
     }
 
@@ -1069,7 +1081,9 @@ mod tests {
     }
 
     #[test]
-    fn test_statistical_inference_not_bold() {
+    fn test_statistical_inference_large_font_without_bold() {
+        // Large font IS now a heading even without bold
+        // Bold only provides a level boost (one level higher)
         let config = HeadingConfig::default()
             .with_statistical_inference(true)
             .with_trust_explicit(false);
@@ -1086,13 +1100,13 @@ mod tests {
             },
         );
 
-        // Large font but NOT bold - should NOT be inferred as heading
+        // Large font without bold - should still be inferred as heading
         let large_not_bold = make_styled_paragraph(
-            "Large but not bold",
+            "Large Title",
             0,
             TextStyle {
                 bold: false,
-                font_size: Some(16.0),
+                font_size: Some(16.0), // 133% of 12pt
                 ..Default::default()
             },
         );
@@ -1107,32 +1121,43 @@ mod tests {
 
         let decisions = analyzer.analyze(&doc);
 
-        // Should NOT be inferred (missing bold)
-        assert_eq!(
-            decisions[1],
-            HeadingDecision::None,
-            "Large font without bold should not be heading"
+        // Should be inferred as heading (large font is sufficient)
+        assert!(
+            matches!(decisions[1], HeadingDecision::Inferred(_)),
+            "Large font should be heading even without bold: {:?}",
+            decisions[1]
         );
     }
 
     #[test]
-    fn test_statistical_inference_disabled_by_default() {
-        let config = HeadingConfig::default(); // inference disabled by default
+    fn test_statistical_inference_enabled_by_default() {
+        // Statistical inference is now ENABLED by default
+        let config = HeadingConfig::default();
         let mut analyzer = HeadingAnalyzer::new(config);
+
+        // Body text to establish baseline
+        let body = make_styled_paragraph(
+            "This is body text at normal size.",
+            0,
+            TextStyle {
+                font_size: Some(12.0),
+                ..Default::default()
+            },
+        );
 
         let heading = make_styled_paragraph(
             "Bold Large Title",
             0,
             TextStyle {
                 bold: true,
-                font_size: Some(20.0),
+                font_size: Some(20.0), // 167% of 12pt
                 ..Default::default()
             },
         );
 
         let doc = Document {
             sections: vec![Section {
-                content: vec![Block::Paragraph(heading)],
+                content: vec![Block::Paragraph(body), Block::Paragraph(heading)],
                 ..Default::default()
             }],
             ..Default::default()
@@ -1140,11 +1165,11 @@ mod tests {
 
         let decisions = analyzer.analyze(&doc);
 
-        // Should NOT be inferred when disabled
-        assert_eq!(
-            decisions[0],
-            HeadingDecision::None,
-            "Statistical inference should be disabled by default"
+        // Should be inferred (statistical inference enabled by default)
+        assert!(
+            matches!(decisions[1], HeadingDecision::Inferred(_)),
+            "Statistical inference should be enabled by default: {:?}",
+            decisions[1]
         );
     }
 
