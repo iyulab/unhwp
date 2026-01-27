@@ -123,6 +123,15 @@ const BULLET_MAPPINGS: &[(char, &str)] = &[
     ('✔', "- [x] "),
     ('✗', "- [ ] "),
     ('✘', "- [ ] "),
+    // HWP PUA (Private Use Area) bullet characters
+    // These are custom glyphs used by Hancom HWP word processor
+    ('\u{F0A3}', "- "), // HWP filled bullet (●)
+    ('\u{F09F}', "  - "), // HWP hollow bullet (○) - indented
+    ('\u{F09E}', "- "), // HWP square bullet (■)
+    ('\u{F020}', "- "), // HWP bullet variant
+    ('\u{F076}', "- "), // HWP bullet variant
+    ('\u{F0FC}', "- [x] "), // HWP checkmark
+    ('\u{F0A8}', "- "), // HWP arrow bullet
 ];
 
 /// Stage 1: Normalize raw string

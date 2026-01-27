@@ -6,7 +6,19 @@ CLAUDE.md
 .serena/
 examples/
 nul
+claudedocs/
 
 # Added by cargo
-
 /target
+
+# C# build artifacts
+bindings/csharp/**/bin/
+bindings/csharp/**/obj/
+
+# Python build artifacts
+bindings/python/dist/
+bindings/python/build/
+bindings/python/*.egg-info/
+bindings/python/src/*.egg-info/
+__pycache__/
+*.pyc

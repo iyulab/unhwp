@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net6.0;net7.0;net8.0;netstandard2.0;netstandard2.1</TargetFrameworks>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+    <!-- Package metadata -->
+    <PackageId>Unhwp</PackageId>
+    <Version>0.1.10</Version>
+    <Authors>iyulab</Authors>
+    <Company>iyulab</Company>
+    <Product>Unhwp</Product>
+    <Description>High-performance library for extracting HWP/HWPX Korean word processor documents to Markdown</Description>
+    <Copyright>Copyright (c) iyulab</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/iyulab/unhwp</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/iyulab/unhwp</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>hwp;hwpx;korean;document;markdown;parser</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>icon.png</PackageIcon>
+
+    <!-- Build configuration -->
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <!-- Native library includes -->
+  <ItemGroup>
+    <!-- Windows x64 -->
+    <None Include="runtimes\win-x64\native\unhwp.dll" Pack="true" PackagePath="runtimes\win-x64\native\" Visible="false" />
+    <!-- Linux x64 -->
+    <None Include="runtimes\linux-x64\native\libunhwp.so" Pack="true" PackagePath="runtimes\linux-x64\native\" Visible="false" />
+    <!-- macOS x64 -->
+    <None Include="runtimes\osx-x64\native\libunhwp.dylib" Pack="true" PackagePath="runtimes\osx-x64\native\" Visible="false" />
+    <!-- macOS ARM64 -->
+    <None Include="runtimes\osx-arm64\native\libunhwp.dylib" Pack="true" PackagePath="runtimes\osx-arm64\native\" Visible="false" />
+
+    <!-- README and icon -->
+    <None Include="README.md" Pack="true" PackagePath="" />
+    <None Include="icon.png" Pack="true" PackagePath="" Condition="Exists('icon.png')" />
+  </ItemGroup>
+
+  <!-- For netstandard2.0 compatibility -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'netstandard2.0'">
+    <PackageReference Include="System.Memory" Version="4.5.5" />
+  </ItemGroup>
+
+</Project>

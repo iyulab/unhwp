@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "unhwp"
+version = "0.1.10"
+description = "High-performance HWP/HWPX document extraction library"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "iyulab", email = "contact@iyulab.com"}
+]
+keywords = ["hwp", "hwpx", "korean", "document", "markdown", "parser"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
+    "Topic :: Text Processing",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+requires-python = ">=3.8"
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/iyulab/unhwp"
+Repository = "https://github.com/iyulab/unhwp"
+Documentation = "https://github.com/iyulab/unhwp#readme"
+Issues = "https://github.com/iyulab/unhwp/issues"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[tool.setuptools]
+packages = ["unhwp"]
+package-dir = {"" = "src"}
+
+[tool.setuptools.package-data]
+unhwp = [
+    "*.dll",
+    "*.so",
+    "*.dylib",
+    "lib/*",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
