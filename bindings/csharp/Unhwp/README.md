@@ -193,7 +193,7 @@ Methods:
 
 ## Target Frameworks
 
-- .NET 6.0, 7.0, 8.0
+- .NET 6.0, 7.0, 8.0, 10.0
 - .NET Standard 2.0, 2.1
 
 ## License

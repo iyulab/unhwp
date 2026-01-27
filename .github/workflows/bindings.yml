@@ -257,7 +257,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            artifact: native-linux-x64
+            runtime: linux-x64
+          - os: windows-latest
+            artifact: native-win-x64
+            runtime: win-x64
+          - os: macos-latest
+            artifact: native-osx-x64
+            runtime: osx-x64
 
     steps:
       - uses: actions/checkout@v4
@@ -272,6 +281,12 @@ jobs:
         with:
           name: nuget-package
           path: ./packages/
+
+      - name: Download native library
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: bindings/csharp/Unhwp/runtimes/${{ matrix.runtime }}/native/
 
       - name: Create local NuGet source
         shell: bash
