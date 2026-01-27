@@ -56,7 +56,7 @@ impl Default for HeadingConfig {
             analyze_sequences: true,
             min_sequence_count: 2,
             enable_statistical_inference: true, // Enabled by default for font-size based detection
-            size_threshold_ratio: 1.15, // 115% of base font size = heading candidate
+            size_threshold_ratio: 1.15,         // 115% of base font size = heading candidate
         }
     }
 }

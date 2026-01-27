@@ -1137,7 +1137,9 @@ mod font_size_heading_tests {
 
         // Should be a heading (has ## or ### prefix)
         assert!(
-            result.contains("# Section Title") || result.contains("## Section Title") || result.contains("### Section Title"),
+            result.contains("# Section Title")
+                || result.contains("## Section Title")
+                || result.contains("### Section Title"),
             "Large font text should become heading, got: {}",
             result
         );
