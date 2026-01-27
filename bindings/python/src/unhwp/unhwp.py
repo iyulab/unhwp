@@ -268,9 +268,16 @@ def version() -> str:
 
 
 def supported_formats() -> str:
-    """Get the supported document formats."""
-    result = native.lib.unhwp_supported_formats()
-    return result.decode("utf-8") if result else ""
+    """Get the supported document formats as a descriptive string."""
+    flags = native.lib.unhwp_supported_formats()
+    formats = []
+    if flags & 0x01:
+        formats.append("HWP 5.0")
+    if flags & 0x02:
+        formats.append("HWPX")
+    if flags & 0x04:
+        formats.append("HWP 3.x")
+    return ", ".join(formats) if formats else "None"
 
 
 def detect_format(path: Union[str, Path]) -> int:

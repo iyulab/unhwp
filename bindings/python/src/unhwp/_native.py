@@ -164,7 +164,7 @@ _lib.unhwp_version.argtypes = []
 _lib.unhwp_version.restype = c_char_p
 
 _lib.unhwp_supported_formats.argtypes = []
-_lib.unhwp_supported_formats.restype = c_char_p
+_lib.unhwp_supported_formats.restype = c_int
 
 # Format detection
 _lib.unhwp_detect_format.argtypes = [c_char_p]

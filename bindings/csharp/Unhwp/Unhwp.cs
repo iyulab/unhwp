@@ -314,12 +314,17 @@ namespace Unhwp
         }
 
         /// <summary>Gets the supported formats description.</summary>
+        /// <summary>Gets the supported formats as a descriptive string.</summary>
         public static string SupportedFormats
         {
             get
             {
-                var ptr = NativeMethods.unhwp_supported_formats();
-                return NativeMethods.PtrToStringUtf8(ptr) ?? string.Empty;
+                var flags = NativeMethods.unhwp_supported_formats();
+                var formats = new List<string>();
+                if ((flags & 0x01) != 0) formats.Add("HWP 5.0");
+                if ((flags & 0x02) != 0) formats.Add("HWPX");
+                if ((flags & 0x04) != 0) formats.Add("HWP 3.x");
+                return formats.Count > 0 ? string.Join(", ", formats) : "None";
             }
         }
 

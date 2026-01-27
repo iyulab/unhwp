@@ -21,7 +21,6 @@
     <RepositoryType>git</RepositoryType>
     <PackageTags>hwp;hwpx;korean;document;markdown;parser</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageIcon>icon.png</PackageIcon>
 
     <!-- Build configuration -->
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
@@ -41,9 +40,8 @@
     <!-- macOS ARM64 -->
     <None Include="runtimes\osx-arm64\native\libunhwp.dylib" Pack="true" PackagePath="runtimes\osx-arm64\native\" Visible="false" />
 
-    <!-- README and icon -->
+    <!-- README -->
     <None Include="README.md" Pack="true" PackagePath="" />
-    <None Include="icon.png" Pack="true" PackagePath="" Condition="Exists('icon.png')" />
   </ItemGroup>
 
   <!-- For netstandard2.0 compatibility -->

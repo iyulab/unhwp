@@ -133,7 +133,7 @@ namespace Unhwp.Native
         public static extern IntPtr unhwp_version();
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-        public static extern IntPtr unhwp_supported_formats();
+        public static extern int unhwp_supported_formats();
 
         // Format detection
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
