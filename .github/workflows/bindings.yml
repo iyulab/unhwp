@@ -302,11 +302,8 @@ jobs:
           VERSION=$(basename "$NUPKG" | sed 's/Unhwp\.\(.*\)\.nupkg/\1/')
           echo "Using Unhwp version: $VERSION"
           # Replace ProjectReference with PackageReference in test project
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            sed -i 's|<ProjectReference Include="..\\\\Unhwp\\\\Unhwp.csproj" />|<PackageReference Include="Unhwp" Version="'"$VERSION"'" />|g' bindings/csharp/Unhwp.Tests/Unhwp.Tests.csproj
-          else
-            sed -i.bak 's|<ProjectReference Include="..\\Unhwp\\Unhwp.csproj" />|<PackageReference Include="Unhwp" Version="'"$VERSION"'" />|g' bindings/csharp/Unhwp.Tests/Unhwp.Tests.csproj
-          fi
+          # Use wildcard pattern to match any path separator (/ or \)
+          sed -i.bak 's|<ProjectReference Include="[^"]*Unhwp\.csproj"[^/]*/\?>|<PackageReference Include="Unhwp" Version="'"$VERSION"'" />|g' bindings/csharp/Unhwp.Tests/Unhwp.Tests.csproj
           echo "Updated test project:"
           cat bindings/csharp/Unhwp.Tests/Unhwp.Tests.csproj
 
