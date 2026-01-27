@@ -286,13 +286,26 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: bindings/csharp/Unhwp/runtimes/${{ matrix.runtime }}/native/
+          path: ./native-lib/
 
       - name: Create local NuGet source
         shell: bash
         run: |
           dotnet nuget add source "$(pwd)/packages" -n local
 
+      - name: Build test project
+        working-directory: bindings/csharp
+        run: dotnet build Unhwp.Tests/Unhwp.Tests.csproj -c Release
+
+      - name: Copy native library to test output
+        shell: bash
+        run: |
+          # Find all test output directories and copy native library
+          find bindings/csharp/Unhwp.Tests/bin/Release -type d -name "net*" | while read dir; do
+            cp ./native-lib/* "$dir/"
+            echo "Copied native library to $dir"
+          done
+
       - name: Run tests
         working-directory: bindings/csharp
-        run: dotnet test Unhwp.Tests/Unhwp.Tests.csproj -c Release
+        run: dotnet test Unhwp.Tests/Unhwp.Tests.csproj -c Release --no-build
