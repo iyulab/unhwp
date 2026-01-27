@@ -37,6 +37,14 @@ pub struct HeadingConfig {
 
     /// Minimum consecutive items to consider as a list.
     pub min_sequence_count: usize,
+
+    /// Enable statistical inference (font size + bold → heading).
+    /// Requires font_size information in TextRuns.
+    pub enable_statistical_inference: bool,
+
+    /// Font size ratio threshold for statistical inference.
+    /// Default: 1.2 (120% of base font size).
+    pub size_threshold_ratio: f32,
 }
 
 impl Default for HeadingConfig {
@@ -47,6 +55,8 @@ impl Default for HeadingConfig {
             trust_explicit_styles: true,
             analyze_sequences: true,
             min_sequence_count: 2,
+            enable_statistical_inference: false, // Opt-in for now
+            size_threshold_ratio: 1.2,
         }
     }
 }
@@ -86,6 +96,18 @@ impl HeadingConfig {
         self.min_sequence_count = count.max(2);
         self
     }
+
+    /// Enable statistical inference (font size + bold → heading).
+    pub fn with_statistical_inference(mut self, enable: bool) -> Self {
+        self.enable_statistical_inference = enable;
+        self
+    }
+
+    /// Set the font size ratio threshold for statistical inference.
+    pub fn with_size_ratio(mut self, ratio: f32) -> Self {
+        self.size_threshold_ratio = ratio.max(1.0);
+        self
+    }
 }
 
 /// Result of heading analysis for a paragraph.
@@ -119,15 +141,59 @@ impl HeadingDecision {
     }
 }
 
+/// Statistics collected from a document for heading analysis.
+#[derive(Debug, Clone, Default)]
+pub struct DocumentStats {
+    /// Font size distribution (size in tenths of a point → occurrence weight).
+    pub font_sizes: std::collections::HashMap<u32, usize>,
+
+    /// Detected base font size (most frequent, in points).
+    pub base_font_size: Option<f32>,
+
+    /// Number of bold paragraphs.
+    pub bold_paragraphs: usize,
+
+    /// Total number of paragraphs.
+    pub total_paragraphs: usize,
+
+    /// Number of paragraphs with explicit heading styles.
+    pub explicit_heading_count: usize,
+}
+
+impl DocumentStats {
+    /// Calculate the base (body) font size from the distribution.
+    /// Uses the most weighted font size as the baseline.
+    pub fn calculate_base_font_size(&mut self) {
+        self.base_font_size = self
+            .font_sizes
+            .iter()
+            .max_by_key(|(_, weight)| *weight)
+            .map(|(size, _)| *size as f32 / 10.0);
+    }
+
+    /// Check if a font size is significantly larger than the base.
+    pub fn is_larger_than_base(&self, size: f32, ratio: f32) -> bool {
+        if let Some(base) = self.base_font_size {
+            size >= base * ratio
+        } else {
+            false
+        }
+    }
+}
+
 /// Analyzer for sophisticated heading detection.
 pub struct HeadingAnalyzer {
     config: HeadingConfig,
+    stats: DocumentStats,
 }
 
 impl HeadingAnalyzer {
     /// Create a new heading analyzer with the given configuration.
     pub fn new(config: HeadingConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            stats: DocumentStats::default(),
+        }
     }
 
     /// Create a heading analyzer with default configuration.
@@ -137,9 +203,13 @@ impl HeadingAnalyzer {
 
     /// Analyze a document and return heading decisions for all paragraphs.
     ///
+    /// Performs a two-pass analysis:
+    /// 1. Collect document statistics (font sizes, patterns)
+    /// 2. Apply priority-based heading decisions
+    ///
     /// Returns a vector of decisions, one per paragraph block in document order.
     /// Table blocks are skipped (not included in the output).
-    pub fn analyze(&self, doc: &Document) -> Vec<HeadingDecision> {
+    pub fn analyze(&mut self, doc: &Document) -> Vec<HeadingDecision> {
         // Collect all paragraphs from all sections
         let paragraphs: Vec<&Paragraph> = doc
             .sections
@@ -155,19 +225,53 @@ impl HeadingAnalyzer {
             })
             .collect();
 
+        // Pass 1: Collect statistics (if statistical inference enabled)
+        if self.config.enable_statistical_inference {
+            self.collect_stats(&paragraphs);
+        }
+
+        // Pass 2: Make heading decisions
         self.analyze_paragraphs(&paragraphs)
+    }
+
+    /// Collect statistics from paragraphs (Pass 1).
+    fn collect_stats(&mut self, paragraphs: &[&Paragraph]) {
+        self.stats = DocumentStats::default();
+
+        for para in paragraphs {
+            self.stats.total_paragraphs += 1;
+
+            // Check for explicit heading
+            if para.style.heading_level > 0 {
+                self.stats.explicit_heading_count += 1;
+            }
+
+            // Collect font sizes
+            if let Some(size) = para.dominant_font_size() {
+                let key = (size * 10.0) as u32;
+                let text_len = para.plain_text().chars().count();
+                *self.stats.font_sizes.entry(key).or_insert(0) += text_len;
+            }
+
+            // Count bold paragraphs
+            if para.is_all_bold() {
+                self.stats.bold_paragraphs += 1;
+            }
+        }
+
+        self.stats.calculate_base_font_size();
     }
 
     /// Analyze a sequence of paragraphs with context awareness.
     pub fn analyze_paragraphs(&self, paragraphs: &[&Paragraph]) -> Vec<HeadingDecision> {
         let mut decisions = Vec::with_capacity(paragraphs.len());
 
-        // First pass: make initial decisions
+        // Make initial decisions
         for para in paragraphs {
             decisions.push(self.decide_heading(para));
         }
 
-        // Second pass: check sequential patterns if enabled
+        // Check sequential patterns if enabled
         if self.config.analyze_sequences {
             self.apply_sequence_analysis(paragraphs, &mut decisions);
         }
@@ -205,6 +309,13 @@ impl HeadingAnalyzer {
             };
         }
 
+        // P3: Statistical inference (font size + bold)
+        if self.config.enable_statistical_inference {
+            if let Some(inferred) = self.infer_heading_from_style(para) {
+                return HeadingDecision::Inferred(inferred);
+            }
+        }
+
         // Fallback: Use explicit style if present (even when trust=false)
         // This handles numbered headings like "1. 서론" with explicit H1 style
         // Sequence analysis may still demote them if they form a consecutive pattern
@@ -214,6 +325,51 @@ impl HeadingAnalyzer {
         }
 
         HeadingDecision::None
+    }
+
+    /// Infer heading level from text style (font size + bold).
+    ///
+    /// For a paragraph to be inferred as a heading:
+    /// - All text runs must be bold
+    /// - Font size must be >= base_font_size * size_threshold_ratio
+    fn infer_heading_from_style(&self, para: &Paragraph) -> Option<u8> {
+        // Must have text content
+        if para.plain_text().trim().is_empty() {
+            return None;
+        }
+
+        // Must be all bold
+        if !para.is_all_bold() {
+            return None;
+        }
+
+        // Get dominant font size
+        let font_size = para.dominant_font_size()?;
+
+        // Check if font is larger than base
+        if !self.stats.is_larger_than_base(font_size, self.config.size_threshold_ratio) {
+            return None;
+        }
+
+        // Infer level based on size ratio
+        let level = self.infer_level_from_size(font_size);
+        Some(self.cap_heading_level(level))
+    }
+
+    /// Infer heading level from font size ratio.
+    fn infer_level_from_size(&self, size: f32) -> u8 {
+        let base = self.stats.base_font_size.unwrap_or(12.0);
+        let ratio = size / base;
+
+        if ratio >= 2.0 {
+            1 // H1
+        } else if ratio >= 1.5 {
+            2 // H2
+        } else if ratio >= 1.2 {
+            3 // H3
+        } else {
+            4 // H4
+        }
     }
 
     /// Check if text looks like a bullet list item.
@@ -576,7 +732,7 @@ pub fn looks_like_korean_heading(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{InlineContent, ParagraphStyle, TextRun};
+    use crate::model::{Block, Document, InlineContent, ParagraphStyle, Section, TextRun, TextStyle};
 
     fn make_paragraph(text: &str, heading_level: u8) -> Paragraph {
         let mut para = Paragraph::with_style(ParagraphStyle {
@@ -584,6 +740,16 @@ mod tests {
             ..Default::default()
         });
         para.content.push(InlineContent::Text(TextRun::new(text)));
+        para
+    }
+
+    fn make_styled_paragraph(text: &str, heading_level: u8, style: TextStyle) -> Paragraph {
+        let mut para = Paragraph::with_style(ParagraphStyle {
+            heading_level,
+            ..Default::default()
+        });
+        para.content
+            .push(InlineContent::Text(TextRun::with_style(text, style)));
         para
     }
 
@@ -816,5 +982,176 @@ mod tests {
         assert_eq!(next.chapter_type, KoreanChapterType::Jang);
         assert_eq!(next.number, 2);
         assert_eq!(next.title, None);
+    }
+
+    // ========================================================================
+    // Statistical Inference Tests
+    // ========================================================================
+
+    #[test]
+    fn test_statistical_inference_bold_large_font() {
+        // Enable statistical inference
+        let config = HeadingConfig::default()
+            .with_statistical_inference(true)
+            .with_trust_explicit(false);
+
+        let mut analyzer = HeadingAnalyzer::new(config);
+
+        // Create body paragraphs with 12pt font
+        let body1 = make_styled_paragraph(
+            "This is body text that should establish the baseline.",
+            0,
+            TextStyle {
+                font_size: Some(12.0),
+                ..Default::default()
+            },
+        );
+        let body2 = make_styled_paragraph(
+            "More body text to strengthen the baseline determination.",
+            0,
+            TextStyle {
+                font_size: Some(12.0),
+                ..Default::default()
+            },
+        );
+
+        // Create heading paragraph: bold + 16pt (1.33x larger)
+        let heading = make_styled_paragraph(
+            "Chapter Title",
+            0, // No explicit heading level
+            TextStyle {
+                bold: true,
+                font_size: Some(16.0),
+                ..Default::default()
+            },
+        );
+
+        // Build document manually
+        let doc = Document {
+            sections: vec![Section {
+                content: vec![
+                    Block::Paragraph(body1),
+                    Block::Paragraph(heading),
+                    Block::Paragraph(body2),
+                ],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let decisions = analyzer.analyze(&doc);
+
+        // The heading (index 1) should be inferred
+        assert!(
+            matches!(decisions[1], HeadingDecision::Inferred(_)),
+            "Bold + large font should be inferred as heading: {:?}",
+            decisions[1]
+        );
+    }
+
+    #[test]
+    fn test_statistical_inference_not_bold() {
+        let config = HeadingConfig::default()
+            .with_statistical_inference(true)
+            .with_trust_explicit(false);
+
+        let mut analyzer = HeadingAnalyzer::new(config);
+
+        // Body text at 12pt
+        let body = make_styled_paragraph(
+            "Body text establishes baseline.",
+            0,
+            TextStyle {
+                font_size: Some(12.0),
+                ..Default::default()
+            },
+        );
+
+        // Large font but NOT bold - should NOT be inferred as heading
+        let large_not_bold = make_styled_paragraph(
+            "Large but not bold",
+            0,
+            TextStyle {
+                bold: false,
+                font_size: Some(16.0),
+                ..Default::default()
+            },
+        );
+
+        let doc = Document {
+            sections: vec![Section {
+                content: vec![Block::Paragraph(body), Block::Paragraph(large_not_bold)],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let decisions = analyzer.analyze(&doc);
+
+        // Should NOT be inferred (missing bold)
+        assert_eq!(
+            decisions[1],
+            HeadingDecision::None,
+            "Large font without bold should not be heading"
+        );
+    }
+
+    #[test]
+    fn test_statistical_inference_disabled_by_default() {
+        let config = HeadingConfig::default(); // inference disabled by default
+        let mut analyzer = HeadingAnalyzer::new(config);
+
+        let heading = make_styled_paragraph(
+            "Bold Large Title",
+            0,
+            TextStyle {
+                bold: true,
+                font_size: Some(20.0),
+                ..Default::default()
+            },
+        );
+
+        let doc = Document {
+            sections: vec![Section {
+                content: vec![Block::Paragraph(heading)],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let decisions = analyzer.analyze(&doc);
+
+        // Should NOT be inferred when disabled
+        assert_eq!(
+            decisions[0],
+            HeadingDecision::None,
+            "Statistical inference should be disabled by default"
+        );
+    }
+
+    #[test]
+    fn test_document_stats_base_font_calculation() {
+        let mut stats = DocumentStats::default();
+
+        // 12pt appears most (weighted by character count)
+        stats.font_sizes.insert(120, 500); // 12.0pt * 10 = 120, weight 500
+        stats.font_sizes.insert(160, 50); // 16.0pt * 10 = 160, weight 50
+        stats.font_sizes.insert(100, 100); // 10.0pt * 10 = 100, weight 100
+
+        stats.calculate_base_font_size();
+
+        assert_eq!(stats.base_font_size, Some(12.0));
+    }
+
+    #[test]
+    fn test_is_larger_than_base() {
+        let mut stats = DocumentStats::default();
+        stats.base_font_size = Some(12.0);
+
+        // 1.2x threshold (12.0 * 1.2 = 14.4)
+        assert!(stats.is_larger_than_base(14.5, 1.2)); // slightly above 1.2x
+        assert!(stats.is_larger_than_base(16.0, 1.2)); // 1.33x
+        assert!(!stats.is_larger_than_base(12.0, 1.2)); // 1.0x
+        assert!(!stats.is_larger_than_base(14.0, 1.2)); // 1.16x (under threshold)
     }
 }

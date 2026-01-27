@@ -115,7 +115,7 @@ impl MarkdownRenderer {
         config: &super::heading_analyzer::HeadingConfig,
     ) -> Result<String> {
         // Run heading analysis
-        let analyzer = HeadingAnalyzer::new(config.clone());
+        let mut analyzer = HeadingAnalyzer::new(config.clone());
         let decisions = analyzer.analyze(document);
 
         let mut output = String::new();

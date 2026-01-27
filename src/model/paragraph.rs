@@ -156,6 +156,51 @@ impl Paragraph {
 
         has_images && !has_non_empty_text
     }
+
+    /// Returns the dominant (most common) font size in this paragraph.
+    ///
+    /// Calculates weighted by text length - longer runs contribute more.
+    /// Returns None if no text runs have font size information.
+    pub fn dominant_font_size(&self) -> Option<f32> {
+        use std::collections::HashMap;
+
+        let mut size_weights: HashMap<u32, usize> = HashMap::new();
+
+        for item in &self.content {
+            if let InlineContent::Text(run) = item {
+                if let Some(size) = run.style.font_size {
+                    // Convert to integer key (tenths of a point for precision)
+                    let key = (size * 10.0) as u32;
+                    let text_len = run.text.chars().count();
+                    *size_weights.entry(key).or_insert(0) += text_len;
+                }
+            }
+        }
+
+        size_weights
+            .into_iter()
+            .max_by_key(|(_, weight)| *weight)
+            .map(|(key, _)| key as f32 / 10.0)
+    }
+
+    /// Returns true if all non-empty text runs in this paragraph are bold.
+    pub fn is_all_bold(&self) -> bool {
+        let text_runs: Vec<_> = self
+            .content
+            .iter()
+            .filter_map(|c| {
+                if let InlineContent::Text(run) = c {
+                    if !run.text.trim().is_empty() {
+                        return Some(run);
+                    }
+                }
+                None
+            })
+            .collect();
+
+        // Must have at least one text run
+        !text_runs.is_empty() && text_runs.iter().all(|r| r.style.bold)
+    }
 }
 
 /// Reference to an embedded image.
@@ -199,5 +244,91 @@ impl Equation {
             script: script.into(),
             latex: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_dominant_font_size() {
+        let mut para = Paragraph::new();
+
+        // Add runs with different sizes
+        para.content.push(InlineContent::Text(TextRun::with_style(
+            "Short",
+            TextStyle {
+                font_size: Some(14.0),
+                ..Default::default()
+            },
+        )));
+        para.content.push(InlineContent::Text(TextRun::with_style(
+            "This is a much longer text that should dominate",
+            TextStyle {
+                font_size: Some(12.0),
+                ..Default::default()
+            },
+        )));
+
+        // 12.0 should win because of longer text
+        assert_eq!(para.dominant_font_size(), Some(12.0));
+    }
+
+    #[test]
+    fn test_dominant_font_size_empty() {
+        let para = Paragraph::new();
+        assert_eq!(para.dominant_font_size(), None);
+    }
+
+    #[test]
+    fn test_dominant_font_size_no_size_info() {
+        let mut para = Paragraph::new();
+        para.content
+            .push(InlineContent::Text(TextRun::new("No size info")));
+        assert_eq!(para.dominant_font_size(), None);
+    }
+
+    #[test]
+    fn test_is_all_bold() {
+        let mut para = Paragraph::new();
+        para.content.push(InlineContent::Text(TextRun::with_style(
+            "Bold text",
+            TextStyle {
+                bold: true,
+                ..Default::default()
+            },
+        )));
+        para.content.push(InlineContent::Text(TextRun::with_style(
+            "Also bold",
+            TextStyle {
+                bold: true,
+                ..Default::default()
+            },
+        )));
+
+        assert!(para.is_all_bold());
+    }
+
+    #[test]
+    fn test_is_all_bold_mixed() {
+        let mut para = Paragraph::new();
+        para.content.push(InlineContent::Text(TextRun::with_style(
+            "Bold text",
+            TextStyle {
+                bold: true,
+                ..Default::default()
+            },
+        )));
+        para.content
+            .push(InlineContent::Text(TextRun::new("Not bold")));
+
+        assert!(!para.is_all_bold());
+    }
+
+    #[test]
+    fn test_is_all_bold_empty() {
+        let para = Paragraph::new();
+        assert!(!para.is_all_bold());
     }
 }
