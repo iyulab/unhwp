@@ -1,5 +1,6 @@
 //! Rendering options for Markdown output.
 
+use super::heading_analyzer::HeadingConfig;
 use crate::cleanup::CleanupOptions;
 use std::path::PathBuf;
 
@@ -47,6 +48,11 @@ pub struct RenderOptions {
     /// Cleanup options for purifying output for LLM training.
     /// If None, no cleanup is performed.
     pub cleanup: Option<CleanupOptions>,
+
+    /// Heading analysis configuration.
+    /// When set, enables sophisticated heading detection with sequence analysis.
+    /// If None, uses legacy inline heading detection.
+    pub heading_config: Option<HeadingConfig>,
 }
 
 impl Default for RenderOptions {
@@ -64,6 +70,7 @@ impl Default for RenderOptions {
             paragraph_spacing: true,
             escape_special_chars: false,
             cleanup: None,
+            heading_config: None,
         }
     }
 }
@@ -138,6 +145,23 @@ impl RenderOptions {
     /// Headings beyond this level will be capped to this level.
     pub fn with_max_heading_level(mut self, level: u8) -> Self {
         self.max_heading_level = level.clamp(1, 6);
+        self
+    }
+
+    /// Enables sophisticated heading analysis with default config.
+    ///
+    /// This activates the two-pass heading analyzer that can:
+    /// - Detect and demote consecutive numbered sequences to lists
+    /// - Better discriminate between standalone headings and list items
+    /// - Support Korean sequence patterns (가나다...)
+    pub fn with_heading_analysis(mut self) -> Self {
+        self.heading_config = Some(HeadingConfig::default());
+        self
+    }
+
+    /// Enables sophisticated heading analysis with custom config.
+    pub fn with_heading_config(mut self, config: HeadingConfig) -> Self {
+        self.heading_config = Some(config);
         self
     }
 }

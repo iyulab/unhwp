@@ -1,5 +1,6 @@
 //! Markdown renderer implementation.
 
+use super::heading_analyzer::{HeadingAnalyzer, HeadingDecision};
 use super::RenderOptions;
 use crate::error::Result;
 use crate::model::{
@@ -67,11 +68,22 @@ impl MarkdownRenderer {
             image_id_to_filename: Self::build_image_mapping(document),
         };
 
+        // If heading analysis is enabled, use the analyzer
+        if let Some(ref config) = renderer.options.heading_config {
+            return renderer.render_with_analyzer(document, config);
+        }
+
+        // Standard rendering without sophisticated heading analysis
+        renderer.render_standard(document)
+    }
+
+    /// Standard rendering (legacy behavior without heading analyzer).
+    fn render_standard(&self, document: &Document) -> Result<String> {
         let mut output = String::new();
 
         // Render frontmatter if enabled
-        if renderer.options.include_frontmatter {
-            renderer.render_frontmatter(document, &mut output);
+        if self.options.include_frontmatter {
+            self.render_frontmatter(document, &mut output);
         }
 
         // Render each section
@@ -79,17 +91,61 @@ impl MarkdownRenderer {
             for block in &section.content {
                 match block {
                     Block::Paragraph(para) => {
-                        renderer.render_paragraph(para, &mut output);
+                        self.render_paragraph(para, &mut output, None);
                     }
                     Block::Table(table) => {
-                        renderer.render_table(table, &mut output);
+                        self.render_table(table, &mut output);
                     }
                 }
             }
         }
 
         // Apply cleanup pipeline if enabled
-        if let Some(ref cleanup_options) = renderer.options.cleanup {
+        if let Some(ref cleanup_options) = self.options.cleanup {
+            output = crate::cleanup::cleanup(&output, cleanup_options);
+        }
+
+        Ok(output)
+    }
+
+    /// Rendering with sophisticated heading analysis.
+    fn render_with_analyzer(
+        &self,
+        document: &Document,
+        config: &super::heading_analyzer::HeadingConfig,
+    ) -> Result<String> {
+        // Run heading analysis
+        let analyzer = HeadingAnalyzer::new(config.clone());
+        let decisions = analyzer.analyze(document);
+
+        let mut output = String::new();
+
+        // Render frontmatter if enabled
+        if self.options.include_frontmatter {
+            self.render_frontmatter(document, &mut output);
+        }
+
+        // Track paragraph index across all sections
+        let mut para_idx = 0;
+
+        // Render each section with pre-computed heading decisions
+        for section in &document.sections {
+            for block in &section.content {
+                match block {
+                    Block::Paragraph(para) => {
+                        let decision = decisions.get(para_idx).copied();
+                        self.render_paragraph(para, &mut output, decision);
+                        para_idx += 1;
+                    }
+                    Block::Table(table) => {
+                        self.render_table(table, &mut output);
+                    }
+                }
+            }
+        }
+
+        // Apply cleanup pipeline if enabled
+        if let Some(ref cleanup_options) = self.options.cleanup {
             output = crate::cleanup::cleanup(&output, cleanup_options);
         }
 
@@ -150,7 +206,15 @@ impl MarkdownRenderer {
     }
 
     /// Renders a paragraph.
-    fn render_paragraph(&self, para: &Paragraph, output: &mut String) {
+    ///
+    /// If `heading_decision` is provided (from HeadingAnalyzer), it takes precedence
+    /// over the legacy inline heading detection logic.
+    fn render_paragraph(
+        &self,
+        para: &Paragraph,
+        output: &mut String,
+        heading_decision: Option<HeadingDecision>,
+    ) {
         if para.is_empty() && !self.options.include_empty_paragraphs {
             return;
         }
@@ -160,41 +224,23 @@ impl MarkdownRenderer {
         let trimmed_text = plain_text.trim();
         let first_char = trimmed_text.chars().next();
 
-        // Check if paragraph content looks like a list item (starts with list-like markers)
-        let looks_like_list_item = first_char
-            .map(|c| LIST_MARKERS.contains(&c))
-            .unwrap_or(false);
-
-        // Check if paragraph starts with a section marker (potential heading)
-        let starts_with_section_marker = first_char
-            .map(|c| SECTION_MARKERS.contains(&c))
-            .unwrap_or(false);
-
-        // Check if text is too long to be a meaningful heading
-        let text_length = trimmed_text.chars().count();
-        let text_too_long = text_length > MAX_HEADING_TEXT_LENGTH;
-
-        // Auto-detect section marker headings:
-        // If text starts with a section marker and is short enough, treat as heading
-        let is_section_marker_heading = starts_with_section_marker
-            && text_length <= MAX_SECTION_MARKER_HEADING_LENGTH
-            && text_length > 1  // Must have more than just the marker
-            && style.heading_level == 0  // Only auto-detect if not already a heading
-            && style.list_style.is_none();
-
-        // Determine if heading should be applied
-        // Skip heading markers for:
-        // 1. Empty headings (no text content at all)
-        // 2. Image-only paragraphs (images should not have heading markers)
-        // 3. Paragraphs with list styles set
-        // 4. Paragraphs that look like list items (start with list markers)
-        // 5. Paragraphs with text too long to be semantic headings
-        let should_apply_heading = (style.heading_level > 0 || is_section_marker_heading)
-            && para.has_text_content()
-            && !para.is_image_only()
-            && style.list_style.is_none()
-            && !looks_like_list_item
-            && !text_too_long;
+        // Determine heading behavior based on whether we have a pre-computed decision
+        let (should_apply_heading, heading_level) = if let Some(decision) = heading_decision {
+            // Use pre-computed decision from HeadingAnalyzer
+            match decision {
+                HeadingDecision::Explicit(level) | HeadingDecision::Inferred(level) => {
+                    // Check additional conditions that analyzer doesn't know about
+                    let valid = para.has_text_content()
+                        && !para.is_image_only()
+                        && style.list_style.is_none();
+                    (valid, level)
+                }
+                HeadingDecision::Demoted | HeadingDecision::None => (false, 0),
+            }
+        } else {
+            // Legacy inline heading detection
+            self.compute_heading_inline(para, trimmed_text, first_char)
+        };
 
         // Skip empty headings entirely - don't output anything
         if style.heading_level > 0 && !para.has_text_content() && !para.is_image_only() {
@@ -203,13 +249,7 @@ impl MarkdownRenderer {
 
         // Heading prefix (only for valid headings)
         if should_apply_heading {
-            // Use heading level from style, or default to h2 for auto-detected section markers
-            let level = if style.heading_level > 0 {
-                style.heading_level.min(self.options.max_heading_level)
-            } else {
-                2 // Default level for section marker headings
-            };
-            output.push_str(&"#".repeat(level as usize));
+            output.push_str(&"#".repeat(heading_level as usize));
             output.push(' ');
         }
 
@@ -247,6 +287,59 @@ impl MarkdownRenderer {
         if self.options.paragraph_spacing && !is_heading && !is_list_item {
             output.push('\n');
         }
+    }
+
+    /// Legacy inline heading detection (used when heading_config is None).
+    fn compute_heading_inline(
+        &self,
+        para: &Paragraph,
+        trimmed_text: &str,
+        first_char: Option<char>,
+    ) -> (bool, u8) {
+        let style = &para.style;
+
+        // Check if paragraph content looks like a list item (starts with list-like markers)
+        let looks_like_list_item = first_char
+            .map(|c| LIST_MARKERS.contains(&c))
+            .unwrap_or(false);
+
+        // Check if paragraph starts with a section marker (potential heading)
+        let starts_with_section_marker = first_char
+            .map(|c| SECTION_MARKERS.contains(&c))
+            .unwrap_or(false);
+
+        // Check if text is too long to be a meaningful heading
+        let text_length = trimmed_text.chars().count();
+        let text_too_long = text_length > MAX_HEADING_TEXT_LENGTH;
+
+        // Auto-detect section marker headings:
+        // If text starts with a section marker and is short enough, treat as heading
+        let is_section_marker_heading = starts_with_section_marker
+            && text_length <= MAX_SECTION_MARKER_HEADING_LENGTH
+            && text_length > 1 // Must have more than just the marker
+            && style.heading_level == 0 // Only auto-detect if not already a heading
+            && style.list_style.is_none();
+
+        // Determine if heading should be applied
+        let should_apply_heading = (style.heading_level > 0 || is_section_marker_heading)
+            && para.has_text_content()
+            && !para.is_image_only()
+            && style.list_style.is_none()
+            && !looks_like_list_item
+            && !text_too_long;
+
+        // Calculate heading level
+        let level = if should_apply_heading {
+            if style.heading_level > 0 {
+                style.heading_level.min(self.options.max_heading_level)
+            } else {
+                2 // Default level for section marker headings
+            }
+        } else {
+            0
+        };
+
+        (should_apply_heading, level)
     }
 
     /// Renders inline content.

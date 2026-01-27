@@ -1,8 +1,13 @@
 //! Markdown rendering for documents.
 
+mod heading_analyzer;
 mod markdown;
 mod options;
 
+pub use heading_analyzer::{
+    is_korean_chapter_pattern, looks_like_korean_heading, next_korean_chapter, HeadingAnalyzer,
+    HeadingConfig, HeadingDecision, KoreanChapterInfo, KoreanChapterType,
+};
 pub use markdown::MarkdownRenderer;
 pub use options::{RenderOptions, TableFallback};
 
