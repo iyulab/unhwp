@@ -264,7 +264,7 @@ jobs:
           - os: windows-latest
             artifact: native-win-x64
             runtime: win-x64
-          - os: macos-13
+          - os: macos-15-intel
             artifact: native-osx-x64
             runtime: osx-x64
           - os: macos-latest
@@ -293,6 +293,22 @@ jobs:
 
       - name: Create local NuGet source
         run: dotnet nuget add source "${{ github.workspace }}/packages" -n local
+
+      - name: Update test project to use NuGet package
+        shell: bash
+        run: |
+          # Get version from NuGet package filename
+          NUPKG=$(ls packages/*.nupkg | head -1)
+          VERSION=$(basename "$NUPKG" | sed 's/Unhwp\.\(.*\)\.nupkg/\1/')
+          echo "Using Unhwp version: $VERSION"
+          # Replace ProjectReference with PackageReference in test project
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            sed -i 's|<ProjectReference Include="..\\\\Unhwp\\\\Unhwp.csproj" />|<PackageReference Include="Unhwp" Version="'"$VERSION"'" />|g' bindings/csharp/Unhwp.Tests/Unhwp.Tests.csproj
+          else
+            sed -i.bak 's|<ProjectReference Include="..\\Unhwp\\Unhwp.csproj" />|<PackageReference Include="Unhwp" Version="'"$VERSION"'" />|g' bindings/csharp/Unhwp.Tests/Unhwp.Tests.csproj
+          fi
+          echo "Updated test project:"
+          cat bindings/csharp/Unhwp.Tests/Unhwp.Tests.csproj
 
       - name: Build test project
         working-directory: bindings/csharp
