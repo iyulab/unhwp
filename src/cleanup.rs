@@ -791,7 +791,6 @@ static RE_MULTIPLE_NEWLINES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n{
 
 static RE_MULTIPLE_SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[ \t]+").unwrap());
 
-
 /// Stage 4: Final normalization
 ///
 /// - Reduce consecutive newlines (2+ -> 1)
@@ -803,9 +802,7 @@ pub fn stage4_final_normalize(input: &str, _options: &CleanupOptions) -> String 
     let mut result = input.to_string();
 
     // Reduce consecutive newlines (2+ -> 1)
-    result = RE_MULTIPLE_NEWLINES
-        .replace_all(&result, "\n")
-        .to_string();
+    result = RE_MULTIPLE_NEWLINES.replace_all(&result, "\n").to_string();
 
     // Process line by line
     let lines: Vec<&str> = result.lines().collect();
@@ -814,7 +811,7 @@ pub fn stage4_final_normalize(input: &str, _options: &CleanupOptions) -> String 
     for line in lines {
         // Trim each line
         let trimmed = line.trim();
-        
+
         // Skip orphan lines (< 3 chars, not markers, not sentence endings)
         if is_orphan_line(trimmed) {
             continue;
@@ -829,9 +826,7 @@ pub fn stage4_final_normalize(input: &str, _options: &CleanupOptions) -> String 
     result = cleaned_lines.join("\n");
 
     // Final pass: reduce any remaining consecutive newlines
-    result = RE_MULTIPLE_NEWLINES
-        .replace_all(&result, "\n")
-        .to_string();
+    result = RE_MULTIPLE_NEWLINES.replace_all(&result, "\n").to_string();
 
     // Merge consecutive list items (remove blank lines between list markers)
     // List markers: "- ", "* ", "+ ", "1. ", "2. ", etc.
@@ -845,7 +840,7 @@ pub fn stage4_final_normalize(input: &str, _options: &CleanupOptions) -> String 
 fn merge_consecutive_list_items(input: &str) -> String {
     let lines: Vec<&str> = input.lines().collect();
     let mut result: Vec<String> = Vec::with_capacity(lines.len());
-    
+
     for (i, line) in lines.iter().enumerate() {
         // Check if previous non-empty line was also a list item
         let prev_was_list = if i > 0 {
@@ -864,35 +859,37 @@ fn merge_consecutive_list_items(input: &str) -> String {
         } else {
             false
         };
-        
+
         // Skip empty lines between consecutive list items
         if line.trim().is_empty() && prev_was_list {
             // Check if next non-empty line is also a list item
-            let next_is_list = lines.iter().skip(i + 1)
+            let next_is_list = lines
+                .iter()
+                .skip(i + 1)
                 .find(|l| !l.trim().is_empty())
                 .map(|l| is_list_line(l))
                 .unwrap_or(false);
-            
+
             if next_is_list {
                 continue; // Skip this empty line
             }
         }
-        
+
         result.push(line.to_string());
     }
-    
+
     result.join("\n")
 }
 
 /// Check if a line is a list item (starts with list markers)
 fn is_list_line(line: &str) -> bool {
     let trimmed = line.trim();
-    
+
     // Unordered list markers
     if trimmed.starts_with("- ") || trimmed.starts_with("* ") || trimmed.starts_with("+ ") {
         return true;
     }
-    
+
     // Ordered list markers (1. 2. 3. etc.)
     if let Some(dot_pos) = trimmed.find(". ") {
         let prefix = &trimmed[..dot_pos];
@@ -900,7 +897,7 @@ fn is_list_line(line: &str) -> bool {
             return true;
         }
     }
-    
+
     false
 }
 

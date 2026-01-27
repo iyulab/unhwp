@@ -1,10 +1,10 @@
 name: Release
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main]
-    paths:
-      - 'Cargo.toml'
 
 env:
   CARGO_TERM_COLOR: always
@@ -13,12 +13,16 @@ jobs:
   check-version:
     name: Check Version Change
     runs-on: ubuntu-latest
+    # Only run if CI workflow succeeded
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     outputs:
       version: ${{ steps.get_version.outputs.version }}
       should_release: ${{ steps.check.outputs.should_release }}
+      head_sha: ${{ github.event.workflow_run.head_sha }}
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 2
 
       - name: Get version from Cargo.toml
@@ -59,6 +63,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check-version.outputs.head_sha }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -107,6 +113,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check-version.outputs.head_sha }}
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -124,6 +132,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check-version.outputs.head_sha }}
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4

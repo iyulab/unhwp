@@ -64,7 +64,9 @@ fn check_latest_version() -> Option<UpdateCheckResult> {
 }
 
 /// Try to receive update check result (non-blocking with short timeout)
-pub fn try_get_update_result(rx: &mpsc::Receiver<Option<UpdateCheckResult>>) -> Option<UpdateCheckResult> {
+pub fn try_get_update_result(
+    rx: &mpsc::Receiver<Option<UpdateCheckResult>>,
+) -> Option<UpdateCheckResult> {
     // Wait up to 500ms for the result
     rx.recv_timeout(Duration::from_millis(500)).ok().flatten()
 }

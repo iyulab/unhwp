@@ -517,7 +517,9 @@ impl MarkdownRenderer {
         // is_continuation = true means this cell is part of a rowspan from above
 
         // Calculate total columns considering colspan
-        let total_cols = table.rows.iter()
+        let total_cols = table
+            .rows
+            .iter()
             .map(|row| row.cells.iter().map(|c| c.colspan as usize).sum::<usize>())
             .max()
             .unwrap_or(0);
@@ -568,8 +570,12 @@ impl MarkdownRenderer {
 
                     // Handle rowspan - mark columns as occupied for future rows
                     if cell.rowspan > 1 {
-                        for c in col_idx..(col_idx + cell.colspan as usize).min(total_cols) {
-                            rowspan_remaining[c] = Some((cell.rowspan - 1, String::new(), cell.alignment));
+                        for slot in rowspan_remaining
+                            .iter_mut()
+                            .take((col_idx + cell.colspan as usize).min(total_cols))
+                            .skip(col_idx)
+                        {
+                            *slot = Some((cell.rowspan - 1, String::new(), cell.alignment));
                         }
                     }
 
@@ -649,7 +655,7 @@ impl MarkdownRenderer {
     /// Renders the content of a table cell, including text and images.
     fn render_cell_content(&self, cell: &TableCell) -> String {
         let mut content = String::new();
-        
+
         for para in &cell.content {
             for item in &para.content {
                 match item {
@@ -674,7 +680,7 @@ impl MarkdownRenderer {
             }
             content.push(' '); // Space between paragraphs in cell
         }
-        
+
         // Normalize whitespace
         content.replace('\n', " ").trim().to_string()
     }

@@ -82,7 +82,6 @@ fn create_test_hwpx(paragraph_count: usize) -> Vec<u8> {
     zip.write_all(section_content.as_bytes()).unwrap();
 
     zip.finish().unwrap();
-    drop(zip);
     buffer
 }
 

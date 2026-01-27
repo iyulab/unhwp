@@ -38,12 +38,7 @@ pub async fn parse_bytes(data: &[u8]) -> Result<Document> {
     let data = data.to_vec();
     tokio::task::spawn_blocking(move || crate::parse_bytes(&data))
         .await
-        .map_err(|e| {
-            crate::error::Error::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            ))
-        })?
+        .map_err(|e| crate::error::Error::Io(std::io::Error::other(e.to_string())))?
 }
 
 /// Asynchronously parses a document from an async reader.
@@ -94,12 +89,7 @@ pub async fn to_markdown_with_options(
     let options = options.clone();
     tokio::task::spawn_blocking(move || crate::render::render_markdown(&document, &options))
         .await
-        .map_err(|e| {
-            crate::error::Error::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            ))
-        })?
+        .map_err(|e| crate::error::Error::Io(std::io::Error::other(e.to_string())))?
 }
 
 /// Asynchronously detects the format of a file.
@@ -214,12 +204,7 @@ impl AsyncParsedDocument {
 
         tokio::task::spawn_blocking(move || crate::render::render_markdown(&document, &options))
             .await
-            .map_err(|e| {
-                crate::error::Error::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    e.to_string(),
-                ))
-            })?
+            .map_err(|e| crate::error::Error::Io(std::io::Error::other(e.to_string())))?
     }
 
     /// Returns the plain text content.

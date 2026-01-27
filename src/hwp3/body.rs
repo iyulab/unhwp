@@ -157,7 +157,7 @@ impl BodyParser {
                 // Regular character or Korean character
                 _ => {
                     // Check if this is a 2-byte Korean character
-                    if byte >= 0x81 && byte <= 0xFE && i + 1 < data.len() {
+                    if (0x81..=0xFE).contains(&byte) && i + 1 < data.len() {
                         let second = data[i + 1];
                         if (0x41..=0x5A).contains(&second)
                             || (0x61..=0x7A).contains(&second)

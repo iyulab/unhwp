@@ -86,7 +86,11 @@ impl<'a> SectionParser<'a> {
     }
 
     /// Parses a <hp:p> paragraph element.
-    fn parse_paragraph(&mut self, attrs: ParaAttrs, section: Option<&mut Section>) -> Result<Paragraph> {
+    fn parse_paragraph(
+        &mut self,
+        attrs: ParaAttrs,
+        section: Option<&mut Section>,
+    ) -> Result<Paragraph> {
         // Build paragraph style from references
         let mut para_style = ParagraphStyle::default();
 
@@ -106,7 +110,7 @@ impl<'a> SectionParser<'a> {
 
         let mut paragraph = Paragraph::with_style(para_style);
         let mut buf = Vec::new();
-        
+
         // Collect tables found in runs (to add to section after paragraph)
         let mut tables_found: Vec<Table> = Vec::new();
 
@@ -122,7 +126,8 @@ impl<'a> SectionParser<'a> {
                                 char_pr_id: get_attr_u32(&e, "charPrIDRef"),
                             };
                             buf.clear();
-                            let run = self.parse_run(run_attrs, &mut paragraph, &mut tables_found)?;
+                            let run =
+                                self.parse_run(run_attrs, &mut paragraph, &mut tables_found)?;
                             if !run.text.is_empty() {
                                 paragraph.content.push(InlineContent::Text(run));
                             }
@@ -152,7 +157,7 @@ impl<'a> SectionParser<'a> {
             }
             buf.clear();
         }
-        
+
         // Add any tables found to section
         if let Some(sec) = section {
             for table in tables_found {
@@ -164,7 +169,12 @@ impl<'a> SectionParser<'a> {
     }
 
     /// Parses a <hp:run> text run element, returning the text run and any images found.
-    fn parse_run(&mut self, attrs: RunAttrs, paragraph: &mut Paragraph, tables: &mut Vec<Table>) -> Result<TextRun> {
+    fn parse_run(
+        &mut self,
+        attrs: RunAttrs,
+        paragraph: &mut Paragraph,
+        tables: &mut Vec<Table>,
+    ) -> Result<TextRun> {
         let text_style = attrs
             .char_pr_id
             .and_then(|id| self.styles.get_char_style(id))
@@ -174,8 +184,8 @@ impl<'a> SectionParser<'a> {
         let mut text = String::new();
         let mut buf = Vec::new();
         let mut in_pic = false;
-        let mut in_ctrl = false;  // Track if we're inside a control element (to skip formula fields etc.)
-        let mut in_text_element = false;  // Track if we're inside <hp:t> element
+        let mut in_ctrl = false; // Track if we're inside a control element (to skip formula fields etc.)
+        let mut in_text_element = false; // Track if we're inside <hp:t> element
 
         loop {
             match self.reader.read_event_into(&mut buf) {
@@ -495,7 +505,7 @@ impl<'a> SectionParser<'a> {
                 }
                 Ok(Event::Empty(e)) => {
                     let name = get_local_name(&e);
-                    
+
                     // cellSpan element contains colspan/rowspan as attributes
                     if name == "cellSpan" {
                         if let Some(cs) = get_attr_u32(&e, "colSpan") {

@@ -129,7 +129,10 @@ pub enum HeadingDecision {
 impl HeadingDecision {
     /// Check if this decision results in a heading.
     pub fn is_heading(&self) -> bool {
-        matches!(self, HeadingDecision::Explicit(_) | HeadingDecision::Inferred(_))
+        matches!(
+            self,
+            HeadingDecision::Explicit(_) | HeadingDecision::Inferred(_)
+        )
     }
 
     /// Get the heading level if this is a heading.
@@ -347,7 +350,10 @@ impl HeadingAnalyzer {
         let font_size = para.dominant_font_size()?;
 
         // Check if font is larger than base
-        if !self.stats.is_larger_than_base(font_size, self.config.size_threshold_ratio) {
+        if !self
+            .stats
+            .is_larger_than_base(font_size, self.config.size_threshold_ratio)
+        {
             return None;
         }
 
@@ -522,9 +528,7 @@ fn extract_sequence_marker(text: &str) -> Option<String> {
     }
 
     // Check Korean "가." pattern
-    if chars.len() >= 2
-        && is_korean_sequence_char(chars[0])
-        && (chars[1] == '.' || chars[1] == ')')
+    if chars.len() >= 2 && is_korean_sequence_char(chars[0]) && (chars[1] == '.' || chars[1] == ')')
     {
         return Some(chars[0].to_string());
     }
@@ -607,12 +611,12 @@ pub fn is_korean_chapter_pattern(text: &str) -> Option<KoreanChapterInfo> {
         if num_end > 1 && num_end < chars.len() {
             let suffix = chars[num_end];
             let chapter_type = match suffix {
-                '장' => Some(KoreanChapterType::Jang), // Chapter
-                '절' => Some(KoreanChapterType::Jeol), // Section
-                '조' => Some(KoreanChapterType::Jo),   // Article (legal)
-                '항' => Some(KoreanChapterType::Hang), // Paragraph (legal)
+                '장' => Some(KoreanChapterType::Jang),  // Chapter
+                '절' => Some(KoreanChapterType::Jeol),  // Section
+                '조' => Some(KoreanChapterType::Jo),    // Article (legal)
+                '항' => Some(KoreanChapterType::Hang),  // Paragraph (legal)
                 '편' => Some(KoreanChapterType::Pyeon), // Part
-                '부' => Some(KoreanChapterType::Bu),   // Division
+                '부' => Some(KoreanChapterType::Bu),    // Division
                 _ => None,
             };
 
@@ -624,7 +628,13 @@ pub fn is_korean_chapter_pattern(text: &str) -> Option<KoreanChapterInfo> {
                         number: n,
                         // Title is everything after the chapter marker (if any)
                         title: if num_end + 1 < chars.len() {
-                            Some(chars[num_end + 1..].iter().collect::<String>().trim().to_string())
+                            Some(
+                                chars[num_end + 1..]
+                                    .iter()
+                                    .collect::<String>()
+                                    .trim()
+                                    .to_string(),
+                            )
                         } else {
                             None
                         },
@@ -638,7 +648,10 @@ pub fn is_korean_chapter_pattern(text: &str) -> Option<KoreanChapterInfo> {
     if let Some(first) = chars.first() {
         if let Some(roman_idx) = ROMAN_NUMERALS.iter().position(|&c| c == *first) {
             // Check for separator (., -, space, or direct title)
-            let has_separator = chars.get(1).map(|c| *c == '.' || *c == '-' || c.is_whitespace()).unwrap_or(false);
+            let has_separator = chars
+                .get(1)
+                .map(|c| *c == '.' || *c == '-' || c.is_whitespace())
+                .unwrap_or(false);
             if has_separator || chars.len() == 1 {
                 return Some(KoreanChapterInfo {
                     chapter_type: KoreanChapterType::Roman,
@@ -732,7 +745,9 @@ pub fn looks_like_korean_heading(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Block, Document, InlineContent, ParagraphStyle, Section, TextRun, TextStyle};
+    use crate::model::{
+        Block, Document, InlineContent, ParagraphStyle, Section, TextRun, TextStyle,
+    };
 
     fn make_paragraph(text: &str, heading_level: u8) -> Paragraph {
         let mut para = Paragraph::with_style(ParagraphStyle {
@@ -809,7 +824,9 @@ mod tests {
         let decisions = analyzer.analyze_paragraphs(&paras);
 
         // All should be demoted due to sequential pattern
-        assert!(decisions.iter().all(|d| matches!(d, HeadingDecision::Demoted)));
+        assert!(decisions
+            .iter()
+            .all(|d| matches!(d, HeadingDecision::Demoted)));
     }
 
     #[test]
@@ -866,7 +883,9 @@ mod tests {
         let decisions = analyzer.analyze_paragraphs(&paras);
 
         // Korean sequence should also be demoted
-        assert!(decisions.iter().all(|d| matches!(d, HeadingDecision::Demoted)));
+        assert!(decisions
+            .iter()
+            .all(|d| matches!(d, HeadingDecision::Demoted)));
     }
 
     #[test]
@@ -1145,8 +1164,10 @@ mod tests {
 
     #[test]
     fn test_is_larger_than_base() {
-        let mut stats = DocumentStats::default();
-        stats.base_font_size = Some(12.0);
+        let stats = DocumentStats {
+            base_font_size: Some(12.0),
+            ..Default::default()
+        };
 
         // 1.2x threshold (12.0 * 1.2 = 14.4)
         assert!(stats.is_larger_than_base(14.5, 1.2)); // slightly above 1.2x
