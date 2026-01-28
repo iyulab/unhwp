@@ -7,9 +7,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 
+    <!-- Assembly name differs from package ID to avoid conflict with native unhwp.dll on Windows -->
+    <AssemblyName>Unhwp.Net</AssemblyName>
+
     <!-- Package metadata -->
     <PackageId>Unhwp</PackageId>
-    <Version>0.1.12</Version>
+    <Version>0.1.13</Version>
     <Authors>iyulab</Authors>
     <Company>iyulab</Company>
     <Product>Unhwp</Product>
