@@ -7,229 +7,161 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
-      skip_version_check:
-        description: 'Skip version change check (force release)'
+      version:
+        description: 'Version to release (leave empty to use Cargo.toml version)'
         required: false
-        default: 'false'
+        type: string
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   check-version:
-    name: Check Version Change
+    name: Check Version
     runs-on: ubuntu-latest
-    # Run if CI succeeded or manual trigger
-    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     outputs:
       version: ${{ steps.get_version.outputs.version }}
-      should_release: ${{ steps.check.outputs.should_release }}
-      head_sha: ${{ steps.set_sha.outputs.sha }}
+      version_num: ${{ steps.get_version.outputs.version_num }}
+      should_release: ${{ steps.check_release.outputs.should_release }}
     steps:
-      - name: Set HEAD SHA
-        id: set_sha
-        run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "sha=${{ github.sha }}" >> $GITHUB_OUTPUT
-          else
-            echo "sha=${{ github.event.workflow_run.head_sha }}" >> $GITHUB_OUTPUT
-          fi
-
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.set_sha.outputs.sha }}
-          fetch-depth: 2
 
       - name: Get version from Cargo.toml
         id: get_version
         run: |
-          VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Check if version changed
-        id: check
-        run: |
-          if [ "${{ github.event.inputs.skip_version_check }}" == "true" ]; then
-            echo "should_release=true" >> $GITHUB_OUTPUT
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION_NUM="${{ inputs.version }}"
           else
-            git diff HEAD~1 HEAD -- Cargo.toml | grep -q '^+version = ' && echo "should_release=true" >> $GITHUB_OUTPUT || echo "should_release=false" >> $GITHUB_OUTPUT
+            VERSION_NUM=$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          fi
+          echo "version=v${VERSION_NUM}" >> $GITHUB_OUTPUT
+          echo "version_num=${VERSION_NUM}" >> $GITHUB_OUTPUT
+          echo "Version: v${VERSION_NUM}"
+
+      - name: Check if release exists
+        id: check_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=${{ steps.get_version.outputs.version }}
+          if gh release view "$VERSION" > /dev/null 2>&1; then
+            echo "Release $VERSION already exists, skipping"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+          else
+            echo "Release $VERSION does not exist, proceeding"
+            echo "should_release=true" >> $GITHUB_OUTPUT
           fi
 
-  build:
-    name: Build ${{ matrix.target }}
+  build-release:
+    name: Build Release
     needs: check-version
     if: needs.check-version.outputs.should_release == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         include:
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            lib_name: unhwp.dll
-            cli_name: unhwp.exe
-          - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
-            lib_name: libunhwp.so
-            cli_name: unhwp
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            lib_name: libunhwp.dylib
-            cli_name: unhwp
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            lib_name: libunhwp.dylib
-            cli_name: unhwp
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact_name: unhwp
+            archive_name: unhwp-linux-x86_64
+            archive_ext: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: unhwp.exe
+            archive_name: unhwp-windows-x86_64
+            archive_ext: zip
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: unhwp
+            archive_name: unhwp-macos-x86_64
+            archive_ext: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: unhwp
+            archive_name: unhwp-macos-aarch64
+            archive_ext: tar.gz
 
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.check-version.outputs.head_sha }}
 
-      - name: Install Rust
+      - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
           targets: ${{ matrix.target }}
 
-      - name: Build library
-        run: cargo build --release --target ${{ matrix.target }} -p unhwp
-
-      - name: Build CLI
+      - name: Build
         run: cargo build --release --target ${{ matrix.target }} -p unhwp-cli
 
-      - name: Prepare artifacts (Windows)
-        if: matrix.os == 'windows-latest'
+      - name: Create archive (Unix)
+        if: matrix.archive_ext == 'tar.gz'
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar -czvf ${{ matrix.archive_name }}-${{ needs.check-version.outputs.version }}.tar.gz ${{ matrix.artifact_name }}
+
+      - name: Create archive (Windows)
+        if: matrix.archive_ext == 'zip'
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path artifacts-lib
-          New-Item -ItemType Directory -Force -Path artifacts-cli
-          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.lib_name }}" -Destination "artifacts-lib/"
-          Copy-Item "target/${{ matrix.target }}/release/${{ matrix.cli_name }}" -Destination "artifacts-cli/"
+          cd target/${{ matrix.target }}/release
+          Compress-Archive -Path ${{ matrix.artifact_name }} -DestinationPath "${{ matrix.archive_name }}-${{ needs.check-version.outputs.version }}.zip"
 
-      - name: Prepare artifacts (Unix)
-        if: matrix.os != 'windows-latest'
-        run: |
-          mkdir -p artifacts-lib artifacts-cli
-          cp "target/${{ matrix.target }}/release/${{ matrix.lib_name }}" artifacts-lib/
-          cp "target/${{ matrix.target }}/release/${{ matrix.cli_name }}" artifacts-cli/
-
-      - name: Upload lib artifacts
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: unhwp-lib-${{ matrix.target }}
-          path: artifacts-lib/
+          name: ${{ matrix.archive_name }}
+          path: target/${{ matrix.target }}/release/${{ matrix.archive_name }}-${{ needs.check-version.outputs.version }}.${{ matrix.archive_ext }}
 
-      - name: Upload cli artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: unhwp-cli-${{ matrix.target }}
-          path: artifacts-cli/
-
-  publish-crates:
-    name: Publish to crates.io
-    needs: [check-version, build]
-    if: needs.check-version.outputs.should_release == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.check-version.outputs.head_sha }}
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Publish to crates.io
-        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }} --allow-dirty
-        continue-on-error: true
-
-  release:
-    name: Create GitHub Release
-    needs: [check-version, build]
+  create-release:
+    name: Create Release
+    needs: [check-version, build-release]
     if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
+
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.check-version.outputs.head_sha }}
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
-      - name: Prepare release assets
-        run: |
-          cd artifacts
-          # Package lib artifacts
-          for dir in unhwp-lib-*/; do
-            target="${dir%/}"
-            target="${target#unhwp-lib-}"
-            cd "$dir"
-            if [[ "$target" == *"windows"* ]]; then
-              zip "../unhwp-lib-$target.zip" *
-            else
-              tar -czvf "../unhwp-lib-$target.tar.gz" *
-            fi
-            cd ..
-          done
-          # Package cli artifacts
-          for dir in unhwp-cli-*/; do
-            target="${dir%/}"
-            target="${target#unhwp-cli-}"
-            cd "$dir"
-            if [[ "$target" == *"windows"* ]]; then
-              zip "../unhwp-cli-$target.zip" *
-            else
-              tar -czvf "../unhwp-cli-$target.tar.gz" *
-            fi
-            cd ..
-          done
+      - name: List artifacts
+        run: find artifacts -type f
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ needs.check-version.outputs.version }}
-          name: Release v${{ needs.check-version.outputs.version }}
-          body: |
-            ## unhwp v${{ needs.check-version.outputs.version }}
-
-            ### Downloads
-
-            #### CLI (Command-line tool)
-            | Platform | Architecture | File |
-            |----------|--------------|------|
-            | Windows | x64 | `unhwp-cli-x86_64-pc-windows-msvc.zip` |
-            | Linux | x64 | `unhwp-cli-x86_64-unknown-linux-gnu.tar.gz` |
-            | macOS | Intel | `unhwp-cli-x86_64-apple-darwin.tar.gz` |
-            | macOS | Apple Silicon | `unhwp-cli-aarch64-apple-darwin.tar.gz` |
-
-            #### Library (FFI / C-ABI)
-            | Platform | Architecture | File |
-            |----------|--------------|------|
-            | Windows | x64 | `unhwp-lib-x86_64-pc-windows-msvc.zip` |
-            | Linux | x64 | `unhwp-lib-x86_64-unknown-linux-gnu.tar.gz` |
-            | macOS | Intel | `unhwp-lib-x86_64-apple-darwin.tar.gz` |
-            | macOS | Apple Silicon | `unhwp-lib-aarch64-apple-darwin.tar.gz` |
-
-            ### Installation
-
-            #### Rust/Cargo
-            ```bash
-            cargo install unhwp-cli
-            ```
-
-            #### CLI Self-Update
-            ```bash
-            unhwp update        # Update to latest version
-            unhwp update --check  # Check for updates only
-            ```
-
-            #### C# / .NET
-            Download `unhwp-lib-*.zip` for your platform and follow the [C# Integration Guide](https://github.com/iyulab/unhwp/blob/main/docs/csharp-integration.md).
+          tag_name: ${{ needs.check-version.outputs.version }}
+          name: Release ${{ needs.check-version.outputs.version }}
           files: |
-            artifacts/*.zip
-            artifacts/*.tar.gz
+            artifacts/**/*
+          generate_release_notes: true
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(needs.check-version.outputs.version, 'alpha') || contains(needs.check-version.outputs.version, 'beta') || contains(needs.check-version.outputs.version, 'rc') }}
+
+  publish-crates:
+    name: Publish to crates.io
+    needs: [check-version, create-release]
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish library (unhwp)
+        run: cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        continue-on-error: true
+
+      - name: Wait for crates.io index update
+        run: sleep 30
+
+      - name: Publish CLI (unhwp-cli)
+        run: cargo publish -p unhwp-cli --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        continue-on-error: true
