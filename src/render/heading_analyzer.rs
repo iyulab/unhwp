@@ -276,10 +276,7 @@ impl HeadingAnalyzer {
     /// This ensures proper heading hierarchy in output.
     fn normalize_heading_levels(&self, decisions: &mut [HeadingDecision]) {
         // Find minimum heading level in the document
-        let min_level = decisions
-            .iter()
-            .filter_map(|d| d.level())
-            .min();
+        let min_level = decisions.iter().filter_map(|d| d.level()).min();
 
         let min_level = match min_level {
             Some(level) => level,
