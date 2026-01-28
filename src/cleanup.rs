@@ -841,6 +841,10 @@ pub fn stage4_final_normalize(input: &str, _options: &CleanupOptions) -> String 
     // List markers: "- ", "* ", "+ ", "1. ", "2. ", etc.
     result = merge_consecutive_list_items(&result);
 
+    // Fix consecutive headings (likely malformed HWP styles)
+    // Consecutive headings without blank lines are probably body text with wrong styles
+    result = fix_consecutive_headings(&result);
+
     result
 }
 
@@ -888,6 +892,123 @@ fn merge_consecutive_list_items(input: &str) -> String {
     }
 
     result.join("\n")
+}
+
+/// Fix consecutive headings that are likely malformed body text.
+///
+/// HWP documents sometimes apply heading styles to body text incorrectly,
+/// resulting in consecutive heading lines that should be regular paragraphs.
+///
+/// Pattern detected:
+/// ```markdown
+/// #### First heading
+/// #### This is body text wrongly styled
+/// #### More body text
+/// ```
+///
+/// Transformed to:
+/// ```markdown
+/// #### First heading
+///
+/// This is body text wrongly styled
+/// More body text
+/// ```
+fn fix_consecutive_headings(input: &str) -> String {
+    let lines: Vec<&str> = input.lines().collect();
+    let mut result: Vec<String> = Vec::with_capacity(lines.len());
+
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        let trimmed = line.trim();
+
+        // Check if this is a heading line
+        if let Some(level) = get_heading_level(trimmed) {
+            // Look ahead for consecutive headings at the same level
+            let mut consecutive_count = 1;
+            let mut j = i + 1;
+
+            while j < lines.len() {
+                let next_trimmed = lines[j].trim();
+                // Skip empty lines for checking consecutive
+                if next_trimmed.is_empty() {
+                    j += 1;
+                    // If we hit a blank line, stop - it's intentional separation
+                    break;
+                }
+                if let Some(next_level) = get_heading_level(next_trimmed) {
+                    if next_level == level {
+                        consecutive_count += 1;
+                        j += 1;
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+
+            // If 2+ consecutive headings at same level, likely malformed
+            // Keep first as heading, demote rest to body text
+            if consecutive_count >= 2 {
+                // Keep the first heading
+                result.push(line.to_string());
+                result.push(String::new()); // Add blank line after heading
+
+                // Demote subsequent consecutive headings to body text
+                for k in (i + 1)..j {
+                    let demote_line = lines[k].trim();
+                    if !demote_line.is_empty() {
+                        if let Some(content) = strip_heading_prefix(demote_line) {
+                            result.push(content.to_string());
+                        } else {
+                            result.push(demote_line.to_string());
+                        }
+                    }
+                }
+                i = j;
+                continue;
+            }
+        }
+
+        result.push(line.to_string());
+        i += 1;
+    }
+
+    result.join("\n")
+}
+
+/// Get the heading level from a line (1-6), or None if not a heading.
+fn get_heading_level(line: &str) -> Option<u8> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with('#') {
+        return None;
+    }
+
+    let hashes: usize = trimmed.chars().take_while(|&c| c == '#').count();
+    if hashes > 6 || hashes == 0 {
+        return None;
+    }
+
+    // Must have space after hashes (or be hash-only which is invalid markdown)
+    let after_hashes = &trimmed[hashes..];
+    if !after_hashes.is_empty() && !after_hashes.starts_with(' ') {
+        return None;
+    }
+
+    Some(hashes as u8)
+}
+
+/// Strip the heading prefix (### ) from a line.
+fn strip_heading_prefix(line: &str) -> Option<&str> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with('#') {
+        return None;
+    }
+
+    let hashes: usize = trimmed.chars().take_while(|&c| c == '#').count();
+    let after = trimmed[hashes..].trim_start();
+    Some(after)
 }
 
 /// Check if a line is a list item (starts with list markers)

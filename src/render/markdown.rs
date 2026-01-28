@@ -158,38 +158,43 @@ impl MarkdownRenderer {
     }
 
     /// Renders YAML frontmatter.
+    /// Only outputs if there's meaningful metadata to include.
     fn render_frontmatter(&self, document: &Document, output: &mut String) {
-        output.push_str("---\n");
+        let mut content = String::new();
 
         if let Some(ref title) = document.metadata.title {
-            output.push_str(&format!("title: \"{}\"\n", escape_yaml(title)));
+            content.push_str(&format!("title: \"{}\"\n", escape_yaml(title)));
         }
         if let Some(ref author) = document.metadata.author {
-            output.push_str(&format!("author: \"{}\"\n", escape_yaml(author)));
+            content.push_str(&format!("author: \"{}\"\n", escape_yaml(author)));
         }
         if let Some(ref subject) = document.metadata.subject {
-            output.push_str(&format!("description: \"{}\"\n", escape_yaml(subject)));
+            content.push_str(&format!("description: \"{}\"\n", escape_yaml(subject)));
         }
         if let Some(ref created) = document.metadata.created {
-            output.push_str(&format!("date: \"{}\"\n", created));
+            content.push_str(&format!("date: \"{}\"\n", created));
         }
         if let Some(ref modified) = document.metadata.modified {
-            output.push_str(&format!("lastmod: \"{}\"\n", modified));
+            content.push_str(&format!("lastmod: \"{}\"\n", modified));
         }
         if !document.metadata.keywords.is_empty() {
-            output.push_str("tags:\n");
+            content.push_str("tags:\n");
             for keyword in &document.metadata.keywords {
-                output.push_str(&format!("  - \"{}\"\n", escape_yaml(keyword)));
+                content.push_str(&format!("  - \"{}\"\n", escape_yaml(keyword)));
             }
         }
         if let Some(ref app) = document.metadata.creator_app {
-            output.push_str(&format!("generator: \"{}\"\n", escape_yaml(app)));
+            content.push_str(&format!("generator: \"{}\"\n", escape_yaml(app)));
         }
-        if let Some(ref format) = document.metadata.format_version {
-            output.push_str(&format!("format: \"{}\"\n", escape_yaml(format)));
-        }
+        // Note: format_version (e.g., "5.0.3.0") is HWP internal version, not useful for end users
+        // Omitted from frontmatter for cleaner output
 
-        output.push_str("---\n\n");
+        // Only output frontmatter if there's content
+        if !content.is_empty() {
+            output.push_str("---\n");
+            output.push_str(&content);
+            output.push_str("---\n\n");
+        }
     }
 
     /// Renders a paragraph.
@@ -267,11 +272,15 @@ impl MarkdownRenderer {
         // End paragraph
         output.push('\n');
 
-        // Add blank line between paragraphs for proper Markdown separation
-        // But NOT after list items (consecutive list items should be adjacent)
-        // and NOT after headings (blank line added before next content is enough)
+        // Add blank line for proper Markdown separation:
+        // - After headings: ALWAYS add blank line (Markdown convention)
+        // - After list items: NO blank line (consecutive items should be adjacent)
+        // - After regular paragraphs: add blank line for readability
         let is_heading = should_apply_heading || style.heading_level > 0;
-        if self.options.paragraph_spacing && !is_heading && !is_list_item {
+        if is_heading {
+            // Headings always followed by blank line (Markdown convention)
+            output.push('\n');
+        } else if self.options.paragraph_spacing && !is_list_item {
             output.push('\n');
         }
     }
@@ -409,6 +418,16 @@ impl MarkdownRenderer {
     fn render_table(&self, table: &Table, output: &mut String) {
         if table.rows.is_empty() {
             return;
+        }
+
+        // Ensure blank line before table (Markdown convention)
+        // But avoid double blank lines if output already ends with blank line
+        if !output.is_empty() && !output.ends_with("\n\n") {
+            if output.ends_with('\n') {
+                output.push('\n');
+            } else {
+                output.push_str("\n\n");
+            }
         }
 
         // Single-row tables are typically used as decorative boxes, not actual tables.
@@ -858,6 +877,7 @@ mod tests {
     #[test]
     fn test_heading_with_text_works() {
         // Normal headings with text should still work
+        // Note: With normalize_levels=true (default), H4 is normalized to H2
         let mut doc = Document::new();
         let mut section = Section::new(0);
 
@@ -870,9 +890,10 @@ mod tests {
         let renderer = MarkdownRenderer::new(RenderOptions::default());
         let result = renderer.render(&doc).unwrap();
 
+        // H4 is normalized to H2 (normalize_min_level=2)
         assert!(
-            result.contains("#### Real Heading"),
-            "Normal heading should work: {}",
+            result.contains("## Real Heading"),
+            "Normal heading should work (normalized to H2): {}",
             result
         );
     }
@@ -942,6 +963,7 @@ mod tests {
     #[test]
     fn test_max_heading_level_capped() {
         // Heading levels beyond max should be capped
+        // With normalize_levels=true: H6 → H4 (capped) → H2 (normalized)
         let mut doc = Document::new();
         let mut section = Section::new(0);
 
@@ -951,13 +973,14 @@ mod tests {
         section.push_paragraph(para);
         doc.sections.push(section);
 
-        // Default max_heading_level is now 4
+        // Default max_heading_level is 4, normalize_min_level is 2
+        // H6 → capped to H4 → normalized to H2
         let renderer = MarkdownRenderer::new(RenderOptions::default());
         let result = renderer.render(&doc).unwrap();
 
         assert!(
-            result.contains("#### Deep Heading"),
-            "Heading level 6 should be capped to 4: {}",
+            result.contains("## Deep Heading"),
+            "Heading level 6 should be capped and normalized to 2: {}",
             result
         );
         assert!(

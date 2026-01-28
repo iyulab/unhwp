@@ -45,6 +45,15 @@ pub struct HeadingConfig {
     /// Font size ratio threshold for statistical inference.
     /// Default: 1.2 (120% of base font size).
     pub size_threshold_ratio: f32,
+
+    /// Normalize heading levels so the minimum is H1 or H2.
+    /// If true and document starts with H4, levels are shifted up (H4→H1, H5→H2, etc.).
+    /// Default: true
+    pub normalize_levels: bool,
+
+    /// Target minimum heading level after normalization (1 or 2).
+    /// Default: 2 (first heading becomes H2, allows room for document title)
+    pub normalize_min_level: u8,
 }
 
 impl Default for HeadingConfig {
@@ -57,6 +66,8 @@ impl Default for HeadingConfig {
             min_sequence_count: 2,
             enable_statistical_inference: true, // Enabled by default for font-size based detection
             size_threshold_ratio: 1.15,         // 115% of base font size = heading candidate
+            normalize_levels: true,             // Normalize so min heading is H1/H2
+            normalize_min_level: 2,             // Target H2 (leaves room for title)
         }
     }
 }
@@ -106,6 +117,20 @@ impl HeadingConfig {
     /// Set the font size ratio threshold for statistical inference.
     pub fn with_size_ratio(mut self, ratio: f32) -> Self {
         self.size_threshold_ratio = ratio.max(1.0);
+        self
+    }
+
+    /// Enable heading level normalization.
+    /// When enabled, heading levels are shifted so minimum becomes normalize_min_level.
+    pub fn with_normalize_levels(mut self, enable: bool) -> Self {
+        self.normalize_levels = enable;
+        self
+    }
+
+    /// Set the target minimum heading level after normalization.
+    /// Default: 2 (H2, leaves room for document title as H1)
+    pub fn with_normalize_min_level(mut self, level: u8) -> Self {
+        self.normalize_min_level = level.clamp(1, 3);
         self
     }
 }
@@ -206,9 +231,10 @@ impl HeadingAnalyzer {
 
     /// Analyze a document and return heading decisions for all paragraphs.
     ///
-    /// Performs a two-pass analysis:
+    /// Performs a multi-pass analysis:
     /// 1. Collect document statistics (font sizes, patterns)
     /// 2. Apply priority-based heading decisions
+    /// 3. Normalize heading levels (if enabled)
     ///
     /// Returns a vector of decisions, one per paragraph block in document order.
     /// Table blocks are skipped (not included in the output).
@@ -234,7 +260,54 @@ impl HeadingAnalyzer {
         }
 
         // Pass 2: Make heading decisions
-        self.analyze_paragraphs(&paragraphs)
+        let mut decisions = self.analyze_paragraphs(&paragraphs);
+
+        // Pass 3: Normalize heading levels (if enabled)
+        if self.config.normalize_levels {
+            self.normalize_heading_levels(&mut decisions);
+        }
+
+        decisions
+    }
+
+    /// Normalize heading levels so the minimum becomes the target level.
+    ///
+    /// If document starts with H4, shift all levels up (H4→H2, H5→H3, etc.)
+    /// This ensures proper heading hierarchy in output.
+    fn normalize_heading_levels(&self, decisions: &mut [HeadingDecision]) {
+        // Find minimum heading level in the document
+        let min_level = decisions
+            .iter()
+            .filter_map(|d| d.level())
+            .min();
+
+        let min_level = match min_level {
+            Some(level) => level,
+            None => return, // No headings to normalize
+        };
+
+        // Calculate shift needed
+        let target = self.config.normalize_min_level;
+        if min_level <= target {
+            return; // Already at or above target, no normalization needed
+        }
+
+        let shift = min_level - target;
+
+        // Apply shift to all heading decisions
+        for decision in decisions.iter_mut() {
+            *decision = match *decision {
+                HeadingDecision::Explicit(level) => {
+                    let new_level = level.saturating_sub(shift).max(1);
+                    HeadingDecision::Explicit(new_level)
+                }
+                HeadingDecision::Inferred(level) => {
+                    let new_level = level.saturating_sub(shift).max(1);
+                    HeadingDecision::Inferred(new_level)
+                }
+                other => other,
+            };
+        }
     }
 
     /// Collect statistics from paragraphs (Pass 1).
