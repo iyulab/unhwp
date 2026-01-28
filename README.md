@@ -1,6 +1,8 @@
 # unhwp
 
 [![Crates.io](https://img.shields.io/crates/v/unhwp.svg)](https://crates.io/crates/unhwp)
+[![PyPI](https://img.shields.io/pypi/v/unhwp.svg)](https://pypi.org/project/unhwp/)
+[![NuGet](https://img.shields.io/nuget/v/Unhwp.svg)](https://www.nuget.org/packages/Unhwp/)
 [![Documentation](https://docs.rs/unhwp/badge.svg)](https://docs.rs/unhwp)
 [![CI](https://github.com/iyulab/unhwp/actions/workflows/ci.yml/badge.svg)](https://github.com/iyulab/unhwp/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
