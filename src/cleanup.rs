@@ -956,8 +956,8 @@ fn fix_consecutive_headings(input: &str) -> String {
                 result.push(String::new()); // Add blank line after heading
 
                 // Demote subsequent consecutive headings to body text
-                for k in (i + 1)..j {
-                    let demote_line = lines[k].trim();
+                for demote_line in lines.iter().take(j).skip(i + 1) {
+                    let demote_line = demote_line.trim();
                     if !demote_line.is_empty() {
                         if let Some(content) = strip_heading_prefix(demote_line) {
                             result.push(content.to_string());
