@@ -15,6 +15,13 @@ claudedocs/
 bindings/csharp/**/bin/
 bindings/csharp/**/obj/
 
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+.venv/
+
 # Python build artifacts
 bindings/python/dist/
 bindings/python/build/

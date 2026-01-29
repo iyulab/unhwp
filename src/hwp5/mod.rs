@@ -66,6 +66,9 @@ impl Hwp5Parser {
         // Set format version
         document.metadata.format_version = Some(self.header.version_string());
 
+        // Set distribution flag
+        document.metadata.is_distribution = self.header.is_distribution();
+
         // Parse DocInfo for styles
         self.parse_docinfo(&mut document)?;
 

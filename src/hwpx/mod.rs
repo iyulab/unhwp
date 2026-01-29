@@ -4,6 +4,7 @@
 //! KS X 6101 OWPML standard.
 
 mod container;
+mod header;
 mod section;
 mod styles;
 
@@ -54,6 +55,9 @@ impl HwpxParser {
 
         // Parse metadata from content.hpf
         self.parse_metadata(&mut document)?;
+
+        // Parse header options (distribution flag)
+        self.parse_header_options(&mut document)?;
 
         // Parse styles
         self.parse_styles(&mut document)?;
@@ -108,6 +112,15 @@ impl HwpxParser {
     fn parse_styles(&mut self, document: &mut Document) -> Result<()> {
         if let Ok(styles_xml) = self.container.read_file("Contents/header.xml") {
             styles::parse_styles(&styles_xml, &mut document.styles)?;
+        }
+        Ok(())
+    }
+
+    /// Parses header options from header.xml.
+    fn parse_header_options(&mut self, document: &mut Document) -> Result<()> {
+        if let Ok(header_xml) = self.container.read_file("Contents/header.xml") {
+            let is_distribution = header::parse_header(&header_xml)?;
+            document.metadata.is_distribution = is_distribution;
         }
         Ok(())
     }

@@ -14,11 +14,12 @@ keywords = ["hwp", "hwpx", "korean", "document", "markdown"]
 categories = ["parser-implementations", "text-processing"]
 
 [features]
-default = ["hwp5", "hwpx"]
+default = ["hwp5", "hwpx", "python"]
 hwp5 = []           # HWP 5.0 binary format support
 hwpx = []           # HWPX XML format support
 hwp3 = ["encoding_rs"]  # Legacy HWP 3.x support
 async = ["tokio"]   # Async I/O support
+python = ["dep:pyo3"]   # Python binding support
 
 [dependencies]
 # OLE container parsing (HWP 5.0)
@@ -61,6 +62,9 @@ encoding_rs = { version = "0.8", optional = true }
 
 # Optional: Async support
 tokio = { version = "1.42", features = ["fs", "io-util", "rt", "macros"], optional = true }
+
+# Optional: Python support
+pyo3 = { version = "0.23", features = ["extension-module", "abi3-py38"], optional = true }
 
 [dev-dependencies]
 criterion = "0.5"

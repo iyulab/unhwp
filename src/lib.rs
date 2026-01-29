@@ -55,6 +55,9 @@ pub mod hwp3;
 #[cfg(feature = "async")]
 pub mod async_api;
 
+#[cfg(feature = "python")]
+pub mod python;
+
 // Re-exports
 pub use cleanup::{cleanup, CleanupOptions};
 pub use detect::{detect_format, detect_format_from_bytes, detect_format_from_path, FormatType};

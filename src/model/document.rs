@@ -100,6 +100,9 @@ pub struct Metadata {
     pub creator_app: Option<String>,
     /// HWP/HWPX version
     pub format_version: Option<String>,
+    /// Distribution document flag
+    #[serde(default)]
+    pub is_distribution: bool,
 }
 
 /// A section of the document.
