@@ -982,6 +982,32 @@ pub extern "C" fn unhwp_result_get_paragraph_count(result: *mut UnhwpResult) -> 
     result.document.paragraph_count() as i32
 }
 
+/// Returns whether the document is a distribution (protected) document.
+///
+/// Distribution documents are protected by DRM and may have restrictions
+/// on editing, copying, and printing.
+///
+/// # Parameters
+/// - `result`: Result handle from unhwp_parse
+///
+/// # Returns
+/// - 1 if distribution document
+/// - 0 if not distribution document
+/// - -1 on error (null result)
+#[no_mangle]
+pub extern "C" fn unhwp_result_is_distribution(result: *mut UnhwpResult) -> i32 {
+    if result.is_null() {
+        return -1;
+    }
+
+    let result = unsafe { &*result };
+    if result.document.metadata.is_distribution {
+        1
+    } else {
+        0
+    }
+}
+
 /// Gets the last error message from a result.
 ///
 /// # Parameters

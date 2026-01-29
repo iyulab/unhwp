@@ -223,6 +223,16 @@ class ParseResult:
         return native.lib.unhwp_result_get_paragraph_count(self._ptr)
 
     @property
+    def is_distribution(self) -> bool:
+        """Check if the document is a distribution (protected) document.
+
+        Distribution documents are protected by DRM and may have restrictions
+        on editing, copying, and printing.
+        """
+        self._ensure_open()
+        return native.lib.unhwp_result_is_distribution(self._ptr) == 1
+
+    @property
     def image_count(self) -> int:
         """Get the number of images in the document."""
         self._ensure_open()

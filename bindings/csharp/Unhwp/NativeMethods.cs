@@ -212,6 +212,9 @@ namespace Unhwp.Native
         public static extern UIntPtr unhwp_result_get_paragraph_count(IntPtr result);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int unhwp_result_is_distribution(IntPtr result);
+
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
         public static extern IntPtr unhwp_result_get_error(IntPtr result);
 
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]

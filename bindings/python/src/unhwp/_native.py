@@ -228,6 +228,9 @@ _lib.unhwp_result_get_section_count.restype = c_size_t
 _lib.unhwp_result_get_paragraph_count.argtypes = [UnhwpResultPtr]
 _lib.unhwp_result_get_paragraph_count.restype = c_size_t
 
+_lib.unhwp_result_is_distribution.argtypes = [UnhwpResultPtr]
+_lib.unhwp_result_is_distribution.restype = c_int
+
 _lib.unhwp_result_get_error.argtypes = [UnhwpResultPtr]
 _lib.unhwp_result_get_error.restype = c_char_p
 

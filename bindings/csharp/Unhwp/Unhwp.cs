@@ -223,6 +223,20 @@ namespace Unhwp
             }
         }
 
+        /// <summary>
+        /// Gets whether the document is a distribution (protected) document.
+        /// Distribution documents are protected by DRM and may have restrictions
+        /// on editing, copying, and printing.
+        /// </summary>
+        public bool IsDistribution
+        {
+            get
+            {
+                ThrowIfDisposed();
+                return NativeMethods.unhwp_result_is_distribution(_handle) == 1;
+            }
+        }
+
         /// <summary>Gets the number of images in the document.</summary>
         public int ImageCount
         {
