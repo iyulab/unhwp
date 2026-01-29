@@ -54,7 +54,7 @@ unhwp = [
     "*.dll",
     "*.so",
     "*.dylib",
-    "lib/*",
+    "lib/**/*",
 ]
 
 [tool.pytest.ini_options]
