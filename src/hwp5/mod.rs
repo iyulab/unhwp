@@ -113,11 +113,23 @@ impl Hwp5Parser {
         // Clone styles for parallel access
         let styles = document.styles.clone();
 
-        // Parse sections in parallel
-        let mut sections: Vec<_> = section_data
-            .par_iter()
-            .filter_map(|(index, data)| bodytext::parse_section(data, *index, &styles).ok())
-            .collect();
+        // Use parallel processing only when there are enough sections to benefit
+        // Threshold of 3 sections avoids parallel overhead for small documents
+        const PARALLEL_THRESHOLD: usize = 3;
+
+        let mut sections: Vec<_> = if section_data.len() >= PARALLEL_THRESHOLD {
+            // Parse sections in parallel
+            section_data
+                .par_iter()
+                .filter_map(|(index, data)| bodytext::parse_section(data, *index, &styles).ok())
+                .collect()
+        } else {
+            // Parse sections sequentially for small documents
+            section_data
+                .iter()
+                .filter_map(|(index, data)| bodytext::parse_section(data, *index, &styles).ok())
+                .collect()
+        };
 
         // Sort by index to maintain order
         sections.sort_by_key(|s| s.index);

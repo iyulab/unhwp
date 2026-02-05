@@ -1,4 +1,20 @@
 //! OLE container wrapper for HWP 5.0 documents.
+//!
+//! # Memory Usage
+//!
+//! The current implementation loads the entire OLE container into memory.
+//! This is a limitation of the underlying `cfb` crate which requires the
+//! full file to be available for parsing the compound file structure.
+//!
+//! For very large files (100MB+), consider:
+//! - Processing documents in batches
+//! - Using the BinData lazy loading methods to avoid loading all resources
+//! - Extracting only the required sections/resources
+//!
+//! # Future Improvements
+//!
+//! Memory-mapped file support could reduce memory usage for large files
+//! by allowing the OS to manage page loading.
 
 use crate::error::{Error, Result};
 use cfb::CompoundFile;
@@ -8,6 +24,12 @@ use std::io::{Cursor, Read, Seek};
 use std::path::Path;
 
 /// OLE container wrapper for HWP 5.0 documents.
+///
+/// # Memory Model
+///
+/// The container loads the full OLE file into memory on open.
+/// Individual streams (DocInfo, BodyText, BinData) are read on-demand.
+/// Use `list_bindata()` and `read_bindata()` for lazy resource loading.
 pub struct Hwp5Container {
     cfb: RefCell<CompoundFile<Cursor<Vec<u8>>>>,
 }

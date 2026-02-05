@@ -1,7 +1,6 @@
 //! Self-update functionality using GitHub releases
 
 use colored::Colorize;
-use indicatif::{ProgressBar, ProgressStyle};
 use self_update::backends::github::{ReleaseList, Update};
 use self_update::cargo_crate_version;
 use semver::Version;
@@ -13,6 +12,116 @@ const REPO_OWNER: &str = "iyulab";
 const REPO_NAME: &str = "unhwp";
 const BIN_NAME: &str = "unhwp";
 const CLI_CRATE_NAME: &str = "unhwp-cli";
+
+/// Platform info for asset matching
+struct PlatformInfo {
+    /// Human-friendly OS name (windows, linux, macos)
+    os_name: &'static str,
+    /// Human-friendly arch name (x86_64, aarch64)
+    arch_name: &'static str,
+    /// Rust target triple (x86_64-pc-windows-msvc, etc.)
+    target_triple: &'static str,
+    /// Archive extension (zip for Windows, tar.gz for Unix)
+    archive_ext: &'static str,
+}
+
+/// Get platform info for the current system
+fn get_platform_info() -> PlatformInfo {
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    return PlatformInfo {
+        os_name: "windows",
+        arch_name: "x86_64",
+        target_triple: "x86_64-pc-windows-msvc",
+        archive_ext: "zip",
+    };
+
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    return PlatformInfo {
+        os_name: "linux",
+        arch_name: "x86_64",
+        target_triple: "x86_64-unknown-linux-gnu",
+        archive_ext: "tar.gz",
+    };
+
+    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+    return PlatformInfo {
+        os_name: "macos",
+        arch_name: "x86_64",
+        target_triple: "x86_64-apple-darwin",
+        archive_ext: "tar.gz",
+    };
+
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    return PlatformInfo {
+        os_name: "macos",
+        arch_name: "aarch64",
+        target_triple: "aarch64-apple-darwin",
+        archive_ext: "tar.gz",
+    };
+
+    #[cfg(not(any(
+        all(target_os = "windows", target_arch = "x86_64"),
+        all(target_os = "linux", target_arch = "x86_64"),
+        all(target_os = "macos", target_arch = "x86_64"),
+        all(target_os = "macos", target_arch = "aarch64"),
+    )))]
+    {
+        // Fallback for unsupported platforms
+        PlatformInfo {
+            os_name: std::env::consts::OS,
+            arch_name: std::env::consts::ARCH,
+            target_triple: "unknown",
+            archive_ext: "tar.gz",
+        }
+    }
+}
+
+/// Generate asset name patterns to search for (in priority order)
+fn get_asset_patterns(platform: &PlatformInfo, version: &str) -> Vec<String> {
+    let v = version.trim_start_matches('v');
+    vec![
+        // Human-friendly format (preferred): unhwp-windows-x86_64-v0.1.14.zip
+        format!(
+            "unhwp-{}-{}-v{}.{}",
+            platform.os_name, platform.arch_name, v, platform.archive_ext
+        ),
+        // Without 'v' prefix: unhwp-windows-x86_64-0.1.14.zip
+        format!(
+            "unhwp-{}-{}-{}.{}",
+            platform.os_name, platform.arch_name, v, platform.archive_ext
+        ),
+        // Target triple format: unhwp-x86_64-pc-windows-msvc-v0.1.14.zip
+        format!(
+            "unhwp-{}-v{}.{}",
+            platform.target_triple, v, platform.archive_ext
+        ),
+        // Target triple without 'v': unhwp-x86_64-pc-windows-msvc-0.1.14.zip
+        format!(
+            "unhwp-{}-{}.{}",
+            platform.target_triple, v, platform.archive_ext
+        ),
+    ]
+}
+
+/// Find matching asset name from a list of asset names using fallback patterns
+fn find_matching_asset(asset_names: &[String], patterns: &[String]) -> Option<String> {
+    for pattern in patterns {
+        if asset_names.iter().any(|name| name == pattern) {
+            return Some(pattern.clone());
+        }
+    }
+    None
+}
+
+/// Get target strings to try for self_update matching (in priority order)
+fn get_target_strings(platform: &PlatformInfo) -> Vec<String> {
+    vec![
+        // Human-friendly format: windows-x86_64
+        format!("{}-{}", platform.os_name, platform.arch_name),
+        // Target triple: x86_64-pc-windows-msvc
+        platform.target_triple.to_string(),
+    ]
+}
 
 /// Detect if installed via cargo install (binary in .cargo/bin)
 fn is_cargo_install() -> bool {
@@ -177,74 +286,87 @@ pub fn run_update(check_only: bool, force: bool) -> Result<(), Box<dyn std::erro
     println!();
     println!("{}", "Downloading update...".cyan());
 
-    let pb = ProgressBar::new(100);
-    pb.set_style(
-        ProgressStyle::with_template(
-            "{spinner:.green} [{bar:40.cyan/blue}] {bytes}/{total_bytes} ({eta})",
-        )?
-        .progress_chars("#>-"),
-    );
+    let platform = get_platform_info();
+    let patterns = get_asset_patterns(&platform, latest_version);
 
-    let target = get_target();
-    let status = Update::configure()
-        .repo_owner(REPO_OWNER)
-        .repo_name(REPO_NAME)
-        .bin_name(BIN_NAME)
-        .identifier(&format!("unhwp-cli-{}", target))
-        .target(&target)
-        .current_version(current_version)
-        .show_download_progress(true)
-        .no_confirm(true)
-        .build()?
-        .update()?;
+    // Extract asset names from release
+    let asset_names: Vec<String> = latest.assets.iter().map(|a| a.name.clone()).collect();
 
-    pb.finish_and_clear();
+    // Find matching asset from release
+    let asset_name = find_matching_asset(&asset_names, &patterns);
 
-    match status {
-        self_update::Status::UpToDate(v) => {
-            println!("{} Already up to date (v{})", "✓".green().bold(), v);
+    if asset_name.is_none() {
+        // Show what we searched for
+        println!("{}", "No matching asset found.".red());
+        println!("{}", "Searched for:".dimmed());
+        for p in &patterns {
+            println!("  - {}", p.dimmed());
         }
-        self_update::Status::Updated(v) => {
-            println!();
-            println!("{} Successfully updated to v{}!", "✓".green().bold(), v);
-            println!();
-            println!("Restart unhwp to use the new version.");
+        println!();
+        println!(
+            "{} {}",
+            "Available assets:".dimmed(),
+            latest
+                .assets
+                .iter()
+                .map(|a| a.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        return Err("No compatible binary found for this platform".into());
+    }
+
+    let asset_name = asset_name.unwrap();
+    println!("{} {}", "Found asset:".dimmed(), asset_name.dimmed());
+
+    // Try multiple target strings for self_update matching
+    let target_strings = get_target_strings(&platform);
+    let mut last_error: Option<Box<dyn std::error::Error>> = None;
+
+    for target in &target_strings {
+        println!(
+            "{} target: {}",
+            "Checking".dimmed(),
+            target.dimmed()
+        );
+
+        let result = Update::configure()
+            .repo_owner(REPO_OWNER)
+            .repo_name(REPO_NAME)
+            .bin_name(BIN_NAME)
+            .target(target)
+            .current_version(current_version)
+            .show_download_progress(true)
+            .no_confirm(true)
+            .build()
+            .and_then(|updater| updater.update());
+
+        match result {
+            Ok(status) => {
+                match status {
+                    self_update::Status::UpToDate(v) => {
+                        println!("{} Already up to date (v{})", "✓".green().bold(), v);
+                    }
+                    self_update::Status::Updated(v) => {
+                        println!();
+                        println!("{} Successfully updated to v{}!", "✓".green().bold(), v);
+                        println!();
+                        println!("Restart unhwp to use the new version.");
+                    }
+                }
+                return Ok(());
+            }
+            Err(e) => {
+                last_error = Some(Box::new(e));
+                continue;
+            }
         }
+    }
+
+    // All targets failed
+    if let Some(e) = last_error {
+        return Err(format!("Update failed: {}", e).into());
     }
 
     Ok(())
-}
-
-/// Get the target triple for the current platform
-fn get_target() -> String {
-    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-    return "x86_64-pc-windows-msvc".to_string();
-
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    return "x86_64-unknown-linux-gnu".to_string();
-
-    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
-    return "x86_64-apple-darwin".to_string();
-
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    return "aarch64-apple-darwin".to_string();
-
-    #[cfg(not(any(
-        all(target_os = "windows", target_arch = "x86_64"),
-        all(target_os = "linux", target_arch = "x86_64"),
-        all(target_os = "macos", target_arch = "x86_64"),
-        all(target_os = "macos", target_arch = "aarch64"),
-    )))]
-    {
-        // Fallback: try to determine at runtime
-        let arch = std::env::consts::ARCH;
-        let os = std::env::consts::OS;
-        match (os, arch) {
-            ("windows", "x86_64") => "x86_64-pc-windows-msvc".to_string(),
-            ("linux", "x86_64") => "x86_64-unknown-linux-gnu".to_string(),
-            ("macos", "x86_64") => "x86_64-apple-darwin".to_string(),
-            ("macos", "aarch64") => "aarch64-apple-darwin".to_string(),
-            _ => format!("{}-unknown-{}", arch, os),
-        }
-    }
 }

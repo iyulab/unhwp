@@ -640,7 +640,10 @@ impl UnhwpResult {
                 CString::new(markdown).map_err(|e| format!("String conversion error: {}", e))?,
             );
         }
-        Ok(self.cached_markdown.as_ref().unwrap())
+        // SAFETY: We just set cached_markdown to Some above if it was None
+        self.cached_markdown
+            .as_ref()
+            .ok_or_else(|| "Internal error: cached_markdown should be set".to_string())
     }
 
     fn ensure_text(&mut self) -> Result<&CString, String> {
@@ -649,7 +652,10 @@ impl UnhwpResult {
             self.cached_text =
                 Some(CString::new(text).map_err(|e| format!("String conversion error: {}", e))?);
         }
-        Ok(self.cached_text.as_ref().unwrap())
+        // SAFETY: We just set cached_text to Some above if it was None
+        self.cached_text
+            .as_ref()
+            .ok_or_else(|| "Internal error: cached_text should be set".to_string())
     }
 
     fn ensure_raw_content(&mut self) -> Result<&CString, String> {
@@ -658,7 +664,10 @@ impl UnhwpResult {
             self.cached_raw_content =
                 Some(CString::new(raw).map_err(|e| format!("String conversion error: {}", e))?);
         }
-        Ok(self.cached_raw_content.as_ref().unwrap())
+        // SAFETY: We just set cached_raw_content to Some above if it was None
+        self.cached_raw_content
+            .as_ref()
+            .ok_or_else(|| "Internal error: cached_raw_content should be set".to_string())
     }
 
     fn ensure_images(&mut self) {
@@ -672,7 +681,11 @@ impl UnhwpResult {
                 // Allocate and copy image data
                 let data_len = resource.data.len();
                 let data_ptr = if data_len > 0 {
-                    let layout = std::alloc::Layout::from_size_align(data_len, 1).unwrap();
+                    // SAFETY: alignment of 1 is always valid, so this only fails if size overflows
+                    let layout = match std::alloc::Layout::from_size_align(data_len, 1) {
+                        Ok(l) => l,
+                        Err(_) => continue, // Skip this image if layout fails
+                    };
                     let ptr = unsafe { std::alloc::alloc(layout) };
                     if !ptr.is_null() {
                         unsafe {
@@ -1053,8 +1066,11 @@ pub extern "C" fn unhwp_result_free(result: *mut UnhwpResult) {
                 drop(CString::from_raw(image.name));
             }
             if !image.data.is_null() && image.data_len > 0 {
-                let layout = std::alloc::Layout::from_size_align(image.data_len, 1).unwrap();
-                std::alloc::dealloc(image.data, layout);
+                // SAFETY: alignment of 1 is always valid; if this fails, we leak memory
+                // rather than panic in FFI context
+                if let Ok(layout) = std::alloc::Layout::from_size_align(image.data_len, 1) {
+                    std::alloc::dealloc(image.data, layout);
+                }
             }
         }
 

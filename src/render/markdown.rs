@@ -141,7 +141,7 @@ impl MarkdownRenderer {
 
     /// Builds a mapping from binaryItemIDRef to actual filename.
     fn build_image_mapping(document: &Document) -> HashMap<String, String> {
-        let mut mapping = HashMap::new();
+        let mut mapping = HashMap::with_capacity(document.resources.len());
 
         for filename in document.resources.keys() {
             // Extract base name without extension (e.g., "image1.bmp" -> "image1")
@@ -149,8 +149,9 @@ impl MarkdownRenderer {
                 let base_name = &filename[..dot_pos];
                 mapping.insert(base_name.to_string(), filename.clone());
             } else {
-                // No extension - use as-is
-                mapping.insert(filename.clone(), filename.clone());
+                // No extension - use filename as both key and value
+                let filename_owned = filename.clone();
+                mapping.insert(filename_owned.clone(), filename_owned);
             }
         }
 

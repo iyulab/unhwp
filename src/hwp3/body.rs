@@ -8,6 +8,23 @@ use crate::model::{Block, Document, InlineContent, Paragraph, Section, TextRun, 
 use flate2::read::ZlibDecoder;
 use std::io::{Read, Seek, SeekFrom};
 
+/// Check if byte is a valid CP949/EUC-KR lead byte (first byte of 2-byte sequence).
+/// CP949 lead byte range: 0x81-0xFE
+#[inline]
+fn is_cp949_lead_byte(byte: u8) -> bool {
+    (0x81..=0xFE).contains(&byte)
+}
+
+/// Check if byte is a valid CP949/EUC-KR trail byte (second byte of 2-byte sequence).
+/// CP949 trail byte ranges: 0x41-0x5A (A-Z), 0x61-0x7A (a-z), 0x81-0xFE
+/// Note: 0x5B-0x60 and 0x7B-0x80 are not valid trail bytes in standard CP949.
+#[inline]
+fn is_cp949_trail_byte(byte: u8) -> bool {
+    (0x41..=0x5A).contains(&byte)      // Uppercase ASCII range
+        || (0x61..=0x7A).contains(&byte)  // Lowercase ASCII range
+        || (0x81..=0xFE).contains(&byte)  // High byte range
+}
+
 /// HWP 3.x control codes.
 mod control {
     /// End of paragraph
@@ -154,24 +171,28 @@ impl BodyParser {
                     }
                 }
 
-                // Regular character or Korean character
+                // Regular character or Korean character (CP949/EUC-KR encoding)
                 _ => {
-                    // Check if this is a 2-byte Korean character
-                    if (0x81..=0xFE).contains(&byte) && i + 1 < data.len() {
-                        let second = data[i + 1];
-                        if (0x41..=0x5A).contains(&second)
-                            || (0x61..=0x7A).contains(&second)
-                            || (0x81..=0xFE).contains(&second)
-                        {
-                            // 2-byte character
-                            current_text.push(byte);
-                            current_text.push(second);
-                            i += 2;
-                            continue;
+                    // Check if this is a 2-byte Korean character (CP949/EUC-KR)
+                    // Lead byte: 0x81-0xFE, Trail byte: 0x41-0x5A, 0x61-0x7A, 0x81-0xFE
+                    if is_cp949_lead_byte(byte) {
+                        if i + 1 < data.len() {
+                            let second = data[i + 1];
+                            if is_cp949_trail_byte(second) {
+                                // Valid 2-byte character
+                                current_text.push(byte);
+                                current_text.push(second);
+                                i += 2;
+                                continue;
+                            }
                         }
+                        // Incomplete or invalid multi-byte sequence at end of data
+                        // Skip the orphan lead byte to prevent mojibake
+                        i += 1;
+                        continue;
                     }
 
-                    // Single byte character
+                    // Single byte character (ASCII printable range)
                     if byte >= 0x20 && byte != 0x7F {
                         current_text.push(byte);
                     }
@@ -231,16 +252,14 @@ mod tests {
         let section = parser.parse_content(&data).unwrap();
 
         assert_eq!(section.content.len(), 1);
-        if let Block::Paragraph(p) = &section.content[0] {
-            assert_eq!(p.content.len(), 1);
-            if let InlineContent::Text(run) = &p.content[0] {
-                assert_eq!(run.text, "테스트");
-            } else {
-                panic!("Expected Text inline");
-            }
-        } else {
-            panic!("Expected Paragraph block");
-        }
+        let Block::Paragraph(p) = &section.content[0] else {
+            unreachable!("Expected Paragraph block, got {:?}", section.content[0]);
+        };
+        assert_eq!(p.content.len(), 1);
+        let InlineContent::Text(run) = &p.content[0] else {
+            unreachable!("Expected Text inline, got {:?}", p.content[0]);
+        };
+        assert_eq!(run.text, "테스트");
     }
 
     #[test]

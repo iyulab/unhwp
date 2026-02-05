@@ -139,14 +139,120 @@ impl<'a> EquationConverter<'a> {
         }
     }
 
+    /// Extracts the last expression from output for use as a fraction numerator.
+    ///
+    /// This handles the "a OVER b" pattern by extracting "a" from already-emitted output.
+    /// Supports:
+    /// - Single characters/variables
+    /// - Braced groups like {x+y}
+    /// - LaTeX commands like \alpha, \sqrt{x}
+    fn extract_last_expression(&mut self) -> String {
+        let output = self.output.trim_end();
+        if output.is_empty() {
+            return String::new();
+        }
+
+        // Find the start of the last expression
+        let chars: Vec<char> = output.chars().collect();
+        let len = chars.len();
+
+        // If output ends with '}', find the matching '{'
+        if chars[len - 1] == '}' {
+            let mut depth = 1;
+            let mut start = len - 1;
+            for i in (0..len - 1).rev() {
+                match chars[i] {
+                    '}' => depth += 1,
+                    '{' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            // Check if there's a command before the brace
+                            if i > 0 && chars[i - 1] != ' ' && chars[i - 1] != '\\' {
+                                // Find the command start
+                                let mut cmd_start = i - 1;
+                                while cmd_start > 0
+                                    && (chars[cmd_start - 1].is_ascii_alphabetic()
+                                        || chars[cmd_start - 1] == '\\')
+                                {
+                                    cmd_start -= 1;
+                                }
+                                start = cmd_start;
+                            } else {
+                                start = i;
+                            }
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let expr: String = chars[start..].iter().collect();
+            self.output = chars[..start].iter().collect();
+            return expr.trim().to_string();
+        }
+
+        // If output ends with a LaTeX command, extract it
+        if chars[len - 1].is_ascii_alphabetic() {
+            let mut start = len - 1;
+            while start > 0 && chars[start - 1].is_ascii_alphabetic() {
+                start -= 1;
+            }
+            // Check for backslash before the command
+            if start > 0 && chars[start - 1] == '\\' {
+                start -= 1;
+            }
+            let expr: String = chars[start..].iter().collect();
+            self.output = chars[..start].iter().collect();
+            return expr.trim().to_string();
+        }
+
+        // Otherwise, extract the last non-whitespace character/word
+        let mut end = len;
+        while end > 0 && chars[end - 1].is_whitespace() {
+            end -= 1;
+        }
+        if end == 0 {
+            return String::new();
+        }
+
+        let mut start = end - 1;
+        while start > 0
+            && !chars[start - 1].is_whitespace()
+            && chars[start - 1] != '{'
+            && chars[start - 1] != '}'
+        {
+            start -= 1;
+        }
+
+        let expr: String = chars[start..end].iter().collect();
+        self.output = chars[..start].iter().collect();
+        expr.trim().to_string()
+    }
+
     fn process_keyword(&mut self, word: &str) {
         match word.to_uppercase().as_str() {
             // Fractions
             "OVER" => {
                 // a OVER b → \frac{a}{b}
-                // The numerator was already output, we need to wrap it
-                // For simplicity, just output \frac notation
-                self.output.push_str(" / ");
+                // The numerator was already output, we need to extract it
+                let numerator = self.extract_last_expression();
+                let denominator = self.read_group();
+                self.output
+                    .push_str(&format!("\\frac{{{}}}{{{}}}", numerator, denominator));
+            }
+            "DOVER" | "CFRAC" => {
+                // Display style fraction (larger)
+                let numerator = self.extract_last_expression();
+                let denominator = self.read_group();
+                self.output
+                    .push_str(&format!("\\dfrac{{{}}}{{{}}}", numerator, denominator));
+            }
+            "TFRAC" => {
+                // Text style fraction (smaller)
+                let numerator = self.extract_last_expression();
+                let denominator = self.read_group();
+                self.output
+                    .push_str(&format!("\\tfrac{{{}}}{{{}}}", numerator, denominator));
             }
 
             // Roots
@@ -562,6 +668,13 @@ mod tests {
     #[test]
     fn test_frac() {
         assert_eq!(to_latex("FRAC{a}{b}"), "\\frac{a}{b}");
+    }
+
+    #[test]
+    fn test_over() {
+        // Test OVER keyword for fractions
+        assert_eq!(to_latex("a OVER{b}"), "\\frac{a}{b}");
+        assert_eq!(to_latex("x OVER{y+z}"), "\\frac{x}{y+z}");
     }
 
     #[test]

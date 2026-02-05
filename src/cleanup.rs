@@ -466,38 +466,53 @@ fn is_entirely_mojibake(line: &str) -> bool {
 // ============================================================================
 
 // Regex patterns (compiled once using LazyLock)
-static RE_PAGE_HYPHEN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\s*[-\[\(]\s*\d+\s*[-\]\)]\s*$").unwrap());
+// Note: These patterns are hardcoded and validated at compile time via tests.
+// Using expect() to provide clear error messages if patterns are ever modified incorrectly.
+static RE_PAGE_HYPHEN: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\s*[-\[\(]\s*\d+\s*[-\]\)]\s*$")
+        .expect("RE_PAGE_HYPHEN: invalid regex pattern")
+});
 
-static RE_PAGE_RATIO: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)^\s*(?:Page\s*)?\d+\s*(?:/|of)\s*\d+\s*$").unwrap());
+static RE_PAGE_RATIO: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^\s*(?:Page\s*)?\d+\s*(?:/|of)\s*\d+\s*$")
+        .expect("RE_PAGE_RATIO: invalid regex pattern")
+});
 
 static RE_PAGE_KOREAN: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"^\s*(?:-\s*)?\d+\s*(?:쪽|페이지|Page)(?:\s*-)?(?:\s*/\s*\d+(?:쪽|페이지|Page)?)?\s*$",
     )
-    .unwrap()
+    .expect("RE_PAGE_KOREAN: invalid regex pattern")
 });
 
-static RE_TOC_DOTS: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^.*\.{3,}[\.\s]*\d+\s*$").unwrap());
+static RE_TOC_DOTS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^.*\.{3,}[\.\s]*\d+\s*$").expect("RE_TOC_DOTS: invalid regex pattern")
+});
 
-static RE_SEPARATOR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[-=*_]{3,}$").unwrap());
+static RE_SEPARATOR: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[-=*_]{3,}$").expect("RE_SEPARATOR: invalid regex pattern"));
 
-static RE_HWP_PLACEHOLDER: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\s*\[(?:EQ|수식|표|TABLE|그림|IMAGE)\]\s*$").unwrap());
+static RE_HWP_PLACEHOLDER: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\s*\[(?:EQ|수식|표|TABLE|그림|IMAGE)\]\s*$")
+        .expect("RE_HWP_PLACEHOLDER: invalid regex pattern")
+});
 
-static RE_EMPTY_BRACKETS: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[\(\[\{<]\s*[\)\]\}>]$").unwrap());
+static RE_EMPTY_BRACKETS: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[\(\[\{<]\s*[\)\]\}>]$").expect("RE_EMPTY_BRACKETS: invalid regex pattern")
+});
 
 // Reserved for future caption detection feature
 #[allow(dead_code)]
-static RE_FIGURE_CAPTION: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\s*\[?(?:그림|Figure|Fig)\.?\s*\d+[^\]]*\]?\s*$").unwrap());
+static RE_FIGURE_CAPTION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\s*\[?(?:그림|Figure|Fig)\.?\s*\d+[^\]]*\]?\s*$")
+        .expect("RE_FIGURE_CAPTION: invalid regex pattern")
+});
 
 #[allow(dead_code)]
-static RE_TABLE_CAPTION: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\s*\[?(?:표|Table)\.?\s*\d+[^\]]*\]?\s*$").unwrap());
+static RE_TABLE_CAPTION: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^\s*\[?(?:표|Table)\.?\s*\d+[^\]]*\]?\s*$")
+        .expect("RE_TABLE_CAPTION: invalid regex pattern")
+});
 
 /// Stage 2: Line-based cleaning
 ///
@@ -796,9 +811,13 @@ fn is_empty_emphasis(
 // Stage 4: Final Normalization
 // ============================================================================
 
-static RE_MULTIPLE_NEWLINES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\n{2,}").unwrap());
+static RE_MULTIPLE_NEWLINES: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\n{2,}").expect("RE_MULTIPLE_NEWLINES: invalid regex pattern")
+});
 
-static RE_MULTIPLE_SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[ \t]+").unwrap());
+static RE_MULTIPLE_SPACES: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"[ \t]+").expect("RE_MULTIPLE_SPACES: invalid regex pattern")
+});
 
 /// Stage 4: Final normalization
 ///
@@ -808,13 +827,11 @@ static RE_MULTIPLE_SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"[ \t]
 /// - Trim each line
 /// - Merge consecutive list items (no blank lines between)
 pub fn stage4_final_normalize(input: &str, _options: &CleanupOptions) -> String {
-    let mut result = input.to_string();
-
     // Reduce consecutive newlines (2+ -> 1)
-    result = RE_MULTIPLE_NEWLINES.replace_all(&result, "\n").to_string();
+    let normalized = RE_MULTIPLE_NEWLINES.replace_all(input, "\n");
 
     // Process line by line
-    let lines: Vec<&str> = result.lines().collect();
+    let lines: Vec<&str> = normalized.lines().collect();
     let mut cleaned_lines: Vec<String> = Vec::with_capacity(lines.len());
 
     for line in lines {
@@ -826,16 +843,15 @@ pub fn stage4_final_normalize(input: &str, _options: &CleanupOptions) -> String 
             continue;
         }
 
-        // Normalize multiple spaces within line
-        let cleaned = RE_MULTIPLE_SPACES.replace_all(trimmed, " ").to_string();
-
-        cleaned_lines.push(cleaned);
+        // Normalize multiple spaces within line (use into_owned to avoid clone when no change)
+        let cleaned = RE_MULTIPLE_SPACES.replace_all(trimmed, " ");
+        cleaned_lines.push(cleaned.into_owned());
     }
 
-    result = cleaned_lines.join("\n");
+    let mut result = cleaned_lines.join("\n");
 
     // Final pass: reduce any remaining consecutive newlines
-    result = RE_MULTIPLE_NEWLINES.replace_all(&result, "\n").to_string();
+    result = RE_MULTIPLE_NEWLINES.replace_all(&result, "\n").into_owned();
 
     // Merge consecutive list items (remove blank lines between list markers)
     // List markers: "- ", "* ", "+ ", "1. ", "2. ", etc.

@@ -381,4 +381,323 @@ mod tests {
         assert_eq!(options.table_fallback, TableFallback::Html);
         assert!(options.include_frontmatter);
     }
+
+    // ==================== Edge Case Tests ====================
+
+    #[test]
+    fn test_format_detection_empty_data() {
+        // Empty data should return InvalidData error (data too small)
+        let data: [u8; 0] = [];
+        let result = detect_format_from_bytes(&data);
+        assert!(result.is_err());
+        match result {
+            Err(Error::InvalidData(_)) => {} // Expected: data too small
+            _ => panic!("Expected InvalidData error for empty data"),
+        }
+    }
+
+    #[test]
+    fn test_format_detection_too_short() {
+        // Data shorter than magic bytes should return InvalidData error
+        let data = [0xD0, 0xCF]; // Incomplete OLE magic (less than 8 bytes)
+        let result = detect_format_from_bytes(&data);
+        assert!(result.is_err());
+        match result {
+            Err(Error::InvalidData(_)) => {} // Expected: data too small
+            _ => panic!("Expected InvalidData error for data too short"),
+        }
+    }
+
+    #[test]
+    fn test_format_detection_unknown_magic() {
+        // Random bytes that don't match any known format
+        let data = [0xFF, 0xFE, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05];
+        let result = detect_format_from_bytes(&data);
+        assert!(result.is_err());
+        match result {
+            Err(Error::UnknownFormat) => {}
+            _ => panic!("Expected UnknownFormat error for unknown magic bytes"),
+        }
+    }
+
+    #[test]
+    fn test_format_detection_hwp3_signature() {
+        // HWP 3.x signature: "HWP Document File V"
+        let data = b"HWP Document File V3.00 \x1A\x01\x02\x03\x04";
+        let format = detect_format_from_bytes(data).unwrap();
+        assert_eq!(format, FormatType::Hwp3);
+    }
+
+    #[test]
+    fn test_render_options_empty_image_dir() {
+        // Empty string for image_dir should still work
+        use std::path::PathBuf;
+        let options = RenderOptions::default().with_image_dir("");
+        assert_eq!(options.image_dir, Some(PathBuf::from("")));
+    }
+
+    #[test]
+    fn test_render_options_special_chars_in_path() {
+        // Paths with special characters (Korean, spaces, etc.)
+        use std::path::PathBuf;
+        let options = RenderOptions::default().with_image_dir("./이미지 폴더/test images");
+        assert_eq!(
+            options.image_dir,
+            Some(PathBuf::from("./이미지 폴더/test images"))
+        );
+    }
+
+    #[test]
+    fn test_document_model_empty() {
+        // Empty document should have valid defaults
+        let doc = model::Document::new();
+        assert!(doc.sections.is_empty());
+        assert!(doc.resources.is_empty());
+        assert!(doc.metadata.title.is_none());
+        assert!(!doc.metadata.is_distribution);
+    }
+
+    #[test]
+    fn test_table_fallback_variants() {
+        // All TableFallback variants should be usable
+        let options_html = RenderOptions::default().with_table_fallback(TableFallback::Html);
+        let options_simplified =
+            RenderOptions::default().with_table_fallback(TableFallback::SimplifiedMarkdown);
+        let options_skip = RenderOptions::default().with_table_fallback(TableFallback::Skip);
+
+        assert_eq!(options_html.table_fallback, TableFallback::Html);
+        assert_eq!(
+            options_simplified.table_fallback,
+            TableFallback::SimplifiedMarkdown
+        );
+        assert_eq!(options_skip.table_fallback, TableFallback::Skip);
+    }
+
+    #[test]
+    fn test_paragraph_style_heading_level() {
+        // Test ParagraphStyle heading level clamping
+        use model::ParagraphStyle;
+
+        // Valid heading levels
+        let h1 = ParagraphStyle::heading(1);
+        assert_eq!(h1.heading_level, 1);
+        assert!(h1.is_heading());
+
+        let h6 = ParagraphStyle::heading(6);
+        assert_eq!(h6.heading_level, 6);
+
+        // Out of bounds should clamp to 6
+        let h_overflow = ParagraphStyle::heading(10);
+        assert_eq!(h_overflow.heading_level, 6);
+
+        // Zero is not a heading
+        let normal = ParagraphStyle::heading(0);
+        assert_eq!(normal.heading_level, 0);
+        assert!(!normal.is_heading());
+    }
+
+    #[test]
+    fn test_resource_type_variants() {
+        // All ResourceType variants should work
+        use model::{Resource, ResourceType};
+
+        let image_resource = Resource {
+            resource_type: ResourceType::Image,
+            filename: Some("test.png".to_string()),
+            mime_type: Some("image/png".to_string()),
+            data: vec![0x89, 0x50, 0x4E, 0x47], // PNG magic
+            size: 4,
+        };
+
+        let ole_resource = Resource {
+            resource_type: ResourceType::OleObject,
+            filename: Some("object.ole".to_string()),
+            mime_type: None,
+            data: vec![0xD0, 0xCF, 0x11, 0xE0],
+            size: 4,
+        };
+
+        let other_resource = Resource::new(ResourceType::Other, vec![0x00, 0x01]);
+
+        assert!(matches!(image_resource.resource_type, ResourceType::Image));
+        assert!(matches!(
+            ole_resource.resource_type,
+            ResourceType::OleObject
+        ));
+        assert!(matches!(other_resource.resource_type, ResourceType::Other));
+    }
+
+    #[test]
+    fn test_style_registry_empty() {
+        // Empty style registry should handle lookups gracefully
+        let registry = model::StyleRegistry::new();
+
+        // Looking up non-existent styles should return None
+        assert!(registry.get_char_style(0).is_none());
+        assert!(registry.get_para_style(0).is_none());
+        assert!(registry.get_bindata_filename(0).is_none());
+        assert!(registry.get_named_style(0).is_none());
+        assert!(registry.get_named_style_by_name("NonExistent").is_none());
+    }
+
+    #[test]
+    fn test_paragraph_default() {
+        // Default paragraph should have sensible defaults
+        let para = model::Paragraph::default();
+        assert!(para.content.is_empty());
+        assert!(!para.style.is_heading());
+        assert!(para.is_empty());
+    }
+
+    #[test]
+    fn test_text_run_with_unicode() {
+        // Text runs should handle Unicode correctly
+        let run = model::TextRun::new("한글 테스트 🎉 Unicode");
+
+        assert!(run.text.contains("한글"));
+        assert!(run.text.contains("🎉"));
+        assert!(!run.is_empty());
+    }
+
+    #[test]
+    fn test_text_run_with_style() {
+        // TextRun with custom style
+        use model::{TextRun, TextStyle};
+
+        let style = TextStyle {
+            bold: true,
+            italic: true,
+            font_size: Some(14.0),
+            ..Default::default()
+        };
+        let run = TextRun::with_style("Formatted text", style);
+
+        assert_eq!(run.text, "Formatted text");
+        assert!(run.style.bold);
+        assert!(run.style.italic);
+        assert_eq!(run.style.font_size, Some(14.0));
+    }
+
+    #[test]
+    fn test_section_new() {
+        // Section should be created with correct index
+        let section = model::Section::new(42);
+
+        assert_eq!(section.index, 42);
+        assert!(section.content.is_empty());
+        assert!(section.header.is_none());
+        assert!(section.footer.is_none());
+    }
+
+    #[test]
+    fn test_resource_extension() {
+        // Resource should return correct extension based on MIME type
+        use model::{Resource, ResourceType};
+
+        let png = Resource::image(vec![], "image/png");
+        assert_eq!(png.extension(), "png");
+
+        let jpg = Resource::image(vec![], "image/jpeg");
+        assert_eq!(jpg.extension(), "jpg");
+
+        let unknown = Resource::new(ResourceType::Image, vec![]);
+        assert_eq!(unknown.extension(), "bin"); // No MIME type
+
+        let ole = Resource::new(ResourceType::OleObject, vec![]);
+        assert_eq!(ole.extension(), "ole");
+    }
+
+    #[test]
+    fn test_text_style_has_formatting() {
+        // TextStyle should detect formatting presence
+        use model::TextStyle;
+
+        let plain = TextStyle::default();
+        assert!(!plain.has_formatting());
+
+        let bold = TextStyle::bold();
+        assert!(bold.has_formatting());
+
+        let italic = TextStyle::italic();
+        assert!(italic.has_formatting());
+
+        let complex = TextStyle {
+            underline: true,
+            strikethrough: true,
+            ..Default::default()
+        };
+        assert!(complex.has_formatting());
+    }
+
+    #[test]
+    fn test_cleanup_options_presets() {
+        // CleanupOptions presets should work
+        use crate::cleanup::CleanupOptions;
+
+        let default = CleanupOptions::default();
+        assert!(default.normalize_strings);
+        assert!(default.clean_lines);
+        assert!(default.filter_structure);
+
+        let minimal = CleanupOptions::minimal();
+        assert!(minimal.normalize_strings);
+        assert!(!minimal.clean_lines); // Minimal disables line cleaning
+        assert!(!minimal.filter_structure); // Minimal disables structure filtering
+
+        let aggressive = CleanupOptions::aggressive();
+        assert!(aggressive.normalize_strings);
+        assert!(aggressive.clean_lines);
+        assert!(aggressive.filter_structure);
+        // Aggressive has lower threshold for more aggressive header/footer detection
+        assert!(aggressive.header_footer_threshold < default.header_footer_threshold);
+    }
+
+    #[test]
+    fn test_render_options_cleanup_chain() {
+        // RenderOptions cleanup builder methods
+        let with_cleanup = RenderOptions::default().with_cleanup();
+        assert!(with_cleanup.cleanup.is_some());
+
+        let with_minimal = RenderOptions::default().with_minimal_cleanup();
+        assert!(with_minimal.cleanup.is_some());
+
+        let with_aggressive = RenderOptions::default().with_aggressive_cleanup();
+        assert!(with_aggressive.cleanup.is_some());
+    }
+
+    #[test]
+    fn test_render_options_max_heading_level() {
+        // Max heading level should be clamped to 1-6
+        let level_0 = RenderOptions::default().with_max_heading_level(0);
+        assert_eq!(level_0.max_heading_level, 1); // Clamped to minimum
+
+        let level_10 = RenderOptions::default().with_max_heading_level(10);
+        assert_eq!(level_10.max_heading_level, 6); // Clamped to maximum
+
+        let level_4 = RenderOptions::default().with_max_heading_level(4);
+        assert_eq!(level_4.max_heading_level, 4); // Within range
+    }
+
+    #[test]
+    fn test_paragraph_plain_text_extraction() {
+        // Paragraph should extract plain text from mixed content
+        use model::{InlineContent, Paragraph, TextRun};
+
+        let mut para = Paragraph::new();
+        para.content
+            .push(InlineContent::Text(TextRun::new("Hello ")));
+        para.content.push(InlineContent::LineBreak);
+        para.content
+            .push(InlineContent::Text(TextRun::new("World")));
+        para.content.push(InlineContent::Link {
+            text: " Link".to_string(),
+            url: "https://example.com".to_string(),
+        });
+
+        let text = para.plain_text();
+        assert!(text.contains("Hello"));
+        assert!(text.contains("\n")); // Line break
+        assert!(text.contains("World"));
+        assert!(text.contains("Link"));
+    }
 }

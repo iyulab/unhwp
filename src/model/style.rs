@@ -126,6 +126,17 @@ pub enum ListStyle {
     CustomBullet(char),
 }
 
+/// Named style definition that references CharShape and ParaShape by index.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct NamedStyle {
+    /// Style name
+    pub name: String,
+    /// Reference to ParaShape by ID
+    pub para_shape_id: u32,
+    /// Reference to CharShape by ID
+    pub char_shape_id: u32,
+}
+
 /// Style registry for resolving style references.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct StyleRegistry {
@@ -133,8 +144,10 @@ pub struct StyleRegistry {
     pub char_styles: HashMap<u32, TextStyle>,
     /// Paragraph styles by ID
     pub para_styles: HashMap<u32, ParagraphStyle>,
-    /// Named styles
+    /// Named styles by name (for lookup)
     pub named_styles: HashMap<String, u32>,
+    /// Named style definitions by ID
+    pub named_style_defs: HashMap<u32, NamedStyle>,
     /// BinData index to filename mapping (for HWP5 images)
     /// Key: 0-based index in DocInfo BinData records
     /// Value: filename like "BIN0001.bmp"
@@ -176,5 +189,41 @@ impl StyleRegistry {
     /// Gets the filename for a BinData index.
     pub fn get_bindata_filename(&self, index: u32) -> Option<&String> {
         self.bindata_mapping.get(&index)
+    }
+
+    /// Registers a named style that references CharShape and ParaShape.
+    pub fn register_named_style(
+        &mut self,
+        id: u32,
+        name: String,
+        para_shape_id: u32,
+        char_shape_id: u32,
+    ) {
+        // Register by name for lookup
+        if !name.is_empty() {
+            self.named_styles.insert(name.clone(), id);
+        }
+
+        // Store the full definition
+        self.named_style_defs.insert(
+            id,
+            NamedStyle {
+                name,
+                para_shape_id,
+                char_shape_id,
+            },
+        );
+    }
+
+    /// Gets a named style by name.
+    pub fn get_named_style_by_name(&self, name: &str) -> Option<&NamedStyle> {
+        self.named_styles
+            .get(name)
+            .and_then(|id| self.named_style_defs.get(id))
+    }
+
+    /// Gets a named style by ID.
+    pub fn get_named_style(&self, id: u32) -> Option<&NamedStyle> {
+        self.named_style_defs.get(&id)
     }
 }

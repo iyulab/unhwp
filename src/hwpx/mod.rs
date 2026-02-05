@@ -12,6 +12,8 @@ pub use container::HwpxContainer;
 
 use crate::error::Result;
 use crate::model::Document;
+use quick_xml::events::Event;
+use quick_xml::Reader;
 use rayon::prelude::*;
 use std::io::{Read, Seek};
 use std::path::Path;
@@ -141,11 +143,23 @@ impl HwpxParser {
         // Clone styles for parallel access
         let styles = document.styles.clone();
 
-        // Parse sections in parallel
-        let mut sections: Vec<_> = section_data
-            .par_iter()
-            .filter_map(|(index, xml)| section::parse_section(xml, *index, &styles).ok())
-            .collect();
+        // Use parallel processing only when there are enough sections to benefit
+        // Threshold of 3 sections avoids parallel overhead for small documents
+        const PARALLEL_THRESHOLD: usize = 3;
+
+        let mut sections: Vec<_> = if section_data.len() >= PARALLEL_THRESHOLD {
+            // Parse sections in parallel
+            section_data
+                .par_iter()
+                .filter_map(|(index, xml)| section::parse_section(xml, *index, &styles).ok())
+                .collect()
+        } else {
+            // Parse sections sequentially for small documents
+            section_data
+                .iter()
+                .filter_map(|(index, xml)| section::parse_section(xml, *index, &styles).ok())
+                .collect()
+        };
 
         // Sort by index to maintain order
         sections.sort_by_key(|s| s.index);
@@ -185,89 +199,146 @@ impl HwpxParser {
     }
 }
 
-/// Extracts a metadata field from content.hpf XML.
-fn extract_metadata_field(xml: &str, field: &str) -> Option<String> {
-    // Try dc: namespace first (Dublin Core)
-    let start_tag = format!("<dc:{}>", field);
-    let end_tag = format!("</dc:{}>", field);
+/// Metadata extraction result from content.hpf.
+#[derive(Default)]
+struct MetadataResult {
+    title: Option<String>,
+    creator: Option<String>,
+    description: Option<String>,
+    date: Option<String>,
+    modified: Option<String>,
+    generator: Option<String>,
+    keywords: Vec<String>,
+}
 
-    if let Some(start) = xml.find(&start_tag) {
-        let content_start = start + start_tag.len();
-        if let Some(end) = xml[content_start..].find(&end_tag) {
-            let value = xml[content_start..content_start + end].trim().to_string();
-            if !value.is_empty() {
-                return Some(value);
-            }
-        }
-    }
+/// Extracts all metadata fields from content.hpf XML using proper XML parsing.
+/// This replaces the naive string-based extraction with quick-xml parsing.
+fn parse_metadata_xml(xml: &str) -> MetadataResult {
+    let mut result = MetadataResult::default();
+    let mut reader = Reader::from_str(xml);
+    reader.config_mut().trim_text(true);
 
-    // Try opf: namespace
-    let start_tag = format!("<opf:{}>", field);
-    let end_tag = format!("</opf:{}>", field);
+    let mut buf = Vec::new();
+    let mut current_element: Option<String> = None;
+    let mut current_meta_name: Option<String> = None;
 
-    if let Some(start) = xml.find(&start_tag) {
-        let content_start = start + start_tag.len();
-        if let Some(end) = xml[content_start..].find(&end_tag) {
-            let value = xml[content_start..content_start + end].trim().to_string();
-            if !value.is_empty() {
-                return Some(value);
-            }
-        }
-    }
-
-    // Try meta with name attribute
-    // Format: <opf:meta name="creator" content="text">actual value</opf:meta>
-    // The actual value is in the element text, not the content attribute
-    let name_attr = format!("name=\"{}\"", field);
-    if let Some(start) = xml.find(&name_attr) {
-        let rest = &xml[start..];
-        // Find the closing > of the opening tag
-        if let Some(tag_end) = rest.find('>') {
-            // Check if it's a self-closing tag
-            if rest[..tag_end].ends_with('/') {
-                // Self-closing, no text content
-            } else {
-                // Look for text content between > and </
-                let after_tag = &rest[tag_end + 1..];
-                if let Some(close_start) = after_tag.find("</") {
-                    let text_value = after_tag[..close_start].trim().to_string();
-                    if !text_value.is_empty() {
-                        return Some(text_value);
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
+                let name = get_local_name(&e);
+                match name.as_str() {
+                    "title" | "creator" | "description" | "date" | "modified" | "generator"
+                    | "subject" | "keywords" => {
+                        current_element = Some(name);
+                    }
+                    "meta" => {
+                        // Check for name attribute
+                        for attr in e.attributes().flatten() {
+                            if attr.key.local_name().as_ref() == b"name" {
+                                if let Ok(value) = attr.unescape_value() {
+                                    current_meta_name = Some(value.to_string());
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        current_element = None;
                     }
                 }
             }
+            Ok(Event::Text(e)) => {
+                if let Ok(text) = e.unescape() {
+                    let text = text.trim().to_string();
+                    if !text.is_empty() {
+                        // Handle element-based metadata
+                        if let Some(ref elem) = current_element {
+                            match elem.as_str() {
+                                "title" => result.title = Some(text.clone()),
+                                "creator" => result.creator = Some(text.clone()),
+                                "description" => result.description = Some(text.clone()),
+                                "date" => result.date = Some(text.clone()),
+                                "modified" => result.modified = Some(text.clone()),
+                                "generator" => result.generator = Some(text.clone()),
+                                "subject" | "keywords" => {
+                                    // Split by common delimiters
+                                    for kw in text.split([',', ';', '|']) {
+                                        let kw = kw.trim();
+                                        if !kw.is_empty() && !result.keywords.contains(&kw.to_string()) {
+                                            result.keywords.push(kw.to_string());
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        // Handle meta name-based metadata
+                        else if let Some(ref meta_name) = current_meta_name {
+                            match meta_name.as_str() {
+                                "title" => result.title = Some(text.clone()),
+                                "creator" => result.creator = Some(text.clone()),
+                                "description" => result.description = Some(text.clone()),
+                                "date" => result.date = Some(text.clone()),
+                                "modified" => result.modified = Some(text.clone()),
+                                "generator" => result.generator = Some(text.clone()),
+                                "subject" | "keywords" => {
+                                    for kw in text.split([',', ';', '|']) {
+                                        let kw = kw.trim();
+                                        if !kw.is_empty() && !result.keywords.contains(&kw.to_string()) {
+                                            result.keywords.push(kw.to_string());
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Event::End(_)) => {
+                current_element = None;
+                current_meta_name = None;
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
         }
+        buf.clear();
     }
 
-    None
+    result
 }
 
-/// Extracts keywords from content.hpf XML (may be comma-separated).
+/// Extracts a single metadata field from content.hpf XML.
+fn extract_metadata_field(xml: &str, field: &str) -> Option<String> {
+    let metadata = parse_metadata_xml(xml);
+    match field {
+        "title" => metadata.title,
+        "creator" => metadata.creator,
+        "description" => metadata.description,
+        "date" => metadata.date,
+        "modified" => metadata.modified,
+        "generator" => metadata.generator,
+        "subject" | "keywords" => {
+            if metadata.keywords.is_empty() {
+                None
+            } else {
+                Some(metadata.keywords.join(", "))
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Extracts keywords from content.hpf XML.
 fn extract_keywords(xml: &str) -> Vec<String> {
-    let mut keywords = Vec::new();
+    parse_metadata_xml(xml).keywords
+}
 
-    // Try dc:subject first
-    if let Some(subject) = extract_metadata_field(xml, "subject") {
-        // Split by common delimiters
-        for kw in subject.split(&[',', ';', '|'][..]) {
-            let kw = kw.trim();
-            if !kw.is_empty() {
-                keywords.push(kw.to_string());
-            }
-        }
-    }
-
-    // Also try meta keywords
-    if let Some(kw_str) = extract_metadata_field(xml, "keywords") {
-        for kw in kw_str.split(&[',', ';', '|'][..]) {
-            let kw = kw.trim();
-            if !kw.is_empty() && !keywords.contains(&kw.to_string()) {
-                keywords.push(kw.to_string());
-            }
-        }
-    }
-
-    keywords
+/// Gets the local name from an XML element (strips namespace prefix).
+fn get_local_name(e: &quick_xml::events::BytesStart) -> String {
+    let name = e.name();
+    let local = name.local_name();
+    String::from_utf8_lossy(local.as_ref()).to_string()
 }
 
 /// Guesses MIME type from filename extension.
