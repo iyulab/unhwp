@@ -22,7 +22,7 @@ fn is_cp949_lead_byte(byte: u8) -> bool {
 fn is_cp949_trail_byte(byte: u8) -> bool {
     (0x41..=0x5A).contains(&byte)      // Uppercase ASCII range
         || (0x61..=0x7A).contains(&byte)  // Lowercase ASCII range
-        || (0x81..=0xFE).contains(&byte)  // High byte range
+        || (0x81..=0xFE).contains(&byte) // High byte range
 }
 
 /// HWP 3.x control codes.

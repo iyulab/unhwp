@@ -324,11 +324,7 @@ pub fn run_update(check_only: bool, force: bool) -> Result<(), Box<dyn std::erro
     let mut last_error: Option<Box<dyn std::error::Error>> = None;
 
     for target in &target_strings {
-        println!(
-            "{} target: {}",
-            "Checking".dimmed(),
-            target.dimmed()
-        );
+        println!("{} target: {}", "Checking".dimmed(), target.dimmed());
 
         let result = Update::configure()
             .repo_owner(REPO_OWNER)

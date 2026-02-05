@@ -469,8 +469,7 @@ fn is_entirely_mojibake(line: &str) -> bool {
 // Note: These patterns are hardcoded and validated at compile time via tests.
 // Using expect() to provide clear error messages if patterns are ever modified incorrectly.
 static RE_PAGE_HYPHEN: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\s*[-\[\(]\s*\d+\s*[-\]\)]\s*$")
-        .expect("RE_PAGE_HYPHEN: invalid regex pattern")
+    Regex::new(r"^\s*[-\[\(]\s*\d+\s*[-\]\)]\s*$").expect("RE_PAGE_HYPHEN: invalid regex pattern")
 });
 
 static RE_PAGE_RATIO: LazyLock<Regex> = LazyLock::new(|| {
@@ -811,13 +810,11 @@ fn is_empty_emphasis(
 // Stage 4: Final Normalization
 // ============================================================================
 
-static RE_MULTIPLE_NEWLINES: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\n{2,}").expect("RE_MULTIPLE_NEWLINES: invalid regex pattern")
-});
+static RE_MULTIPLE_NEWLINES: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\n{2,}").expect("RE_MULTIPLE_NEWLINES: invalid regex pattern"));
 
-static RE_MULTIPLE_SPACES: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"[ \t]+").expect("RE_MULTIPLE_SPACES: invalid regex pattern")
-});
+static RE_MULTIPLE_SPACES: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[ \t]+").expect("RE_MULTIPLE_SPACES: invalid regex pattern"));
 
 /// Stage 4: Final normalization
 ///

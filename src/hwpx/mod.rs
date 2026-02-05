@@ -263,7 +263,9 @@ fn parse_metadata_xml(xml: &str) -> MetadataResult {
                                     // Split by common delimiters
                                     for kw in text.split([',', ';', '|']) {
                                         let kw = kw.trim();
-                                        if !kw.is_empty() && !result.keywords.contains(&kw.to_string()) {
+                                        if !kw.is_empty()
+                                            && !result.keywords.contains(&kw.to_string())
+                                        {
                                             result.keywords.push(kw.to_string());
                                         }
                                     }
@@ -283,7 +285,9 @@ fn parse_metadata_xml(xml: &str) -> MetadataResult {
                                 "subject" | "keywords" => {
                                     for kw in text.split([',', ';', '|']) {
                                         let kw = kw.trim();
-                                        if !kw.is_empty() && !result.keywords.contains(&kw.to_string()) {
+                                        if !kw.is_empty()
+                                            && !result.keywords.contains(&kw.to_string())
+                                        {
                                             result.keywords.push(kw.to_string());
                                         }
                                     }

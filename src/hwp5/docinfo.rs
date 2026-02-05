@@ -338,15 +338,14 @@ fn parse_para_shape(record: &Record) -> Result<ParaShapeData> {
     ]);
 
     // Alignment (bits 2-4)
-    let alignment =
-        match (properties1 >> PARA_PROP1_ALIGNMENT_SHIFT) & PARA_PROP1_ALIGNMENT_MASK {
-            0 => Alignment::Justify,
-            1 => Alignment::Left,
-            2 => Alignment::Right,
-            3 => Alignment::Center,
-            4 | 5 => Alignment::Justify, // Distribute/Split -> Justify fallback
-            _ => Alignment::Left,
-        };
+    let alignment = match (properties1 >> PARA_PROP1_ALIGNMENT_SHIFT) & PARA_PROP1_ALIGNMENT_MASK {
+        0 => Alignment::Justify,
+        1 => Alignment::Left,
+        2 => Alignment::Right,
+        3 => Alignment::Center,
+        4 | 5 => Alignment::Justify, // Distribute/Split -> Justify fallback
+        _ => Alignment::Left,
+    };
 
     // Space before (in HWP units -> points)
     let space_before_raw = i32::from_le_bytes([
