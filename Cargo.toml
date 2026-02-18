@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "unhwp"
-version = "0.1.16"
+version = "0.1.17"
 edition = "2021"
 authors = ["iyulab"]
 description = "A high-performance library for extracting HWP/HWPX documents into structured Markdown"
@@ -39,9 +39,6 @@ thiserror = "2.0"
 # JSON serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-
-# Zero-copy buffers
-bytes = "1.9"
 
 # Regular expressions (cleanup pipeline)
 regex = "1.11"

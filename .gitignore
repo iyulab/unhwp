@@ -2,7 +2,6 @@
 local-docs/
 test-files/
 test-output/
-CLAUDE.md
 .serena/
 examples/
 nul
