@@ -7,12 +7,32 @@ Handles loading the correct native library for the current platform.
 import ctypes
 import os
 import platform
+import subprocess
 import sys
 from ctypes import (
     POINTER, Structure, c_char_p, c_int, c_uint8, c_size_t, c_void_p, c_bool
 )
 from pathlib import Path
 from typing import Optional
+
+
+def _is_musl() -> bool:
+    """Detect if the current Linux system uses musl libc."""
+    try:
+        with open("/etc/os-release") as f:
+            if "alpine" in f.read().lower():
+                return True
+    except OSError:
+        pass
+    try:
+        result = subprocess.run(
+            ["ldd", "--version"], capture_output=True, text=True, timeout=5
+        )
+        if "musl" in (result.stdout + result.stderr).lower():
+            return True
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return False
 
 
 def _get_lib_name() -> str:
@@ -38,7 +58,7 @@ def _get_platform_dir() -> str:
             return "osx-arm64"
         return "osx-x64"
     else:  # Linux and others
-        return "linux-x64"
+        return "linux-musl-x64" if _is_musl() else "linux-x64"
 
 
 def _find_library() -> Optional[Path]:

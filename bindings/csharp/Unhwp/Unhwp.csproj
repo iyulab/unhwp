@@ -12,7 +12,7 @@
 
     <!-- Package metadata -->
     <PackageId>Unhwp</PackageId>
-    <Version>0.1.16</Version>
+    <Version>0.1.17</Version>
     <Authors>iyulab</Authors>
     <Company>iyulab</Company>
     <Product>Unhwp</Product>
@@ -36,8 +36,10 @@
   <ItemGroup>
     <!-- Windows x64 -->
     <None Include="runtimes\win-x64\native\unhwp.dll" Pack="true" PackagePath="runtimes\win-x64\native\" Visible="false" />
-    <!-- Linux x64 -->
+    <!-- Linux x64 (glibc) -->
     <None Include="runtimes\linux-x64\native\libunhwp.so" Pack="true" PackagePath="runtimes\linux-x64\native\" Visible="false" />
+    <!-- Linux x64 (musl/Alpine) -->
+    <None Include="runtimes\linux-musl-x64\native\libunhwp.so" Pack="true" PackagePath="runtimes\linux-musl-x64\native\" Visible="false" />
     <!-- macOS x64 -->
     <None Include="runtimes\osx-x64\native\libunhwp.dylib" Pack="true" PackagePath="runtimes\osx-x64\native\" Visible="false" />
     <!-- macOS ARM64 -->
