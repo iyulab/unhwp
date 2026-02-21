@@ -1,77 +1,136 @@
-//! unhwp CLI - Convert HWP/HWPX documents to Markdown
+//! unhwp CLI - HWP/HWPX document extraction tool
 //!
-//! A command-line tool for converting Korean HWP/HWPX word processor documents
-//! into structured Markdown with extracted assets.
+//! A command-line tool for extracting content from HWP and HWPX files.
 
 mod update;
 
-use clap::{Parser, Subcommand};
-use colored::Colorize;
+use clap::{Parser, Subcommand, ValueEnum};
+use colored::*;
+use indicatif::{ProgressBar, ProgressStyle};
 use std::fs;
+use std::io::{self, Write};
 use std::path::PathBuf;
-use unhwp::{parse_file, render, Document, RenderOptions};
+use unhwp::{parse_file, render, RenderOptions, TableFallback};
 
-const VERSION: &str = env!("CARGO_PKG_VERSION");
-
+/// HWP/HWPX document extraction to Markdown, text, and JSON
 #[derive(Parser)]
-#[command(name = "unhwp")]
-#[command(author = "iyulab")]
-#[command(version = VERSION)]
-#[command(about = "Convert HWP/HWPX documents to Markdown", long_about = None)]
+#[command(
+    name = "unhwp",
+    author = "iyulab",
+    version,
+    about = "Extract content from HWP/HWPX documents",
+    long_about = "unhwp - High-performance HWP/HWPX document extraction tool.\n\n\
+                  Converts HWP and HWPX files to Markdown, plain text, or JSON.\n\n\
+                  Usage:\n  \
+                  unhwp <file>              Extract all formats to output directory\n  \
+                  unhwp <file> <output>     Extract to specified directory\n  \
+                  unhwp md <file>           Convert to Markdown only"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    /// Input HWP or HWPX file (for direct conversion without subcommand)
-    #[arg(value_name = "INPUT")]
+    /// Input file path (for default conversion)
+    #[arg(global = false)]
     input: Option<PathBuf>,
 
-    /// Output directory (default: <input>_output)
-    #[arg(value_name = "OUTPUT_DIR")]
-    output_dir: Option<PathBuf>,
+    /// Output directory (for default conversion)
+    #[arg(global = false)]
+    output: Option<PathBuf>,
 
-    /// Enable default cleanup for LLM training data
-    #[arg(long)]
-    cleanup: bool,
-
-    /// Enable minimal cleanup (essential normalization only)
-    #[arg(long)]
-    cleanup_minimal: bool,
-
-    /// Enable aggressive cleanup (maximum purification)
-    #[arg(long)]
-    cleanup_aggressive: bool,
-
-    /// Check for updates before extraction, update if available
-    #[arg(long)]
-    update: bool,
+    /// Apply text cleanup preset
+    #[arg(long, global = true)]
+    cleanup: Option<CleanupMode>,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Convert HWP/HWPX file to Markdown
+    /// Convert a document (default command - extracts all formats)
     Convert {
-        /// Input HWP or HWPX file
+        /// Input file path
         input: PathBuf,
 
-        /// Output directory (default: <input>_output)
+        /// Output directory (default: <filename>_output)
         #[arg(short, long)]
         output: Option<PathBuf>,
 
-        /// Enable default cleanup for LLM training data
+        /// Apply text cleanup
         #[arg(long)]
-        cleanup: bool,
-
-        /// Enable minimal cleanup (essential normalization only)
-        #[arg(long)]
-        cleanup_minimal: bool,
-
-        /// Enable aggressive cleanup (maximum purification)
-        #[arg(long)]
-        cleanup_aggressive: bool,
+        cleanup: Option<CleanupMode>,
     },
 
-    /// Check for updates and self-update if available
+    /// Convert a document to Markdown
+    #[command(visible_alias = "md")]
+    Markdown {
+        /// Input file path
+        input: PathBuf,
+
+        /// Output file path (default: stdout)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Include YAML frontmatter with metadata
+        #[arg(short, long)]
+        frontmatter: bool,
+
+        /// Table rendering mode
+        #[arg(long, default_value = "markdown")]
+        table_mode: TableMode,
+
+        /// Apply text cleanup
+        #[arg(long)]
+        cleanup: Option<CleanupMode>,
+
+        /// Maximum heading level (1-6, default: 4)
+        #[arg(long, default_value = "4")]
+        max_heading: u8,
+    },
+
+    /// Convert a document to plain text
+    Text {
+        /// Input file path
+        input: PathBuf,
+
+        /// Output file path (default: stdout)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Apply text cleanup
+        #[arg(long)]
+        cleanup: Option<CleanupMode>,
+    },
+
+    /// Convert a document to JSON
+    Json {
+        /// Input file path
+        input: PathBuf,
+
+        /// Output file path (default: stdout)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Output compact JSON (no indentation)
+        #[arg(long)]
+        compact: bool,
+    },
+
+    /// Show document information and metadata
+    Info {
+        /// Input file path
+        input: PathBuf,
+    },
+
+    /// Extract resources (images, media) from a document
+    Extract {
+        /// Input file path
+        input: PathBuf,
+
+        /// Output directory for resources
+        #[arg(short, long, default_value = ".")]
+        output: PathBuf,
+    },
+
+    /// Update unhwp to the latest version
     Update {
         /// Check only, don't install
         #[arg(long)]
@@ -86,297 +145,419 @@ enum Commands {
     Version,
 }
 
+/// Table rendering mode
+#[derive(Clone, ValueEnum)]
+enum TableMode {
+    /// Standard Markdown tables
+    Markdown,
+    /// HTML tables (for complex layouts)
+    Html,
+    /// Skip tables
+    Skip,
+}
+
+impl From<TableMode> for TableFallback {
+    fn from(mode: TableMode) -> Self {
+        match mode {
+            TableMode::Markdown => TableFallback::SimplifiedMarkdown,
+            TableMode::Html => TableFallback::Html,
+            TableMode::Skip => TableFallback::Skip,
+        }
+    }
+}
+
+/// Cleanup mode
+#[derive(Clone, ValueEnum)]
+enum CleanupMode {
+    /// No cleanup
+    None,
+    /// Minimal cleanup
+    Minimal,
+    /// Standard cleanup (default)
+    Standard,
+    /// Aggressive cleanup
+    Aggressive,
+}
+
+/// Check if we should perform background update check.
+/// Skip for update/version commands to avoid redundant checks.
+fn should_check_update(cli: &Cli) -> bool {
+    !matches!(
+        &cli.command,
+        Some(Commands::Update { .. }) | Some(Commands::Version)
+    )
+}
+
 fn main() {
     let cli = Cli::parse();
 
-    match cli.command {
-        Some(Commands::Convert {
+    // Start background update check (except for update/version commands)
+    let update_rx = if should_check_update(&cli) {
+        Some(update::check_update_async())
+    } else {
+        None
+    };
+
+    // Run the main command
+    let result = run(cli);
+
+    // Check for update result and show notification if available
+    if let Some(rx) = update_rx {
+        if let Some(update_result) = update::try_get_update_result(&rx) {
+            update::print_update_notification(&update_result);
+        }
+    }
+
+    // Handle errors
+    if let Err(e) = result {
+        eprintln!("{}: {}", "Error".red().bold(), e);
+        std::process::exit(1);
+    }
+}
+
+fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
+    // Handle default command (unhwp <file> [output])
+    if cli.command.is_none() {
+        if let Some(input) = cli.input {
+            return run_convert(&input, cli.output.as_ref(), cli.cleanup);
+        } else {
+            // No input provided, show help
+            use clap::CommandFactory;
+            Cli::command().print_help()?;
+            return Ok(());
+        }
+    }
+
+    match cli.command.unwrap() {
+        Commands::Convert {
             input,
             output,
             cleanup,
-            cleanup_minimal,
-            cleanup_aggressive,
-        }) => {
-            // Start async update check
-            let update_rx = update::check_update_async();
+        } => {
+            run_convert(&input, output.as_ref(), cleanup)?;
+        }
 
-            convert_document(&input, output, cleanup, cleanup_minimal, cleanup_aggressive);
+        Commands::Markdown {
+            input,
+            output,
+            frontmatter,
+            table_mode,
+            cleanup,
+            max_heading,
+        } => {
+            let pb = create_spinner("Parsing document...");
 
-            // Check for update result after conversion completes
-            if let Some(result) = update::try_get_update_result(&update_rx) {
-                update::print_update_notification(&result);
+            let doc = parse_file(&input)?;
+            pb.set_message("Rendering to Markdown...");
+
+            let mut options = RenderOptions::default()
+                .with_table_fallback(table_mode.into())
+                .with_max_heading_level(max_heading);
+
+            if frontmatter {
+                options = options.with_frontmatter();
+            }
+
+            apply_cleanup(&mut options, cleanup);
+
+            let markdown = render::render_markdown(&doc, &options)?;
+
+            pb.finish_and_clear();
+            write_output(output.as_ref(), &markdown)?;
+
+            if output.is_some() {
+                println!(
+                    "{} Converted to Markdown: {}",
+                    "✓".green().bold(),
+                    output.unwrap().display()
+                );
             }
         }
-        Some(Commands::Update { check, force }) => {
+
+        Commands::Text {
+            input,
+            output,
+            cleanup,
+        } => {
+            let pb = create_spinner("Parsing document...");
+
+            let doc = parse_file(&input)?;
+            pb.set_message("Extracting text...");
+
+            let text = doc.plain_text();
+
+            pb.finish_and_clear();
+            write_output(output.as_ref(), &text)?;
+
+            if output.is_some() {
+                println!(
+                    "{} Converted to text: {}",
+                    "✓".green().bold(),
+                    output.unwrap().display()
+                );
+            }
+
+            // Suppress unused variable warning - cleanup is accepted for API consistency
+            let _ = cleanup;
+        }
+
+        Commands::Json {
+            input,
+            output,
+            compact,
+        } => {
+            let pb = create_spinner("Parsing document...");
+
+            let doc = parse_file(&input)?;
+            pb.set_message("Rendering to JSON...");
+
+            let json = if compact {
+                serde_json::to_string(&doc)?
+            } else {
+                serde_json::to_string_pretty(&doc)?
+            };
+
+            pb.finish_and_clear();
+            write_output(output.as_ref(), &json)?;
+
+            if output.is_some() {
+                println!(
+                    "{} Converted to JSON: {}",
+                    "✓".green().bold(),
+                    output.unwrap().display()
+                );
+            }
+        }
+
+        Commands::Info { input } => {
+            let pb = create_spinner("Analyzing document...");
+
+            let format = unhwp::detect_format_from_path(&input)?;
+            let doc = parse_file(&input)?;
+
+            pb.finish_and_clear();
+
+            println!("{}", "Document Information".cyan().bold());
+            println!("{}", "─".repeat(40));
+            println!(
+                "{}: {}",
+                "File".bold(),
+                input.file_name().unwrap_or_default().to_string_lossy()
+            );
+            println!("{}: {:?}", "Format".bold(), format);
+            println!("{}: {}", "Sections".bold(), doc.sections.len());
+            println!("{}: {}", "Resources".bold(), doc.resources.len());
+
+            if let Some(ref title) = doc.metadata.title {
+                println!("{}: {}", "Title".bold(), title);
+            }
+            if let Some(ref author) = doc.metadata.author {
+                println!("{}: {}", "Author".bold(), author);
+            }
+            if let Some(ref created) = doc.metadata.created {
+                println!("{}: {}", "Created".bold(), created);
+            }
+            if let Some(ref modified) = doc.metadata.modified {
+                println!("{}: {}", "Modified".bold(), modified);
+            }
+            if doc.metadata.is_distribution {
+                println!("{}: {}", "Distribution".bold(), "Yes (DRM protected)");
+            }
+
+            let text = doc.plain_text();
+            let word_count = text.split_whitespace().count();
+            let char_count = text.len();
+            println!("\n{}", "Content Statistics".cyan().bold());
+            println!("{}", "─".repeat(40));
+            println!("{}: {}", "Words".bold(), word_count);
+            println!("{}: {}", "Characters".bold(), char_count);
+            println!("{}: {}", "Paragraphs".bold(), doc.paragraph_count());
+        }
+
+        Commands::Extract { input, output } => {
+            let pb = create_spinner("Extracting resources...");
+
+            let doc = parse_file(&input)?;
+
+            fs::create_dir_all(&output)?;
+
+            let mut count = 0;
+            for (name, resource) in &doc.resources {
+                let path = output.join(name);
+                fs::write(&path, &resource.data)?;
+                count += 1;
+            }
+
+            pb.finish_and_clear();
+
+            if count > 0 {
+                println!(
+                    "{} Extracted {} resources to {}",
+                    "✓".green().bold(),
+                    count,
+                    output.display()
+                );
+            } else {
+                println!("{} No resources found in document", "!".yellow().bold());
+            }
+        }
+
+        Commands::Update { check, force } => {
             if let Err(e) = update::run_update(check, force) {
-                eprintln!("{} {}", "Error:".red().bold(), e);
+                eprintln!("{}: {}", "Error".red().bold(), e);
                 std::process::exit(1);
             }
         }
-        Some(Commands::Version) => {
+
+        Commands::Version => {
             print_version();
         }
+    }
+
+    Ok(())
+}
+
+/// Run the default convert command - extracts all formats to output directory
+fn run_convert(
+    input: &PathBuf,
+    output: Option<&PathBuf>,
+    cleanup: Option<CleanupMode>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let pb = create_spinner("Parsing document...");
+
+    // Determine output directory
+    let output_dir = match output {
+        Some(p) => p.clone(),
         None => {
-            // Handle direct invocation without subcommand
-            if let Some(input) = cli.input {
-                // If --update flag is set, update first then extract
-                if cli.update {
-                    println!("{}", "Checking for updates before extraction...".cyan());
-                    if let Err(e) = update::run_update(false, false) {
-                        eprintln!("{} Update check failed: {}", "Warning:".yellow().bold(), e);
-                    }
-                    println!();
-                }
+            let stem = input
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            let parent = input.parent().unwrap_or(std::path::Path::new("."));
+            parent.join(format!("{}_output", stem))
+        }
+    };
 
-                // Start async update check (only if not already updating)
-                let update_rx = if !cli.update {
-                    Some(update::check_update_async())
-                } else {
-                    None
-                };
+    // Create output directory
+    fs::create_dir_all(&output_dir)?;
 
-                convert_document(
-                    &input,
-                    cli.output_dir,
-                    cli.cleanup,
-                    cli.cleanup_minimal,
-                    cli.cleanup_aggressive,
-                );
+    // Parse document
+    let doc = parse_file(input)?;
 
-                // Check for update result after conversion completes
-                if let Some(rx) = update_rx {
-                    if let Some(result) = update::try_get_update_result(&rx) {
-                        update::print_update_notification(&result);
-                    }
-                }
-            } else {
-                // No input provided, show help
-                eprintln!("{}", "Usage: unhwp <INPUT> [OUTPUT_DIR] [OPTIONS]".yellow());
-                eprintln!();
-                eprintln!("Try 'unhwp --help' for more information.");
-                std::process::exit(1);
-            }
+    // Prepare render options
+    let mut options = RenderOptions::default().with_frontmatter();
+
+    apply_cleanup(&mut options, cleanup);
+
+    // Generate Markdown
+    pb.set_message("Generating Markdown...");
+    let markdown = render::render_markdown(&doc, &options)?;
+    let md_path = output_dir.join("extract.md");
+    fs::write(&md_path, &markdown)?;
+
+    // Generate plain text
+    pb.set_message("Generating text...");
+    let text = doc.plain_text();
+    let txt_path = output_dir.join("extract.txt");
+    fs::write(&txt_path, &text)?;
+
+    // Generate JSON
+    pb.set_message("Generating JSON...");
+    let json = serde_json::to_string_pretty(&doc)?;
+    let json_path = output_dir.join("content.json");
+    fs::write(&json_path, &json)?;
+
+    // Extract resources
+    let mut image_count = 0;
+    if !doc.resources.is_empty() {
+        pb.set_message("Extracting resources...");
+        let images_dir = output_dir.join("images");
+        fs::create_dir_all(&images_dir)?;
+
+        for (name, resource) in &doc.resources {
+            fs::write(images_dir.join(name), &resource.data)?;
+            image_count += 1;
+        }
+    }
+
+    pb.finish_and_clear();
+
+    // Print summary
+    println!("{}", "Conversion Complete".green().bold());
+    println!("{}", "─".repeat(40));
+    println!("{}: {}", "Output".bold(), output_dir.display());
+    println!("  {} extract.md", "✓".green());
+    println!("  {} extract.txt", "✓".green());
+    println!("  {} content.json", "✓".green());
+    if image_count > 0 {
+        println!("  {} images/ ({} files)", "✓".green(), image_count);
+    }
+
+    // Print statistics
+    let word_count = text.split_whitespace().count();
+    println!("\n{}", "Statistics".cyan().bold());
+    println!("{}", "─".repeat(40));
+    println!("{}: {}", "Sections".bold(), doc.sections.len());
+    println!("{}: {}", "Words".bold(), word_count);
+    println!("{}: {}", "Resources".bold(), image_count);
+
+    Ok(())
+}
+
+fn apply_cleanup(options: &mut RenderOptions, cleanup: Option<CleanupMode>) {
+    if let Some(mode) = cleanup {
+        match mode {
+            CleanupMode::None => {}
+            CleanupMode::Minimal => *options = options.clone().with_minimal_cleanup(),
+            CleanupMode::Standard => *options = options.clone().with_cleanup(),
+            CleanupMode::Aggressive => *options = options.clone().with_aggressive_cleanup(),
         }
     }
 }
 
 fn print_version() {
-    println!("{} {}", "unhwp".green().bold(), VERSION);
-    println!("A high-performance HWP/HWPX to Markdown converter");
+    println!("{} {}", "unhwp".green().bold(), env!("CARGO_PKG_VERSION"));
+    println!("High-performance HWP/HWPX document extraction to Markdown");
     println!();
+    println!("Supported formats: HWP 5.0, HWPX, HWP 3.x");
     println!("Repository: https://github.com/iyulab/unhwp");
 }
 
-fn convert_document(
-    input: &PathBuf,
-    output: Option<PathBuf>,
-    cleanup: bool,
-    cleanup_minimal: bool,
-    cleanup_aggressive: bool,
-) {
-    if !input.exists() {
-        eprintln!(
-            "{} Input file not found: {}",
-            "Error:".red().bold(),
-            input.display()
-        );
-        std::process::exit(1);
-    }
-
-    // Determine output directory
-    let output_dir = output.unwrap_or_else(|| {
-        let stem = input.file_stem().unwrap_or_default().to_string_lossy();
-        input
-            .parent()
-            .unwrap_or(std::path::Path::new("."))
-            .join(format!("{}_output", stem))
-    });
-
-    // Create output directory
-    if let Err(e) = fs::create_dir_all(&output_dir) {
-        eprintln!(
-            "{} Failed to create output directory: {}",
-            "Error:".red().bold(),
-            e
-        );
-        std::process::exit(1);
-    }
-
-    // Create images subdirectory
-    let images_dir = output_dir.join("images");
-    if let Err(e) = fs::create_dir_all(&images_dir) {
-        eprintln!(
-            "{} Failed to create images directory: {}",
-            "Error:".red().bold(),
-            e
-        );
-        std::process::exit(1);
-    }
-
-    println!("{} {}", "Parsing:".cyan().bold(), input.display());
-
-    // Parse the document
-    let document = match parse_file(input) {
-        Ok(doc) => doc,
-        Err(e) => {
-            eprintln!("{} Failed to parse document: {}", "Error:".red().bold(), e);
-            std::process::exit(1);
-        }
-    };
-
-    // Extract images
-    let mut image_count = 0;
-    for (name, resource) in &document.resources {
-        let image_path = images_dir.join(name);
-        if let Err(e) = fs::write(&image_path, &resource.data) {
-            eprintln!(
-                "{} Failed to write image {}: {}",
-                "Warning:".yellow().bold(),
-                name,
-                e
-            );
-        } else {
-            image_count += 1;
-        }
-    }
-
-    // Render options
-    let mut options = RenderOptions::default()
-        .with_image_dir("images/")
-        .with_image_prefix("images/")
-        .with_frontmatter();
-
-    // Apply cleanup options
-    if cleanup_aggressive {
-        options = options.with_aggressive_cleanup();
-        println!("{} aggressive mode enabled", "Cleanup:".cyan().bold());
-    } else if cleanup_minimal {
-        options = options.with_minimal_cleanup();
-        println!("{} minimal mode enabled", "Cleanup:".cyan().bold());
-    } else if cleanup {
-        options = options.with_cleanup();
-        println!("{} default mode enabled", "Cleanup:".cyan().bold());
-    }
-
-    // Generate outputs
-    let markdown = match render::render_markdown(&document, &options) {
-        Ok(md) => md,
-        Err(e) => {
-            eprintln!("{} Failed to render markdown: {}", "Error:".red().bold(), e);
-            std::process::exit(1);
-        }
-    };
-
-    let plain_text = extract_plain_text(&document);
-    let content_json = match serde_json::to_string_pretty(&document) {
-        Ok(json) => json,
-        Err(e) => {
-            eprintln!(
-                "{} Failed to serialize document to JSON: {}",
-                "Warning:".yellow().bold(),
-                e
-            );
-            String::new()
-        }
-    };
-
-    // Write extract.md
-    let md_path = output_dir.join("extract.md");
-    if let Err(e) = fs::write(&md_path, &markdown) {
-        eprintln!(
-            "{} Failed to write extract.md: {}",
-            "Error:".red().bold(),
-            e
-        );
-        std::process::exit(1);
-    }
-
-    // Write extract.txt
-    let txt_path = output_dir.join("extract.txt");
-    if let Err(e) = fs::write(&txt_path, &plain_text) {
-        eprintln!(
-            "{} Failed to write extract.txt: {}",
-            "Error:".red().bold(),
-            e
-        );
-        std::process::exit(1);
-    }
-
-    // Write content.json
-    if !content_json.is_empty() {
-        let json_path = output_dir.join("content.json");
-        if let Err(e) = fs::write(&json_path, &content_json) {
-            eprintln!(
-                "{} Failed to write content.json: {}",
-                "Warning:".yellow().bold(),
-                e
-            );
-        }
-    }
-
-    println!();
-    println!("{} {}", "Output:".green().bold(), output_dir.display());
-    println!("  {} extract.md ({} bytes)", "→".cyan(), markdown.len());
-    println!("  {} extract.txt ({} bytes)", "→".cyan(), plain_text.len());
-    if !content_json.is_empty() {
-        println!(
-            "  {} content.json ({} bytes)",
-            "→".cyan(),
-            content_json.len()
-        );
-    }
-    println!("  {} images/ ({} files)", "→".cyan(), image_count);
-    println!("{}", "Done!".green().bold());
+fn create_spinner(message: &str) -> ProgressBar {
+    let pb = ProgressBar::new_spinner();
+    pb.set_style(
+        ProgressStyle::default_spinner()
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+            .template("{spinner:.blue} {msg}")
+            .unwrap(),
+    );
+    pb.set_message(message.to_string());
+    pb.enable_steady_tick(std::time::Duration::from_millis(100));
+    pb
 }
 
-/// Extract plain text from document (no formatting)
-fn extract_plain_text(document: &Document) -> String {
-    use unhwp::model::{Block, InlineContent};
-
-    fn extract_paragraph_text(paragraph: &unhwp::model::Paragraph) -> String {
-        let mut text = String::new();
-        for inline in &paragraph.content {
-            match inline {
-                InlineContent::Text(run) => text.push_str(&run.text),
-                InlineContent::LineBreak => text.push('\n'),
-                InlineContent::Link {
-                    text: link_text, ..
-                } => text.push_str(link_text),
-                InlineContent::Footnote(note) => {
-                    text.push('[');
-                    text.push_str(note);
-                    text.push(']');
-                }
-                _ => {}
-            }
+fn write_output(path: Option<&PathBuf>, content: &str) -> Result<(), Box<dyn std::error::Error>> {
+    match path {
+        Some(p) => {
+            fs::write(p, content)?;
         }
-        text
-    }
-
-    let mut text = String::new();
-
-    for section in &document.sections {
-        for block in &section.content {
-            match block {
-                Block::Paragraph(paragraph) => {
-                    text.push_str(&extract_paragraph_text(paragraph));
-                    text.push('\n');
-                }
-                Block::Table(table) => {
-                    for row in &table.rows {
-                        for cell in &row.cells {
-                            for para in &cell.content {
-                                text.push_str(&extract_paragraph_text(para));
-                                text.push('\t');
-                            }
-                        }
-                        text.push('\n');
-                    }
-                }
-            }
+        None => {
+            let stdout = io::stdout();
+            let mut handle = stdout.lock();
+            writeln!(handle, "{}", content)?;
         }
-        text.push('\n');
     }
+    Ok(())
+}
 
-    text.trim().to_string()
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cli_parse() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
+    }
 }

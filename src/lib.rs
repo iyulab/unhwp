@@ -38,10 +38,12 @@ pub mod cleanup;
 pub mod detect;
 pub mod equation;
 pub mod error;
-pub mod ffi;
 pub mod model;
 pub mod parse_options;
 pub mod render;
+
+#[cfg(feature = "ffi")]
+pub mod ffi;
 
 #[cfg(feature = "hwp5")]
 pub mod hwp5;
