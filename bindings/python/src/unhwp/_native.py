@@ -132,17 +132,19 @@ _lib.unhwp_parse_bytes.restype = ctypes.c_void_p
 _lib.unhwp_free_document.argtypes = [ctypes.c_void_p]
 _lib.unhwp_free_document.restype = None
 
+# Functions returning heap-allocated strings use c_void_p (not c_char_p)
+# so we retain the raw pointer for proper unhwp_free_string() calls.
 _lib.unhwp_to_markdown.argtypes = [ctypes.c_void_p, ctypes.c_int]
-_lib.unhwp_to_markdown.restype = ctypes.c_char_p
+_lib.unhwp_to_markdown.restype = ctypes.c_void_p
 
 _lib.unhwp_to_text.argtypes = [ctypes.c_void_p]
-_lib.unhwp_to_text.restype = ctypes.c_char_p
+_lib.unhwp_to_text.restype = ctypes.c_void_p
 
 _lib.unhwp_to_json.argtypes = [ctypes.c_void_p, ctypes.c_int]
-_lib.unhwp_to_json.restype = ctypes.c_char_p
+_lib.unhwp_to_json.restype = ctypes.c_void_p
 
 _lib.unhwp_plain_text.argtypes = [ctypes.c_void_p]
-_lib.unhwp_plain_text.restype = ctypes.c_char_p
+_lib.unhwp_plain_text.restype = ctypes.c_void_p
 
 _lib.unhwp_section_count.argtypes = [ctypes.c_void_p]
 _lib.unhwp_section_count.restype = ctypes.c_int
@@ -151,19 +153,19 @@ _lib.unhwp_resource_count.argtypes = [ctypes.c_void_p]
 _lib.unhwp_resource_count.restype = ctypes.c_int
 
 _lib.unhwp_get_title.argtypes = [ctypes.c_void_p]
-_lib.unhwp_get_title.restype = ctypes.c_char_p
+_lib.unhwp_get_title.restype = ctypes.c_void_p
 
 _lib.unhwp_get_author.argtypes = [ctypes.c_void_p]
-_lib.unhwp_get_author.restype = ctypes.c_char_p
+_lib.unhwp_get_author.restype = ctypes.c_void_p
 
-_lib.unhwp_free_string.argtypes = [ctypes.c_char_p]
+_lib.unhwp_free_string.argtypes = [ctypes.c_void_p]
 _lib.unhwp_free_string.restype = None
 
 _lib.unhwp_get_resource_ids.argtypes = [ctypes.c_void_p]
-_lib.unhwp_get_resource_ids.restype = ctypes.c_char_p
+_lib.unhwp_get_resource_ids.restype = ctypes.c_void_p
 
 _lib.unhwp_get_resource_info.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
-_lib.unhwp_get_resource_info.restype = ctypes.c_char_p
+_lib.unhwp_get_resource_info.restype = ctypes.c_void_p
 
 _lib.unhwp_get_resource_data.argtypes = [
     ctypes.c_void_p,
@@ -194,40 +196,6 @@ UNHWP_ERR_FILE_NOT_FOUND = 1
 UNHWP_ERR_PARSE = 2
 UNHWP_ERR_RENDER = 3
 UNHWP_ERR_UNSUPPORTED = 4
-
-# Type alias for result pointer (opaque handle)
-UnhwpResultPtr = ctypes.c_void_p
-
-
-class UnhwpRenderOptions(ctypes.Structure):
-    """Render options structure passed to native library."""
-    _fields_ = [
-        ("include_frontmatter", ctypes.c_bool),
-        ("image_path_prefix", ctypes.c_char_p),
-        ("table_fallback", ctypes.c_int),
-        ("preserve_line_breaks", ctypes.c_bool),
-        ("escape_special_chars", ctypes.c_bool),
-    ]
-
-
-class UnhwpCleanupOptions(ctypes.Structure):
-    """Cleanup options structure passed to native library."""
-    _fields_ = [
-        ("enabled", ctypes.c_bool),
-        ("preset", ctypes.c_int),
-        ("detect_mojibake", ctypes.c_bool),
-        ("preserve_frontmatter", ctypes.c_bool),
-    ]
-
-
-class UnhwpImage(ctypes.Structure):
-    """Image structure returned from native library."""
-    _fields_ = [
-        ("name", ctypes.c_char_p),
-        ("data", ctypes.POINTER(ctypes.c_uint8)),
-        ("data_len", ctypes.c_size_t),
-    ]
-
 
 # Public alias for the loaded library
 lib = _lib

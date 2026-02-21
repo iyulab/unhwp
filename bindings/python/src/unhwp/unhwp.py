@@ -5,10 +5,10 @@ Provides a Pythonic interface to the unhwp native library.
 """
 
 import ctypes
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Union, Iterator
-from contextlib import contextmanager
 
 from . import _native as native
 
@@ -59,23 +59,23 @@ class UnsupportedFormatError(UnhwpError):
     pass
 
 
-_ERROR_MAP = {
-    native.UNHWP_ERR_FILE_NOT_FOUND: FileNotFoundError,
-    native.UNHWP_ERR_PARSE: ParseError,
-    native.UNHWP_ERR_RENDER: RenderError,
-    native.UNHWP_ERR_UNSUPPORTED: UnsupportedFormatError,
-}
+def _get_last_error() -> str:
+    """Get the last error message from the native library."""
+    err = native.lib.unhwp_last_error()
+    if err:
+        return err.decode("utf-8")
+    return "Unknown error"
 
 
-def _check_error(result_ptr: native.UnhwpResultPtr) -> None:
-    """Check for errors in the result and raise appropriate exception."""
-    if result_ptr is None:
-        raise UnhwpError("Failed to parse document: unknown error")
+def _ptr_to_string(ptr: Optional[int]) -> Optional[str]:
+    """Convert a c_void_p (int) to a Python string via UTF-8 decoding.
 
-    error = native.lib.unhwp_result_get_error(result_ptr)
-    if error:
-        error_msg = error.decode("utf-8")
-        raise ParseError(error_msg)
+    Returns None if the pointer is null/None.
+    The caller is responsible for freeing the pointer after this call.
+    """
+    if not ptr:
+        return None
+    return ctypes.string_at(ptr).decode("utf-8")
 
 
 # =============================================================================
@@ -102,14 +102,16 @@ class RenderOptions:
     preserve_line_breaks: bool = False
     escape_special_chars: bool = True
 
-    def _to_native(self) -> native.UnhwpRenderOptions:
-        opts = native.UnhwpRenderOptions()
-        opts.include_frontmatter = self.include_frontmatter
-        opts.image_path_prefix = self.image_path_prefix.encode("utf-8") if self.image_path_prefix else None
-        opts.table_fallback = self.table_fallback
-        opts.preserve_line_breaks = self.preserve_line_breaks
-        opts.escape_special_chars = self.escape_special_chars
-        return opts
+    def _to_flags(self) -> int:
+        """Convert to native flags bitmask."""
+        flags = 0
+        if self.include_frontmatter:
+            flags |= native.UNHWP_FLAG_FRONTMATTER
+        if self.escape_special_chars:
+            flags |= native.UNHWP_FLAG_ESCAPE_SPECIAL
+        if self.preserve_line_breaks:
+            flags |= native.UNHWP_FLAG_PARAGRAPH_SPACING
+        return flags
 
 
 @dataclass
@@ -140,14 +142,6 @@ class CleanupOptions:
         """Create disabled cleanup options."""
         return cls(enabled=False)
 
-    def _to_native(self) -> native.UnhwpCleanupOptions:
-        opts = native.UnhwpCleanupOptions()
-        opts.enabled = self.enabled
-        opts.preset = self.preset
-        opts.detect_mojibake = self.detect_mojibake
-        opts.preserve_frontmatter = self.preserve_frontmatter
-        return opts
-
 
 class ParseResult:
     """
@@ -164,10 +158,10 @@ class ParseResult:
         ...         img.save(f"output/{img.name}")
     """
 
-    def __init__(self, result_ptr: native.UnhwpResultPtr):
-        self._ptr = result_ptr
+    def __init__(self, handle: int, flags: int = 0):
+        self._handle = handle
+        self._flags = flags
         self._closed = False
-        _check_error(result_ptr)
 
     def __enter__(self) -> "ParseResult":
         return self
@@ -180,9 +174,9 @@ class ParseResult:
 
     def close(self) -> None:
         """Release native resources."""
-        if not self._closed and self._ptr:
-            native.lib.unhwp_result_free(self._ptr)
-            self._ptr = None
+        if not self._closed and self._handle:
+            native.lib.unhwp_free_document(self._handle)
+            self._handle = None
             self._closed = True
 
     def _ensure_open(self) -> None:
@@ -193,78 +187,166 @@ class ParseResult:
     def markdown(self) -> str:
         """Get the rendered Markdown content."""
         self._ensure_open()
-        result = native.lib.unhwp_result_get_markdown(self._ptr)
-        return result.decode("utf-8") if result else ""
+        ptr = native.lib.unhwp_to_markdown(self._handle, self._flags)
+        if not ptr:
+            raise RenderError(f"Failed to convert to markdown: {_get_last_error()}")
+        try:
+            return _ptr_to_string(ptr) or ""
+        finally:
+            native.lib.unhwp_free_string(ptr)
 
     @property
     def text(self) -> str:
         """Get the plain text content."""
         self._ensure_open()
-        result = native.lib.unhwp_result_get_text(self._ptr)
-        return result.decode("utf-8") if result else ""
+        ptr = native.lib.unhwp_to_text(self._handle)
+        if not ptr:
+            raise RenderError(f"Failed to convert to text: {_get_last_error()}")
+        try:
+            return _ptr_to_string(ptr) or ""
+        finally:
+            native.lib.unhwp_free_string(ptr)
 
     @property
-    def raw_content(self) -> str:
-        """Get the raw content (without cleanup)."""
+    def plain_text(self) -> str:
+        """Get the plain text content (faster extraction)."""
         self._ensure_open()
-        result = native.lib.unhwp_result_get_raw_content(self._ptr)
-        return result.decode("utf-8") if result else ""
+        ptr = native.lib.unhwp_plain_text(self._handle)
+        if not ptr:
+            raise RenderError(f"Failed to get plain text: {_get_last_error()}")
+        try:
+            return _ptr_to_string(ptr) or ""
+        finally:
+            native.lib.unhwp_free_string(ptr)
+
+    @property
+    def json(self) -> str:
+        """Get the JSON representation."""
+        self._ensure_open()
+        ptr = native.lib.unhwp_to_json(self._handle, native.UNHWP_JSON_PRETTY)
+        if not ptr:
+            raise RenderError(f"Failed to convert to JSON: {_get_last_error()}")
+        try:
+            return _ptr_to_string(ptr) or ""
+        finally:
+            native.lib.unhwp_free_string(ptr)
 
     @property
     def section_count(self) -> int:
         """Get the number of sections in the document."""
         self._ensure_open()
-        return native.lib.unhwp_result_get_section_count(self._ptr)
+        count = native.lib.unhwp_section_count(self._handle)
+        if count < 0:
+            raise UnhwpError(f"Failed to get section count: {_get_last_error()}")
+        return count
 
     @property
     def paragraph_count(self) -> int:
-        """Get the number of paragraphs in the document."""
+        """Get the number of paragraphs in the document.
+
+        Note: This returns section count as the native API does not expose
+        a separate paragraph count.
+        """
         self._ensure_open()
-        return native.lib.unhwp_result_get_paragraph_count(self._ptr)
+        return self.section_count
 
     @property
     def is_distribution(self) -> bool:
         """Check if the document is a distribution (protected) document.
 
-        Distribution documents are protected by DRM and may have restrictions
-        on editing, copying, and printing.
+        Note: Not available in current native API. Always returns False.
         """
-        self._ensure_open()
-        return native.lib.unhwp_result_is_distribution(self._ptr) == 1
+        return False
 
     @property
     def image_count(self) -> int:
-        """Get the number of images in the document."""
+        """Get the number of images/resources in the document."""
         self._ensure_open()
-        return native.lib.unhwp_result_get_image_count(self._ptr)
+        count = native.lib.unhwp_resource_count(self._handle)
+        if count < 0:
+            raise UnhwpError(f"Failed to get resource count: {_get_last_error()}")
+        return count
+
+    @property
+    def title(self) -> Optional[str]:
+        """Get the document title, if set."""
+        self._ensure_open()
+        ptr = native.lib.unhwp_get_title(self._handle)
+        if not ptr:
+            return None
+        try:
+            return _ptr_to_string(ptr)
+        finally:
+            native.lib.unhwp_free_string(ptr)
+
+    @property
+    def author(self) -> Optional[str]:
+        """Get the document author, if set."""
+        self._ensure_open()
+        ptr = native.lib.unhwp_get_author(self._handle)
+        if not ptr:
+            return None
+        try:
+            return _ptr_to_string(ptr)
+        finally:
+            native.lib.unhwp_free_string(ptr)
 
     @property
     def images(self) -> List[Image]:
         """Get all images from the document."""
         self._ensure_open()
-        count = self.image_count
         images = []
 
-        for i in range(count):
-            img_struct = native.UnhwpImage()
-            if native.lib.unhwp_result_get_image(self._ptr, i, ctypes.byref(img_struct)) == 0:
-                name = img_struct.name.decode("utf-8") if img_struct.name else f"image_{i}"
-                data = bytes(img_struct.data[:img_struct.data_len])
-                images.append(Image(name=name, data=data))
+        # Get resource IDs
+        ids_ptr = native.lib.unhwp_get_resource_ids(self._handle)
+        if not ids_ptr:
+            return images
+
+        try:
+            ids_json = _ptr_to_string(ids_ptr) or "[]"
+        finally:
+            native.lib.unhwp_free_string(ids_ptr)
+
+        resource_ids = json.loads(ids_json)
+
+        for resource_id in resource_ids:
+            rid_bytes = resource_id.encode("utf-8")
+            out_len = ctypes.c_size_t(0)
+            data_ptr = native.lib.unhwp_get_resource_data(
+                self._handle, rid_bytes, ctypes.byref(out_len)
+            )
+            if data_ptr and out_len.value > 0:
+                data = bytes(data_ptr[:out_len.value])
+                native.lib.unhwp_free_bytes(data_ptr, out_len)
+                images.append(Image(name=resource_id, data=data))
 
         return images
 
     def iter_images(self) -> Iterator[Image]:
         """Iterate over images in the document."""
         self._ensure_open()
-        count = self.image_count
 
-        for i in range(count):
-            img_struct = native.UnhwpImage()
-            if native.lib.unhwp_result_get_image(self._ptr, i, ctypes.byref(img_struct)) == 0:
-                name = img_struct.name.decode("utf-8") if img_struct.name else f"image_{i}"
-                data = bytes(img_struct.data[:img_struct.data_len])
-                yield Image(name=name, data=data)
+        ids_ptr = native.lib.unhwp_get_resource_ids(self._handle)
+        if not ids_ptr:
+            return
+
+        try:
+            ids_json = _ptr_to_string(ids_ptr) or "[]"
+        finally:
+            native.lib.unhwp_free_string(ids_ptr)
+
+        resource_ids = json.loads(ids_json)
+
+        for resource_id in resource_ids:
+            rid_bytes = resource_id.encode("utf-8")
+            out_len = ctypes.c_size_t(0)
+            data_ptr = native.lib.unhwp_get_resource_data(
+                self._handle, rid_bytes, ctypes.byref(out_len)
+            )
+            if data_ptr and out_len.value > 0:
+                data = bytes(data_ptr[:out_len.value])
+                native.lib.unhwp_free_bytes(data_ptr, out_len)
+                yield Image(name=resource_id, data=data)
 
 
 # =============================================================================
@@ -279,15 +361,8 @@ def version() -> str:
 
 def supported_formats() -> str:
     """Get the supported document formats as a descriptive string."""
-    flags = native.lib.unhwp_supported_formats()
-    formats = []
-    if flags & 0x01:
-        formats.append("HWP 5.0")
-    if flags & 0x02:
-        formats.append("HWPX")
-    if flags & 0x04:
-        formats.append("HWP 3.x")
-    return ", ".join(formats) if formats else "None"
+    # The native library supports HWP 5.0 and HWPX
+    return "HWP 5.0, HWPX"
 
 
 def detect_format(path: Union[str, Path]) -> int:
@@ -305,8 +380,21 @@ def detect_format(path: Union[str, Path]) -> int:
         >>> if fmt == unhwp.FORMAT_HWP5:
         ...     print("HWP 5.0 format")
     """
-    path_bytes = str(path).encode("utf-8")
-    return native.lib.unhwp_detect_format(path_bytes)
+    path_obj = Path(str(path))
+
+    # Return UNKNOWN for nonexistent files
+    if not path_obj.exists():
+        return FORMAT_UNKNOWN
+
+    # The native API does not expose a dedicated format detection function.
+    # Detect based on file extension.
+    ext = path_obj.suffix.lower()
+    if ext == ".hwp":
+        return FORMAT_HWP5
+    elif ext == ".hwpx":
+        return FORMAT_HWPX
+    else:
+        return FORMAT_UNKNOWN
 
 
 def format_name(fmt: int) -> str:
@@ -335,10 +423,13 @@ def parse(
         ...     print(f"Images: {result.image_count}")
     """
     path_bytes = str(path).encode("utf-8")
-    opts = (render_options or RenderOptions())._to_native()
+    flags = (render_options or RenderOptions())._to_flags()
 
-    result_ptr = native.lib.unhwp_parse(path_bytes, opts)
-    return ParseResult(result_ptr)
+    handle = native.lib.unhwp_parse_file(path_bytes)
+    if not handle:
+        raise ParseError(f"Failed to parse {path}: {_get_last_error()}")
+
+    return ParseResult(handle, flags)
 
 
 def parse_bytes(
@@ -361,11 +452,14 @@ def parse_bytes(
         >>> with unhwp.parse_bytes(data) as result:
         ...     print(result.markdown)
     """
-    opts = (render_options or RenderOptions())._to_native()
+    flags = (render_options or RenderOptions())._to_flags()
     data_ptr = (ctypes.c_uint8 * len(data)).from_buffer_copy(data)
 
-    result_ptr = native.lib.unhwp_parse_bytes(data_ptr, len(data), opts)
-    return ParseResult(result_ptr)
+    handle = native.lib.unhwp_parse_bytes(data_ptr, len(data))
+    if not handle:
+        raise ParseError(f"Failed to parse bytes: {_get_last_error()}")
+
+    return ParseResult(handle, flags)
 
 
 def to_markdown(path: Union[str, Path]) -> str:
@@ -385,13 +479,8 @@ def to_markdown(path: Union[str, Path]) -> str:
         >>> markdown = unhwp.to_markdown("document.hwp")
         >>> print(markdown)
     """
-    path_bytes = str(path).encode("utf-8")
-    result = native.lib.unhwp_to_markdown(path_bytes)
-
-    if result is None:
-        raise ParseError(f"Failed to convert {path} to markdown")
-
-    return result.decode("utf-8")
+    with parse(path) as result:
+        return result.markdown
 
 
 def to_markdown_with_cleanup(
@@ -401,9 +490,13 @@ def to_markdown_with_cleanup(
     """
     Convert an HWP/HWPX document to Markdown with cleanup.
 
+    Note: Cleanup is performed client-side as the native library does not
+    expose a dedicated cleanup API. Currently returns the same result as
+    to_markdown().
+
     Args:
         path: Path to the document file.
-        cleanup_options: Optional cleanup options.
+        cleanup_options: Optional cleanup options (reserved for future use).
 
     Returns:
         Cleaned Markdown content as a string.
@@ -414,14 +507,8 @@ def to_markdown_with_cleanup(
         ...     cleanup_options=unhwp.CleanupOptions.aggressive()
         ... )
     """
-    path_bytes = str(path).encode("utf-8")
-    opts = (cleanup_options or CleanupOptions())._to_native()
-    result = native.lib.unhwp_to_markdown_with_cleanup(path_bytes, opts)
-
-    if result is None:
-        raise ParseError(f"Failed to convert {path} to markdown")
-
-    return result.decode("utf-8")
+    # The native library does not have a cleanup API; return markdown as-is
+    return to_markdown(path)
 
 
 def extract_text(path: Union[str, Path]) -> str:
@@ -438,10 +525,5 @@ def extract_text(path: Union[str, Path]) -> str:
         >>> text = unhwp.extract_text("document.hwp")
         >>> print(text)
     """
-    path_bytes = str(path).encode("utf-8")
-    result = native.lib.unhwp_extract_text(path_bytes)
-
-    if result is None:
-        raise ParseError(f"Failed to extract text from {path}")
-
-    return result.decode("utf-8")
+    with parse(path) as result:
+        return result.text

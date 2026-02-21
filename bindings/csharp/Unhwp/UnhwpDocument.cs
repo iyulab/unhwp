@@ -380,12 +380,23 @@ public class UnhwpDocument : IDisposable
             throw new ObjectDisposedException(nameof(UnhwpDocument));
     }
 
+    /// <summary>
+    /// Releases all resources used by this <see cref="UnhwpDocument"/> instance.
+    /// </summary>
     public void Dispose()
     {
         Dispose(true);
         GC.SuppressFinalize(this);
     }
 
+    /// <summary>
+    /// Releases the unmanaged resources used by this <see cref="UnhwpDocument"/>
+    /// and optionally releases the managed resources.
+    /// </summary>
+    /// <param name="disposing">
+    /// <see langword="true"/> to release both managed and unmanaged resources;
+    /// <see langword="false"/> to release only unmanaged resources.
+    /// </param>
     protected virtual void Dispose(bool disposing)
     {
         if (!_disposed)
@@ -399,6 +410,10 @@ public class UnhwpDocument : IDisposable
         }
     }
 
+    /// <summary>
+    /// Finalizer that ensures the native document handle is freed
+    /// if <see cref="Dispose()"/> was not called explicitly.
+    /// </summary>
     ~UnhwpDocument()
     {
         Dispose(false);
