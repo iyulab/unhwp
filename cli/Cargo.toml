@@ -1,6 +1,6 @@
 [package]
 name = "unhwp-cli"
-version = "0.1.17"
+version = "0.2.0"
 edition = "2021"
 authors = ["iyulab"]
 description = "Command-line tool for converting HWP/HWPX documents to Markdown"
@@ -15,7 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Core library
-unhwp = { version = "0.1", path = ".." }
+unhwp = { version = "0.2", path = ".." }
 
 # CLI argument parsing
 clap = { version = "4.5", features = ["derive"] }

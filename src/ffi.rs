@@ -1,1090 +1,700 @@
-#![allow(clippy::not_unsafe_ptr_arg_deref)]
-//! # FFI Bindings for C# Interop
+//! C-ABI Foreign Function Interface for unhwp.
 //!
-//! This module provides C-compatible FFI functions for integrating unhwp
-//! with C#, .NET, and other languages via P/Invoke.
+//! This module provides C-compatible bindings for using unhwp from other languages
+//! such as C, C++, C#, Python, and any language with C FFI support.
 //!
-//! # Safety
-//! All functions that accept raw pointers require the caller to ensure
-//! the pointers are valid. This is enforced by the FFI contract.
+//! # Memory Management
 //!
-//! ## Usage Pattern
+//! All strings returned by this library must be freed using `unhwp_free_string`.
+//! All document handles must be freed using `unhwp_free_document`.
+//!
+//! # Error Handling
+//!
+//! Functions that can fail return a null pointer on error. Use `unhwp_last_error`
+//! to retrieve the error message.
+//!
+//! # Example (C)
 //!
 //! ```c
-//! // Parse document
-//! UnhwpResult* result = unhwp_parse("document.hwp", NULL);
+//! #include <stdio.h>
+//! #include "unhwp.h"
 //!
-//! // Access results
-//! const char* markdown = unhwp_result_get_markdown(result);
-//! const char* text = unhwp_result_get_text(result);
+//! int main() {
+//!     UnhwpDocument* doc = unhwp_parse_file("document.hwp");
+//!     if (!doc) {
+//!         const char* error = unhwp_last_error();
+//!         fprintf(stderr, "Error: %s\n", error);
+//!         return 1;
+//!     }
 //!
-//! // Access images
-//! int count = unhwp_result_get_image_count(result);
-//! for (int i = 0; i < count; i++) {
-//!     UnhwpImage img = unhwp_result_get_image(result, i);
-//!     // use img.name, img.data, img.data_len
+//!     char* markdown = unhwp_to_markdown(doc, 0);
+//!     if (markdown) {
+//!         printf("%s\n", markdown);
+//!         unhwp_free_string(markdown);
+//!     }
+//!
+//!     unhwp_free_document(doc);
+//!     return 0;
 //! }
-//!
-//! // Free when done
-//! unhwp_result_free(result);
 //! ```
-//!
-//! ## Memory Management
-//!
-//! - Call `unhwp_result_free()` to free the result and all associated data.
-//! - Call `unhwp_free_string()` for strings from simple functions.
 
-use std::ffi::{CStr, CString};
-use std::os::raw::c_char;
+use std::cell::RefCell;
+use std::ffi::{c_char, c_int, CStr, CString};
+use std::panic::catch_unwind;
 use std::ptr;
 
-use crate::cleanup::CleanupOptions;
 use crate::model::Document;
 use crate::render::RenderOptions;
-use crate::{detect_format_from_path, parse_file, render, FormatType};
 
-// ============================================================================
-// Result Codes
-// ============================================================================
-
-/// Success
-pub const UNHWP_OK: i32 = 0;
-/// File not found
-pub const UNHWP_ERR_FILE_NOT_FOUND: i32 = -1;
-/// Parse error
-pub const UNHWP_ERR_PARSE: i32 = -2;
-/// Render error
-pub const UNHWP_ERR_RENDER: i32 = -3;
-/// Invalid argument (null pointer)
-pub const UNHWP_ERR_INVALID_ARG: i32 = -4;
-/// Unsupported format
-pub const UNHWP_ERR_UNSUPPORTED: i32 = -5;
-/// Unknown error
-pub const UNHWP_ERR_UNKNOWN: i32 = -99;
-
-// ============================================================================
-// Format Detection
-// ============================================================================
-
-/// Format type constants
-pub const FORMAT_UNKNOWN: i32 = 0;
-pub const FORMAT_HWP5: i32 = 1;
-pub const FORMAT_HWPX: i32 = 2;
-pub const FORMAT_HWP3: i32 = 3;
-
-/// Detects the format of an HWP/HWPX file.
-///
-/// # Parameters
-/// - `path`: Null-terminated UTF-8 file path
-///
-/// # Returns
-/// - FORMAT_HWP5 (1): HWP 5.0 binary format
-/// - FORMAT_HWPX (2): HWPX XML format
-/// - FORMAT_HWP3 (3): Legacy HWP 3.x format
-/// - FORMAT_UNKNOWN (0): Unknown or error
-/// # Safety
-/// The `path` pointer must be a valid null-terminated C string.
-#[no_mangle]
-pub unsafe extern "C" fn unhwp_detect_format(path: *const c_char) -> i32 {
-    if path.is_null() {
-        return FORMAT_UNKNOWN;
-    }
-
-    let path_str = match CStr::from_ptr(path).to_str() {
-        Ok(s) => s,
-        Err(_) => return FORMAT_UNKNOWN,
-    };
-
-    match detect_format_from_path(path_str) {
-        Ok(FormatType::Hwp5) => FORMAT_HWP5,
-        Ok(FormatType::Hwpx) => FORMAT_HWPX,
-        Ok(FormatType::Hwp3) => FORMAT_HWP3,
-        _ => FORMAT_UNKNOWN,
-    }
+// Thread-local storage for the last error message.
+thread_local! {
+    static LAST_ERROR: RefCell<Option<CString>> = const { RefCell::new(None) };
 }
 
-// ============================================================================
-// Cleanup Options (C-compatible struct)
-// ============================================================================
+/// Set the last error message.
+fn set_last_error(msg: &str) {
+    LAST_ERROR.with(|e| {
+        *e.borrow_mut() = CString::new(msg).ok();
+    });
+}
 
-/// C-compatible cleanup options structure.
+/// Clear the last error message.
+fn clear_last_error() {
+    LAST_ERROR.with(|e| {
+        *e.borrow_mut() = None;
+    });
+}
+
+/// Opaque handle to a parsed document.
 #[repr(C)]
-pub struct UnhwpCleanupOptions {
-    /// Enable cleanup pipeline (0 = disabled, 1 = enabled)
-    pub enabled: i32,
-    /// Cleanup preset (0 = default, 1 = minimal, 2 = aggressive)
-    pub preset: i32,
-    /// Enable mojibake detection (0 = disabled, 1 = enabled)
-    pub detect_mojibake: i32,
-    /// Preserve YAML frontmatter (0 = disabled, 1 = enabled)
-    pub preserve_frontmatter: i32,
+pub struct UnhwpDocument {
+    inner: Document,
 }
 
-impl Default for UnhwpCleanupOptions {
-    fn default() -> Self {
-        Self {
-            enabled: 0,
-            preset: 0,
-            detect_mojibake: 1,
-            preserve_frontmatter: 1,
-        }
-    }
-}
+/// Flags for markdown rendering.
+pub const UNHWP_FLAG_FRONTMATTER: u32 = 1;
+pub const UNHWP_FLAG_ESCAPE_SPECIAL: u32 = 2;
+pub const UNHWP_FLAG_PARAGRAPH_SPACING: u32 = 4;
 
-impl UnhwpCleanupOptions {
-    fn to_rust_options(&self) -> Option<CleanupOptions> {
-        if self.enabled == 0 {
-            return None;
-        }
+/// JSON format options.
+pub const UNHWP_JSON_PRETTY: c_int = 0;
+pub const UNHWP_JSON_COMPACT: c_int = 1;
 
-        let mut options = match self.preset {
-            1 => CleanupOptions::minimal(),
-            2 => CleanupOptions::aggressive(),
-            _ => CleanupOptions::default(),
-        };
-
-        options.detect_mojibake = self.detect_mojibake != 0;
-        options.preserve_frontmatter = self.preserve_frontmatter != 0;
-
-        Some(options)
-    }
-}
-
-/// Creates default cleanup options.
-#[no_mangle]
-pub extern "C" fn unhwp_cleanup_options_default() -> UnhwpCleanupOptions {
-    UnhwpCleanupOptions::default()
-}
-
-/// Creates cleanup options with enabled cleanup.
-#[no_mangle]
-pub extern "C" fn unhwp_cleanup_options_enabled() -> UnhwpCleanupOptions {
-    UnhwpCleanupOptions {
-        enabled: 1,
-        preset: 0,
-        detect_mojibake: 1,
-        preserve_frontmatter: 1,
-    }
-}
-
-// ============================================================================
-// Render Options (C-compatible struct)
-// ============================================================================
-
-/// C-compatible render options structure.
-#[repr(C)]
-pub struct UnhwpRenderOptions {
-    /// Include YAML frontmatter (0 = disabled, 1 = enabled)
-    pub include_frontmatter: i32,
-    /// Image path prefix (null-terminated string, or NULL for default)
-    pub image_path_prefix: *const c_char,
-    /// Table fallback mode (0 = simplified markdown, 1 = HTML, 2 = skip)
-    pub table_fallback: i32,
-    /// Preserve line breaks (0 = disabled, 1 = enabled)
-    pub preserve_line_breaks: i32,
-    /// Escape special markdown characters (0 = disabled, 1 = enabled)
-    pub escape_special_chars: i32,
-}
-
-impl Default for UnhwpRenderOptions {
-    fn default() -> Self {
-        Self {
-            include_frontmatter: 1,
-            image_path_prefix: ptr::null(),
-            table_fallback: 0,
-            preserve_line_breaks: 0,
-            escape_special_chars: 1,
-        }
-    }
-}
-
-impl UnhwpRenderOptions {
-    fn to_rust_options(&self) -> RenderOptions {
-        let image_path_prefix = if !self.image_path_prefix.is_null() {
-            unsafe { CStr::from_ptr(self.image_path_prefix) }
-                .to_str()
-                .map(|s| s.to_string())
-                .unwrap_or_default()
-        } else {
-            String::new()
-        };
-
-        let table_fallback = match self.table_fallback {
-            1 => crate::render::TableFallback::Html,
-            2 => crate::render::TableFallback::Skip,
-            _ => crate::render::TableFallback::SimplifiedMarkdown,
-        };
-
-        RenderOptions {
-            include_frontmatter: self.include_frontmatter != 0,
-            preserve_line_breaks: self.preserve_line_breaks != 0,
-            escape_special_chars: self.escape_special_chars != 0,
-            image_path_prefix,
-            table_fallback,
-            ..Default::default()
-        }
-    }
-}
-
-/// Creates default render options.
-#[no_mangle]
-pub extern "C" fn unhwp_render_options_default() -> UnhwpRenderOptions {
-    UnhwpRenderOptions::default()
-}
-
-// ============================================================================
-// Core Functions
-// ============================================================================
-
-/// Converts an HWP/HWPX file to Markdown.
-///
-/// # Parameters
-/// - `path`: Null-terminated UTF-8 file path
-/// - `out_markdown`: Pointer to receive the resulting markdown string
-/// - `out_error`: Pointer to receive error message (optional, can be NULL)
-///
-/// # Returns
-/// - UNHWP_OK (0) on success
-/// - Error code on failure
-///
-/// # Memory
-/// - On success, `*out_markdown` is set to a newly allocated string.
-///   Caller must free it using `unhwp_free_string`.
-/// - On failure, `*out_error` may be set to an error message.
-///   Caller must free it using `unhwp_free_string`.
+/// Get the version of the library.
 ///
 /// # Safety
-/// All pointer parameters must be valid or null where allowed.
-#[no_mangle]
-pub unsafe extern "C" fn unhwp_to_markdown(
-    path: *const c_char,
-    out_markdown: *mut *mut c_char,
-    out_error: *mut *mut c_char,
-) -> i32 {
-    let options = UnhwpRenderOptions::default();
-    let cleanup = UnhwpCleanupOptions::default();
-    unhwp_to_markdown_ex(path, &options, &cleanup, out_markdown, out_error)
-}
-
-/// Converts an HWP/HWPX file to Markdown with cleanup enabled.
 ///
-/// # Parameters
-/// - `path`: Null-terminated UTF-8 file path
-/// - `out_markdown`: Pointer to receive the resulting markdown string
-/// - `out_error`: Pointer to receive error message (optional, can be NULL)
-///
-/// # Returns
-/// - UNHWP_OK (0) on success
-/// - Error code on failure
-///
-/// # Safety
-/// All pointer parameters must be valid or null where allowed.
-#[no_mangle]
-pub unsafe extern "C" fn unhwp_to_markdown_with_cleanup(
-    path: *const c_char,
-    out_markdown: *mut *mut c_char,
-    out_error: *mut *mut c_char,
-) -> i32 {
-    let options = UnhwpRenderOptions::default();
-    let cleanup = unhwp_cleanup_options_enabled();
-    unhwp_to_markdown_ex(path, &options, &cleanup, out_markdown, out_error)
-}
-
-/// Converts an HWP/HWPX file to Markdown with full options.
-///
-/// # Parameters
-/// - `path`: Null-terminated UTF-8 file path
-/// - `render_options`: Render options structure
-/// - `cleanup_options`: Cleanup options structure
-/// - `out_markdown`: Pointer to receive the resulting markdown string
-/// - `out_error`: Pointer to receive error message (optional, can be NULL)
-///
-/// # Returns
-/// - UNHWP_OK (0) on success
-/// - Error code on failure
-///
-/// # Safety
-/// All pointer parameters must be valid or null where allowed.
-#[no_mangle]
-pub unsafe extern "C" fn unhwp_to_markdown_ex(
-    path: *const c_char,
-    render_options: *const UnhwpRenderOptions,
-    cleanup_options: *const UnhwpCleanupOptions,
-    out_markdown: *mut *mut c_char,
-    out_error: *mut *mut c_char,
-) -> i32 {
-    // Validate inputs
-    if path.is_null() || out_markdown.is_null() {
-        return UNHWP_ERR_INVALID_ARG;
-    }
-
-    // Convert path
-    let path_str = match CStr::from_ptr(path).to_str() {
-        Ok(s) => s,
-        Err(e) => {
-            set_error(out_error, &format!("Invalid UTF-8 path: {}", e));
-            return UNHWP_ERR_INVALID_ARG;
-        }
-    };
-
-    // Check if file exists
-    if !std::path::Path::new(path_str).exists() {
-        set_error(out_error, &format!("File not found: {}", path_str));
-        return UNHWP_ERR_FILE_NOT_FOUND;
-    }
-
-    // Parse document
-    let document = match parse_file(path_str) {
-        Ok(doc) => doc,
-        Err(e) => {
-            set_error(out_error, &format!("Parse error: {}", e));
-            return UNHWP_ERR_PARSE;
-        }
-    };
-
-    // Build render options
-    let mut rust_render_options = if render_options.is_null() {
-        RenderOptions::default()
-    } else {
-        (*render_options).to_rust_options()
-    };
-
-    // Apply cleanup options
-    if !cleanup_options.is_null() {
-        let cleanup = &*cleanup_options;
-        rust_render_options.cleanup = cleanup.to_rust_options();
-    }
-
-    // Render to markdown
-    let markdown = match render::render_markdown(&document, &rust_render_options) {
-        Ok(md) => md,
-        Err(e) => {
-            set_error(out_error, &format!("Render error: {}", e));
-            return UNHWP_ERR_RENDER;
-        }
-    };
-
-    // Return result
-    match CString::new(markdown) {
-        Ok(cstr) => {
-            *out_markdown = cstr.into_raw();
-            UNHWP_OK
-        }
-        Err(e) => {
-            set_error(out_error, &format!("String conversion error: {}", e));
-            UNHWP_ERR_UNKNOWN
-        }
-    }
-}
-
-/// Extracts plain text from an HWP/HWPX file.
-///
-/// # Parameters
-/// - `path`: Null-terminated UTF-8 file path
-/// - `out_text`: Pointer to receive the resulting text string
-/// - `out_error`: Pointer to receive error message (optional, can be NULL)
-///
-/// # Returns
-/// - UNHWP_OK (0) on success
-/// - Error code on failure
-///
-/// # Safety
-/// All pointer parameters must be valid or null where allowed.
-#[no_mangle]
-pub unsafe extern "C" fn unhwp_extract_text(
-    path: *const c_char,
-    out_text: *mut *mut c_char,
-    out_error: *mut *mut c_char,
-) -> i32 {
-    // Validate inputs
-    if path.is_null() || out_text.is_null() {
-        return UNHWP_ERR_INVALID_ARG;
-    }
-
-    // Convert path
-    let path_str = match CStr::from_ptr(path).to_str() {
-        Ok(s) => s,
-        Err(e) => {
-            set_error(out_error, &format!("Invalid UTF-8 path: {}", e));
-            return UNHWP_ERR_INVALID_ARG;
-        }
-    };
-
-    // Parse and extract text
-    match crate::extract_text(path_str) {
-        Ok(text) => match CString::new(text) {
-            Ok(cstr) => {
-                *out_text = cstr.into_raw();
-                UNHWP_OK
-            }
-            Err(e) => {
-                set_error(out_error, &format!("String conversion error: {}", e));
-                UNHWP_ERR_UNKNOWN
-            }
-        },
-        Err(e) => {
-            set_error(out_error, &format!("Extract error: {}", e));
-            UNHWP_ERR_PARSE
-        }
-    }
-}
-
-// ============================================================================
-// Byte Array Functions (for in-memory processing)
-// ============================================================================
-
-/// Converts HWP/HWPX bytes to Markdown.
-///
-/// # Parameters
-/// - `data`: Pointer to file data
-/// - `data_len`: Length of file data in bytes
-/// - `out_markdown`: Pointer to receive the resulting markdown string
-/// - `out_error`: Pointer to receive error message (optional, can be NULL)
-///
-/// # Returns
-/// - UNHWP_OK (0) on success
-/// - Error code on failure
-#[no_mangle]
-pub extern "C" fn unhwp_bytes_to_markdown(
-    data: *const u8,
-    data_len: usize,
-    out_markdown: *mut *mut c_char,
-    out_error: *mut *mut c_char,
-) -> i32 {
-    let options = UnhwpRenderOptions::default();
-    let cleanup = UnhwpCleanupOptions::default();
-    unhwp_bytes_to_markdown_ex(data, data_len, &options, &cleanup, out_markdown, out_error)
-}
-
-/// Converts HWP/HWPX bytes to Markdown with full options.
-#[no_mangle]
-pub extern "C" fn unhwp_bytes_to_markdown_ex(
-    data: *const u8,
-    data_len: usize,
-    render_options: *const UnhwpRenderOptions,
-    cleanup_options: *const UnhwpCleanupOptions,
-    out_markdown: *mut *mut c_char,
-    out_error: *mut *mut c_char,
-) -> i32 {
-    // Validate inputs
-    if data.is_null() || data_len == 0 || out_markdown.is_null() {
-        return UNHWP_ERR_INVALID_ARG;
-    }
-
-    // Create slice from raw pointer
-    let bytes = unsafe { std::slice::from_raw_parts(data, data_len) };
-
-    // Parse document
-    let document = match crate::parse_bytes(bytes) {
-        Ok(doc) => doc,
-        Err(e) => {
-            set_error(out_error, &format!("Parse error: {}", e));
-            return UNHWP_ERR_PARSE;
-        }
-    };
-
-    // Build render options
-    let mut rust_render_options = if render_options.is_null() {
-        RenderOptions::default()
-    } else {
-        unsafe { &*render_options }.to_rust_options()
-    };
-
-    // Apply cleanup options
-    if !cleanup_options.is_null() {
-        let cleanup = unsafe { &*cleanup_options };
-        rust_render_options.cleanup = cleanup.to_rust_options();
-    }
-
-    // Render to markdown
-    let markdown = match render::render_markdown(&document, &rust_render_options) {
-        Ok(md) => md,
-        Err(e) => {
-            set_error(out_error, &format!("Render error: {}", e));
-            return UNHWP_ERR_RENDER;
-        }
-    };
-
-    // Return result
-    match CString::new(markdown) {
-        Ok(cstr) => {
-            unsafe { *out_markdown = cstr.into_raw() };
-            UNHWP_OK
-        }
-        Err(e) => {
-            set_error(out_error, &format!("String conversion error: {}", e));
-            UNHWP_ERR_UNKNOWN
-        }
-    }
-}
-
-// ============================================================================
-// Memory Management
-// ============================================================================
-
-/// Frees a string allocated by unhwp functions.
-///
-/// # Safety
-/// - The pointer must have been returned by an unhwp function.
-/// - The pointer must not be NULL.
-/// - The pointer must not have been freed already.
-#[no_mangle]
-pub extern "C" fn unhwp_free_string(ptr: *mut c_char) {
-    if !ptr.is_null() {
-        unsafe {
-            drop(CString::from_raw(ptr));
-        }
-    }
-}
-
-// ============================================================================
-// Version Info
-// ============================================================================
-
-/// Returns the library version string.
-///
-/// # Returns
-/// - Null-terminated version string (e.g., "0.1.0")
-/// - The returned string is statically allocated and must NOT be freed.
+/// Returns a static string that must not be freed.
 #[no_mangle]
 pub extern "C" fn unhwp_version() -> *const c_char {
-    static VERSION: &[u8] = concat!(env!("CARGO_PKG_VERSION"), "\0").as_bytes();
-    VERSION.as_ptr() as *const c_char
+    concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr() as *const c_char
 }
 
-/// Returns the supported format flags.
-///
-/// # Returns
-/// - Bitmask of supported formats:
-///   - Bit 0 (0x01): HWP 5.0
-///   - Bit 1 (0x02): HWPX
-///   - Bit 2 (0x04): HWP 3.x
-#[no_mangle]
-pub extern "C" fn unhwp_supported_formats() -> i32 {
-    let mut flags = 0i32;
-
-    #[cfg(feature = "hwp5")]
-    {
-        flags |= 0x01;
-    }
-
-    #[cfg(feature = "hwpx")]
-    {
-        flags |= 0x02;
-    }
-
-    #[cfg(feature = "hwp3")]
-    {
-        flags |= 0x04;
-    }
-
-    flags
-}
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-fn set_error(out_error: *mut *mut c_char, message: &str) {
-    if !out_error.is_null() {
-        if let Ok(cstr) = CString::new(message) {
-            unsafe { *out_error = cstr.into_raw() };
-        }
-    }
-}
-
-// ============================================================================
-// Structured Result API
-// ============================================================================
-
-/// C-compatible image structure.
-#[repr(C)]
-pub struct UnhwpImage {
-    /// Image name (null-terminated UTF-8 string)
-    pub name: *mut c_char,
-    /// Image binary data
-    pub data: *mut u8,
-    /// Length of image data in bytes
-    pub data_len: usize,
-}
-
-/// Opaque result handle containing parsed document and cached results.
-pub struct UnhwpResult {
-    document: Document,
-    cached_markdown: Option<CString>,
-    cached_text: Option<CString>,
-    cached_raw_content: Option<CString>,
-    render_options: RenderOptions,
-    images: Vec<UnhwpImage>,
-    last_error: Option<CString>,
-}
-
-impl UnhwpResult {
-    fn new(document: Document, render_options: RenderOptions) -> Self {
-        Self {
-            document,
-            cached_markdown: None,
-            cached_text: None,
-            cached_raw_content: None,
-            render_options,
-            images: Vec::new(),
-            last_error: None,
-        }
-    }
-
-    fn ensure_markdown(&mut self) -> Result<&CString, String> {
-        if self.cached_markdown.is_none() {
-            let markdown = render::render_markdown(&self.document, &self.render_options)
-                .map_err(|e| format!("Render error: {}", e))?;
-            self.cached_markdown = Some(
-                CString::new(markdown).map_err(|e| format!("String conversion error: {}", e))?,
-            );
-        }
-        // SAFETY: We just set cached_markdown to Some above if it was None
-        self.cached_markdown
-            .as_ref()
-            .ok_or_else(|| "Internal error: cached_markdown should be set".to_string())
-    }
-
-    fn ensure_text(&mut self) -> Result<&CString, String> {
-        if self.cached_text.is_none() {
-            let text = self.document.plain_text();
-            self.cached_text =
-                Some(CString::new(text).map_err(|e| format!("String conversion error: {}", e))?);
-        }
-        // SAFETY: We just set cached_text to Some above if it was None
-        self.cached_text
-            .as_ref()
-            .ok_or_else(|| "Internal error: cached_text should be set".to_string())
-    }
-
-    fn ensure_raw_content(&mut self) -> Result<&CString, String> {
-        if self.cached_raw_content.is_none() {
-            let raw = self.document.raw_content();
-            self.cached_raw_content =
-                Some(CString::new(raw).map_err(|e| format!("String conversion error: {}", e))?);
-        }
-        // SAFETY: We just set cached_raw_content to Some above if it was None
-        self.cached_raw_content
-            .as_ref()
-            .ok_or_else(|| "Internal error: cached_raw_content should be set".to_string())
-    }
-
-    fn ensure_images(&mut self) {
-        if self.images.is_empty() && !self.document.resources.is_empty() {
-            for (name, resource) in &self.document.resources {
-                let name_cstr = match CString::new(name.clone()) {
-                    Ok(s) => s,
-                    Err(_) => continue,
-                };
-
-                // Allocate and copy image data
-                let data_len = resource.data.len();
-                let data_ptr = if data_len > 0 {
-                    // SAFETY: alignment of 1 is always valid, so this only fails if size overflows
-                    let layout = match std::alloc::Layout::from_size_align(data_len, 1) {
-                        Ok(l) => l,
-                        Err(_) => continue, // Skip this image if layout fails
-                    };
-                    let ptr = unsafe { std::alloc::alloc(layout) };
-                    if !ptr.is_null() {
-                        unsafe {
-                            std::ptr::copy_nonoverlapping(resource.data.as_ptr(), ptr, data_len);
-                        }
-                    }
-                    ptr
-                } else {
-                    ptr::null_mut()
-                };
-
-                self.images.push(UnhwpImage {
-                    name: name_cstr.into_raw(),
-                    data: data_ptr,
-                    data_len,
-                });
-            }
-        }
-    }
-
-    fn set_error(&mut self, message: &str) {
-        self.last_error = CString::new(message).ok();
-    }
-}
-
-/// Parses an HWP/HWPX file and returns a result handle.
-///
-/// # Parameters
-/// - `path`: Null-terminated UTF-8 file path
-/// - `render_options`: Render options (optional, can be NULL for defaults)
-/// - `cleanup_options`: Cleanup options (optional, can be NULL for defaults)
-///
-/// # Returns
-/// - Pointer to result handle on success
-/// - NULL on failure (call unhwp_get_last_error for details)
-///
-/// # Memory
-/// - Caller must free the result using `unhwp_result_free`.
-#[no_mangle]
-pub extern "C" fn unhwp_parse(
-    path: *const c_char,
-    render_options: *const UnhwpRenderOptions,
-    cleanup_options: *const UnhwpCleanupOptions,
-) -> *mut UnhwpResult {
-    if path.is_null() {
-        return ptr::null_mut();
-    }
-
-    let path_str = match unsafe { CStr::from_ptr(path) }.to_str() {
-        Ok(s) => s,
-        Err(_) => return ptr::null_mut(),
-    };
-
-    // Parse document
-    let document = match parse_file(path_str) {
-        Ok(doc) => doc,
-        Err(_) => return ptr::null_mut(),
-    };
-
-    // Build render options
-    let mut rust_render_options = if render_options.is_null() {
-        RenderOptions::default()
-    } else {
-        unsafe { &*render_options }.to_rust_options()
-    };
-
-    // Apply cleanup options
-    if !cleanup_options.is_null() {
-        let cleanup = unsafe { &*cleanup_options };
-        rust_render_options.cleanup = cleanup.to_rust_options();
-    }
-
-    let result = Box::new(UnhwpResult::new(document, rust_render_options));
-    Box::into_raw(result)
-}
-
-/// Parses HWP/HWPX bytes and returns a result handle.
-///
-/// # Parameters
-/// - `data`: Pointer to file data
-/// - `data_len`: Length of file data in bytes
-/// - `render_options`: Render options (optional, can be NULL for defaults)
-/// - `cleanup_options`: Cleanup options (optional, can be NULL for defaults)
-///
-/// # Returns
-/// - Pointer to result handle on success
-/// - NULL on failure
-#[no_mangle]
-pub extern "C" fn unhwp_parse_bytes(
-    data: *const u8,
-    data_len: usize,
-    render_options: *const UnhwpRenderOptions,
-    cleanup_options: *const UnhwpCleanupOptions,
-) -> *mut UnhwpResult {
-    if data.is_null() || data_len == 0 {
-        return ptr::null_mut();
-    }
-
-    let bytes = unsafe { std::slice::from_raw_parts(data, data_len) };
-
-    // Parse document
-    let document = match crate::parse_bytes(bytes) {
-        Ok(doc) => doc,
-        Err(_) => return ptr::null_mut(),
-    };
-
-    // Build render options
-    let mut rust_render_options = if render_options.is_null() {
-        RenderOptions::default()
-    } else {
-        unsafe { &*render_options }.to_rust_options()
-    };
-
-    // Apply cleanup options
-    if !cleanup_options.is_null() {
-        let cleanup = unsafe { &*cleanup_options };
-        rust_render_options.cleanup = cleanup.to_rust_options();
-    }
-
-    let result = Box::new(UnhwpResult::new(document, rust_render_options));
-    Box::into_raw(result)
-}
-
-/// Gets the rendered Markdown from a result.
-///
-/// # Parameters
-/// - `result`: Result handle from unhwp_parse
-///
-/// # Returns
-/// - Null-terminated Markdown string
-/// - NULL on error
-///
-/// # Note
-/// - The returned string is owned by the result and must NOT be freed separately.
-/// - The string remains valid until the result is freed.
-#[no_mangle]
-pub extern "C" fn unhwp_result_get_markdown(result: *mut UnhwpResult) -> *const c_char {
-    if result.is_null() {
-        return ptr::null();
-    }
-
-    let result = unsafe { &mut *result };
-    match result.ensure_markdown() {
-        Ok(cstr) => cstr.as_ptr(),
-        Err(e) => {
-            result.set_error(&e);
-            ptr::null()
-        }
-    }
-}
-
-/// Gets the plain text from a result.
-///
-/// # Parameters
-/// - `result`: Result handle from unhwp_parse
-///
-/// # Returns
-/// - Null-terminated plain text string
-/// - NULL on error
-///
-/// # Note
-/// - The returned string is owned by the result and must NOT be freed separately.
-#[no_mangle]
-pub extern "C" fn unhwp_result_get_text(result: *mut UnhwpResult) -> *const c_char {
-    if result.is_null() {
-        return ptr::null();
-    }
-
-    let result = unsafe { &mut *result };
-    match result.ensure_text() {
-        Ok(cstr) => cstr.as_ptr(),
-        Err(e) => {
-            result.set_error(&e);
-            ptr::null()
-        }
-    }
-}
-
-/// Gets the structured content as JSON with full metadata.
-///
-/// This provides access to the full document structure including:
-/// - Document metadata (title, author, dates)
-/// - Paragraph styles (heading level, alignment, list type)
-/// - Text formatting (bold, italic, underline, font, color, etc.)
-/// - Table structure (rows, cells, colspan, rowspan)
-/// - Equations, images, and links
-///
-/// # Parameters
-/// - `result`: Result handle from unhwp_parse
-///
-/// # Returns
-/// - Null-terminated JSON string
-/// - NULL on error
-///
-/// # Note
-/// - The returned string is owned by the result and must NOT be freed separately.
-#[no_mangle]
-pub extern "C" fn unhwp_result_get_raw_content(result: *mut UnhwpResult) -> *const c_char {
-    if result.is_null() {
-        return ptr::null();
-    }
-
-    let result = unsafe { &mut *result };
-    match result.ensure_raw_content() {
-        Ok(cstr) => cstr.as_ptr(),
-        Err(e) => {
-            result.set_error(&e);
-            ptr::null()
-        }
-    }
-}
-
-/// Gets the number of images in the document.
-///
-/// # Parameters
-/// - `result`: Result handle from unhwp_parse
-///
-/// # Returns
-/// - Number of images (0 or more)
-/// - -1 on error (null result)
-#[no_mangle]
-pub extern "C" fn unhwp_result_get_image_count(result: *mut UnhwpResult) -> i32 {
-    if result.is_null() {
-        return -1;
-    }
-
-    let result = unsafe { &mut *result };
-    result.ensure_images();
-    result.images.len() as i32
-}
-
-/// Gets an image from the result by index.
-///
-/// # Parameters
-/// - `result`: Result handle from unhwp_parse
-/// - `index`: Image index (0-based)
-/// - `out_image`: Pointer to receive image data
-///
-/// # Returns
-/// - UNHWP_OK on success
-/// - UNHWP_ERR_INVALID_ARG on invalid index or null pointers
-///
-/// # Note
-/// - The image data is owned by the result and must NOT be freed separately.
-#[no_mangle]
-pub extern "C" fn unhwp_result_get_image(
-    result: *mut UnhwpResult,
-    index: i32,
-    out_image: *mut UnhwpImage,
-) -> i32 {
-    if result.is_null() || out_image.is_null() || index < 0 {
-        return UNHWP_ERR_INVALID_ARG;
-    }
-
-    let result = unsafe { &mut *result };
-    result.ensure_images();
-
-    let index = index as usize;
-    if index >= result.images.len() {
-        return UNHWP_ERR_INVALID_ARG;
-    }
-
-    unsafe {
-        *out_image = UnhwpImage {
-            name: result.images[index].name,
-            data: result.images[index].data,
-            data_len: result.images[index].data_len,
-        };
-    }
-
-    UNHWP_OK
-}
-
-/// Gets the number of sections in the document.
-///
-/// # Parameters
-/// - `result`: Result handle from unhwp_parse
-///
-/// # Returns
-/// - Number of sections
-/// - -1 on error
-#[no_mangle]
-pub extern "C" fn unhwp_result_get_section_count(result: *mut UnhwpResult) -> i32 {
-    if result.is_null() {
-        return -1;
-    }
-
-    let result = unsafe { &*result };
-    result.document.sections.len() as i32
-}
-
-/// Gets the number of paragraphs in the document.
-///
-/// # Parameters
-/// - `result`: Result handle from unhwp_parse
-///
-/// # Returns
-/// - Number of paragraphs
-/// - -1 on error
-#[no_mangle]
-pub extern "C" fn unhwp_result_get_paragraph_count(result: *mut UnhwpResult) -> i32 {
-    if result.is_null() {
-        return -1;
-    }
-
-    let result = unsafe { &*result };
-    result.document.paragraph_count() as i32
-}
-
-/// Returns whether the document is a distribution (protected) document.
-///
-/// Distribution documents are protected by DRM and may have restrictions
-/// on editing, copying, and printing.
-///
-/// # Parameters
-/// - `result`: Result handle from unhwp_parse
-///
-/// # Returns
-/// - 1 if distribution document
-/// - 0 if not distribution document
-/// - -1 on error (null result)
-#[no_mangle]
-pub extern "C" fn unhwp_result_is_distribution(result: *mut UnhwpResult) -> i32 {
-    if result.is_null() {
-        return -1;
-    }
-
-    let result = unsafe { &*result };
-    if result.document.metadata.is_distribution {
-        1
-    } else {
-        0
-    }
-}
-
-/// Gets the last error message from a result.
-///
-/// # Parameters
-/// - `result`: Result handle from unhwp_parse
-///
-/// # Returns
-/// - Null-terminated error string, or NULL if no error
-#[no_mangle]
-pub extern "C" fn unhwp_result_get_error(result: *mut UnhwpResult) -> *const c_char {
-    if result.is_null() {
-        return ptr::null();
-    }
-
-    let result = unsafe { &*result };
-    match &result.last_error {
-        Some(err) => err.as_ptr(),
-        None => ptr::null(),
-    }
-}
-
-/// Frees a result handle and all associated resources.
-///
-/// # Parameters
-/// - `result`: Result handle from unhwp_parse
+/// Get the last error message.
 ///
 /// # Safety
-/// - The result must have been returned by unhwp_parse or unhwp_parse_bytes.
-/// - The result must not be NULL.
-/// - The result must not have been freed already.
+///
+/// Returns a pointer to a thread-local error string. The pointer is valid until
+/// the next call to any unhwp function on the same thread.
 #[no_mangle]
-pub extern "C" fn unhwp_result_free(result: *mut UnhwpResult) {
-    if result.is_null() {
-        return;
+pub extern "C" fn unhwp_last_error() -> *const c_char {
+    LAST_ERROR.with(|e| {
+        e.borrow()
+            .as_ref()
+            .map(|s| s.as_ptr())
+            .unwrap_or(ptr::null())
+    })
+}
+
+/// Parse a document from a file path.
+///
+/// # Safety
+///
+/// - `path` must be a valid null-terminated UTF-8 string.
+/// - Returns null on error. Use `unhwp_last_error` to get the error message.
+/// - The returned handle must be freed with `unhwp_free_document`.
+#[no_mangle]
+pub unsafe extern "C" fn unhwp_parse_file(path: *const c_char) -> *mut UnhwpDocument {
+    clear_last_error();
+
+    if path.is_null() {
+        set_last_error("path is null");
+        return ptr::null_mut();
     }
 
-    unsafe {
-        let mut result = Box::from_raw(result);
+    let result = catch_unwind(|| {
+        let path_str = CStr::from_ptr(path).to_str().map_err(|e| e.to_string())?;
 
-        // Free cached strings (handled by Drop)
-        // Free image data
-        for image in &mut result.images {
-            if !image.name.is_null() {
-                drop(CString::from_raw(image.name));
-            }
-            if !image.data.is_null() && image.data_len > 0 {
-                // SAFETY: alignment of 1 is always valid; if this fails, we leak memory
-                // rather than panic in FFI context
-                if let Ok(layout) = std::alloc::Layout::from_size_align(image.data_len, 1) {
-                    std::alloc::dealloc(image.data, layout);
-                }
-            }
+        crate::parse_file(path_str)
+            .map(|doc| Box::into_raw(Box::new(UnhwpDocument { inner: doc })))
+            .map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(Ok(doc)) => doc,
+        Ok(Err(e)) => {
+            set_last_error(&e);
+            ptr::null_mut()
         }
-
-        // result is dropped here, freeing Document and cached strings
+        Err(_) => {
+            set_last_error("panic occurred during parsing");
+            ptr::null_mut()
+        }
     }
 }
 
-// ============================================================================
-// Tests
-// ============================================================================
+/// Parse a document from a byte buffer.
+///
+/// # Safety
+///
+/// - `data` must be a valid pointer to a byte buffer of at least `len` bytes.
+/// - Returns null on error. Use `unhwp_last_error` to get the error message.
+/// - The returned handle must be freed with `unhwp_free_document`.
+#[no_mangle]
+pub unsafe extern "C" fn unhwp_parse_bytes(data: *const u8, len: usize) -> *mut UnhwpDocument {
+    clear_last_error();
+
+    if data.is_null() {
+        set_last_error("data is null");
+        return ptr::null_mut();
+    }
+
+    let result = catch_unwind(|| {
+        let bytes = std::slice::from_raw_parts(data, len);
+
+        crate::parse_bytes(bytes)
+            .map(|doc| Box::into_raw(Box::new(UnhwpDocument { inner: doc })))
+            .map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(Ok(doc)) => doc,
+        Ok(Err(e)) => {
+            set_last_error(&e);
+            ptr::null_mut()
+        }
+        Err(_) => {
+            set_last_error("panic occurred during parsing");
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Free a document handle.
+///
+/// # Safety
+///
+/// - `doc` must be a valid pointer returned by `unhwp_parse_file` or `unhwp_parse_bytes`.
+/// - After calling this function, the handle is invalid and must not be used.
+#[no_mangle]
+pub unsafe extern "C" fn unhwp_free_document(doc: *mut UnhwpDocument) {
+    if !doc.is_null() {
+        let _ = Box::from_raw(doc);
+    }
+}
+
+/// Convert a document to Markdown.
+///
+/// # Safety
+///
+/// - `doc` must be a valid document handle.
+/// - `flags` is a bitwise OR of `UNHWP_FLAG_*` constants.
+/// - Returns null on error. Use `unhwp_last_error` to get the error message.
+/// - The returned string must be freed with `unhwp_free_string`.
+#[no_mangle]
+pub unsafe extern "C" fn unhwp_to_markdown(doc: *const UnhwpDocument, flags: u32) -> *mut c_char {
+    clear_last_error();
+
+    if doc.is_null() {
+        set_last_error("document is null");
+        return ptr::null_mut();
+    }
+
+    let result = catch_unwind(|| {
+        let document = &(*doc).inner;
+
+        let mut options = RenderOptions::default();
+
+        if flags & UNHWP_FLAG_FRONTMATTER != 0 {
+            options = options.with_frontmatter();
+        }
+        if flags & UNHWP_FLAG_ESCAPE_SPECIAL != 0 {
+            options.escape_special_chars = true;
+        }
+        if flags & UNHWP_FLAG_PARAGRAPH_SPACING != 0 {
+            options.preserve_line_breaks = true;
+        }
+
+        crate::render::render_markdown(document, &options).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(Ok(md)) => match CString::new(md) {
+            Ok(s) => s.into_raw(),
+            Err(_) => {
+                set_last_error("output contains null byte");
+                ptr::null_mut()
+            }
+        },
+        Ok(Err(e)) => {
+            set_last_error(&e);
+            ptr::null_mut()
+        }
+        Err(_) => {
+            set_last_error("panic occurred during rendering");
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Convert a document to plain text.
+///
+/// # Safety
+///
+/// - `doc` must be a valid document handle.
+/// - Returns null on error. Use `unhwp_last_error` to get the error message.
+/// - The returned string must be freed with `unhwp_free_string`.
+#[no_mangle]
+pub unsafe extern "C" fn unhwp_to_text(doc: *const UnhwpDocument) -> *mut c_char {
+    clear_last_error();
+
+    if doc.is_null() {
+        set_last_error("document is null");
+        return ptr::null_mut();
+    }
+
+    let result = catch_unwind(|| {
+        let document = &(*doc).inner;
+        document.plain_text()
+    });
+
+    match result {
+        Ok(text) => match CString::new(text) {
+            Ok(s) => s.into_raw(),
+            Err(_) => {
+                set_last_error("output contains null byte");
+                ptr::null_mut()
+            }
+        },
+        Err(_) => {
+            set_last_error("panic occurred during rendering");
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Convert a document to JSON.
+///
+/// # Safety
+///
+/// - `doc` must be a valid document handle.
+/// - `format` is one of `UNHWP_JSON_PRETTY` or `UNHWP_JSON_COMPACT`.
+/// - Returns null on error. Use `unhwp_last_error` to get the error message.
+/// - The returned string must be freed with `unhwp_free_string`.
+#[no_mangle]
+pub unsafe extern "C" fn unhwp_to_json(doc: *const UnhwpDocument, format: c_int) -> *mut c_char {
+    clear_last_error();
+
+    if doc.is_null() {
+        set_last_error("document is null");
+        return ptr::null_mut();
+    }
+
+    let result = catch_unwind(|| {
+        let document = &(*doc).inner;
+        if format == UNHWP_JSON_COMPACT {
+            serde_json::to_string(document).map_err(|e| e.to_string())
+        } else {
+            serde_json::to_string_pretty(document).map_err(|e| e.to_string())
+        }
+    });
+
+    match result {
+        Ok(Ok(json)) => match CString::new(json) {
+            Ok(s) => s.into_raw(),
+            Err(_) => {
+                set_last_error("output contains null byte");
+                ptr::null_mut()
+            }
+        },
+        Ok(Err(e)) => {
+            set_last_error(&e);
+            ptr::null_mut()
+        }
+        Err(_) => {
+            set_last_error("panic occurred during rendering");
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Get the plain text content of a document.
+///
+/// # Safety
+///
+/// - `doc` must be a valid document handle.
+/// - Returns null on error.
+/// - The returned string must be freed with `unhwp_free_string`.
+#[no_mangle]
+pub unsafe extern "C" fn unhwp_plain_text(doc: *const UnhwpDocument) -> *mut c_char {
+    clear_last_error();
+
+    if doc.is_null() {
+        set_last_error("document is null");
+        return ptr::null_mut();
+    }
+
+    let result = catch_unwind(|| {
+        let document = &(*doc).inner;
+        document.plain_text()
+    });
+
+    match result {
+        Ok(text) => match CString::new(text) {
+            Ok(s) => s.into_raw(),
+            Err(_) => {
+                set_last_error("output contains null byte");
+                ptr::null_mut()
+            }
+        },
+        Err(_) => {
+            set_last_error("panic occurred");
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Get the number of sections in a document.
+///
+/// # Safety
+///
+/// - `doc` must be a valid document handle.
+/// - Returns -1 on error.
+#[no_mangle]
+pub unsafe extern "C" fn unhwp_section_count(doc: *const UnhwpDocument) -> c_int {
+    if doc.is_null() {
+        set_last_error("document is null");
+        return -1;
+    }
+
+    match catch_unwind(|| (*doc).inner.sections.len() as c_int) {
+        Ok(count) => count,
+        Err(_) => {
+            set_last_error("panic occurred");
+            -1
+        }
+    }
+}
+
+/// Get the number of resources in a document.
+///
+/// # Safety
+///
+/// - `doc` must be a valid document handle.
+/// - Returns -1 on error.
+#[no_mangle]
+pub unsafe extern "C" fn unhwp_resource_count(doc: *const UnhwpDocument) -> c_int {
+    if doc.is_null() {
+        set_last_error("document is null");
+        return -1;
+    }
+
+    match catch_unwind(|| (*doc).inner.resources.len() as c_int) {
+        Ok(count) => count,
+        Err(_) => {
+            set_last_error("panic occurred");
+            -1
+        }
+    }
+}
+
+/// Get the document title.
+///
+/// # Safety
+///
+/// - `doc` must be a valid document handle.
+/// - Returns null if no title is set.
+/// - The returned string must be freed with `unhwp_free_string`.
+#[no_mangle]
+pub unsafe extern "C" fn unhwp_get_title(doc: *const UnhwpDocument) -> *mut c_char {
+    clear_last_error();
+
+    if doc.is_null() {
+        set_last_error("document is null");
+        return ptr::null_mut();
+    }
+
+    let result = catch_unwind(|| {
+        (*doc)
+            .inner
+            .metadata
+            .title
+            .as_ref()
+            .and_then(|t| CString::new(t.as_str()).ok())
+    });
+
+    match result {
+        Ok(Some(s)) => s.into_raw(),
+        Ok(None) => ptr::null_mut(),
+        Err(_) => {
+            set_last_error("panic occurred");
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Get the document author.
+///
+/// # Safety
+///
+/// - `doc` must be a valid document handle.
+/// - Returns null if no author is set.
+/// - The returned string must be freed with `unhwp_free_string`.
+#[no_mangle]
+pub unsafe extern "C" fn unhwp_get_author(doc: *const UnhwpDocument) -> *mut c_char {
+    clear_last_error();
+
+    if doc.is_null() {
+        set_last_error("document is null");
+        return ptr::null_mut();
+    }
+
+    let result = catch_unwind(|| {
+        (*doc)
+            .inner
+            .metadata
+            .author
+            .as_ref()
+            .and_then(|a| CString::new(a.as_str()).ok())
+    });
+
+    match result {
+        Ok(Some(s)) => s.into_raw(),
+        Ok(None) => ptr::null_mut(),
+        Err(_) => {
+            set_last_error("panic occurred");
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Get all resource IDs as a JSON array.
+///
+/// # Safety
+///
+/// - `doc` must be a valid document handle.
+/// - Returns null on error. Use `unhwp_last_error` to get the error message.
+/// - The returned string must be freed with `unhwp_free_string`.
+///
+/// # Returns
+///
+/// A JSON array of resource IDs, e.g., `["image1.png", "image2.jpg"]`
+#[no_mangle]
+pub unsafe extern "C" fn unhwp_get_resource_ids(doc: *const UnhwpDocument) -> *mut c_char {
+    clear_last_error();
+
+    if doc.is_null() {
+        set_last_error("document is null");
+        return ptr::null_mut();
+    }
+
+    let result = catch_unwind(|| {
+        let document = &(*doc).inner;
+        let ids: Vec<&String> = document.resources.keys().collect();
+        serde_json::to_string(&ids).map_err(|e| e.to_string())
+    });
+
+    match result {
+        Ok(Ok(json)) => match CString::new(json) {
+            Ok(s) => s.into_raw(),
+            Err(_) => {
+                set_last_error("output contains null byte");
+                ptr::null_mut()
+            }
+        },
+        Ok(Err(e)) => {
+            set_last_error(&e);
+            ptr::null_mut()
+        }
+        Err(_) => {
+            set_last_error("panic occurred");
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Get resource metadata as JSON (without binary data).
+///
+/// # Safety
+///
+/// - `doc` must be a valid document handle.
+/// - `resource_id` must be a valid null-terminated UTF-8 string.
+/// - Returns null if resource not found or on error.
+/// - The returned string must be freed with `unhwp_free_string`.
+///
+/// # Returns
+///
+/// JSON object with resource metadata:
+/// `{"id":"image1.png","type":"Image","filename":"image1.png","mime_type":"image/png","size":1024}`
+#[no_mangle]
+pub unsafe extern "C" fn unhwp_get_resource_info(
+    doc: *const UnhwpDocument,
+    resource_id: *const c_char,
+) -> *mut c_char {
+    clear_last_error();
+
+    if doc.is_null() {
+        set_last_error("document is null");
+        return ptr::null_mut();
+    }
+
+    if resource_id.is_null() {
+        set_last_error("resource_id is null");
+        return ptr::null_mut();
+    }
+
+    let result = catch_unwind(|| {
+        let id_str = CStr::from_ptr(resource_id)
+            .to_str()
+            .map_err(|e| e.to_string())?;
+
+        let document = &(*doc).inner;
+
+        match document.resources.get(id_str) {
+            Some(resource) => {
+                let info = serde_json::json!({
+                    "id": id_str,
+                    "type": resource.resource_type,
+                    "filename": resource.filename,
+                    "mime_type": resource.mime_type,
+                    "size": resource.size,
+                });
+                serde_json::to_string(&info).map_err(|e| e.to_string())
+            }
+            None => Err(format!("resource not found: {}", id_str)),
+        }
+    });
+
+    match result {
+        Ok(Ok(json)) => match CString::new(json) {
+            Ok(s) => s.into_raw(),
+            Err(_) => {
+                set_last_error("output contains null byte");
+                ptr::null_mut()
+            }
+        },
+        Ok(Err(e)) => {
+            set_last_error(&e);
+            ptr::null_mut()
+        }
+        Err(_) => {
+            set_last_error("panic occurred");
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Get resource binary data.
+///
+/// # Safety
+///
+/// - `doc` must be a valid document handle.
+/// - `resource_id` must be a valid null-terminated UTF-8 string.
+/// - `out_len` must be a valid pointer to receive the data length.
+/// - Returns null if resource not found or on error.
+/// - The returned pointer must be freed with `unhwp_free_bytes`.
+#[no_mangle]
+pub unsafe extern "C" fn unhwp_get_resource_data(
+    doc: *const UnhwpDocument,
+    resource_id: *const c_char,
+    out_len: *mut usize,
+) -> *mut u8 {
+    clear_last_error();
+
+    if doc.is_null() {
+        set_last_error("document is null");
+        return ptr::null_mut();
+    }
+
+    if resource_id.is_null() {
+        set_last_error("resource_id is null");
+        return ptr::null_mut();
+    }
+
+    if out_len.is_null() {
+        set_last_error("out_len is null");
+        return ptr::null_mut();
+    }
+
+    let result = catch_unwind(|| {
+        let id_str = CStr::from_ptr(resource_id)
+            .to_str()
+            .map_err(|e| e.to_string())?;
+
+        let document = &(*doc).inner;
+
+        match document.resources.get(id_str) {
+            Some(resource) => {
+                let data = resource.data.clone();
+                let len = data.len();
+                let boxed = data.into_boxed_slice();
+                let ptr = Box::into_raw(boxed) as *mut u8;
+                Ok((ptr, len))
+            }
+            None => Err(format!("resource not found: {}", id_str)),
+        }
+    });
+
+    match result {
+        Ok(Ok((ptr, len))) => {
+            *out_len = len;
+            ptr
+        }
+        Ok(Err(e)) => {
+            set_last_error(&e);
+            *out_len = 0;
+            ptr::null_mut()
+        }
+        Err(_) => {
+            set_last_error("panic occurred");
+            *out_len = 0;
+            ptr::null_mut()
+        }
+    }
+}
+
+/// Free a string allocated by this library.
+///
+/// # Safety
+///
+/// - `s` must be a pointer returned by an unhwp function, or null.
+/// - After calling this function, the pointer is invalid and must not be used.
+#[no_mangle]
+pub unsafe extern "C" fn unhwp_free_string(s: *mut c_char) {
+    if !s.is_null() {
+        let _ = CString::from_raw(s);
+    }
+}
+
+/// Free binary data allocated by `unhwp_get_resource_data`.
+///
+/// # Safety
+///
+/// - `data` must be a pointer returned by `unhwp_get_resource_data`, or null.
+/// - `len` must be the length returned by `unhwp_get_resource_data`.
+/// - After calling this function, the pointer is invalid and must not be used.
+#[no_mangle]
+pub unsafe extern "C" fn unhwp_free_bytes(data: *mut u8, len: usize) {
+    if !data.is_null() && len > 0 {
+        let _ = Box::from_raw(std::ptr::slice_from_raw_parts_mut(data, len));
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::CString;
+    use std::path::Path;
 
     #[test]
     fn test_version() {
@@ -1095,34 +705,82 @@ mod tests {
     }
 
     #[test]
-    fn test_supported_formats() {
-        let flags = unhwp_supported_formats();
-        // At minimum, HWP5 and HWPX should be supported (default features)
-        assert!(flags & 0x01 != 0); // HWP5
-        assert!(flags & 0x02 != 0); // HWPX
+    fn test_parse_null_path() {
+        let doc = unsafe { unhwp_parse_file(ptr::null()) };
+        assert!(doc.is_null());
+
+        let error = unhwp_last_error();
+        assert!(!error.is_null());
     }
 
     #[test]
-    fn test_default_options() {
-        let render_opts = unhwp_render_options_default();
-        assert_eq!(render_opts.include_frontmatter, 1);
-        assert_eq!(render_opts.escape_special_chars, 1);
+    fn test_parse_invalid_path() {
+        let path = CString::new("nonexistent.hwp").unwrap();
+        let doc = unsafe { unhwp_parse_file(path.as_ptr()) };
+        assert!(doc.is_null());
 
-        let cleanup_opts = unhwp_cleanup_options_default();
-        assert_eq!(cleanup_opts.enabled, 0);
-        assert_eq!(cleanup_opts.detect_mojibake, 1);
+        let error = unhwp_last_error();
+        assert!(!error.is_null());
     }
 
     #[test]
-    fn test_null_handling() {
+    fn test_parse_and_convert() {
+        let path = "test-files/sample.hwp";
+        if !Path::new(path).exists() {
+            return;
+        }
+
+        let path_cstr = CString::new(path).unwrap();
+        let doc = unsafe { unhwp_parse_file(path_cstr.as_ptr()) };
+        assert!(!doc.is_null());
+
+        // Test markdown conversion
+        let md = unsafe { unhwp_to_markdown(doc, 0) };
+        assert!(!md.is_null());
+        unsafe { unhwp_free_string(md) };
+
+        // Test text conversion
+        let text = unsafe { unhwp_to_text(doc) };
+        assert!(!text.is_null());
+        unsafe { unhwp_free_string(text) };
+
+        // Test JSON conversion
+        let json = unsafe { unhwp_to_json(doc, UNHWP_JSON_PRETTY) };
+        assert!(!json.is_null());
+        unsafe { unhwp_free_string(json) };
+
+        // Test section count
+        let count = unsafe { unhwp_section_count(doc) };
+        assert!(count >= 0);
+
+        // Free document
+        unsafe { unhwp_free_document(doc) };
+    }
+
+    #[test]
+    fn test_null_document_operations() {
+        let md = unsafe { unhwp_to_markdown(ptr::null(), 0) };
+        assert!(md.is_null());
+
+        let text = unsafe { unhwp_to_text(ptr::null()) };
+        assert!(text.is_null());
+
+        let json = unsafe { unhwp_to_json(ptr::null(), 0) };
+        assert!(json.is_null());
+
+        let count = unsafe { unhwp_section_count(ptr::null()) };
+        assert_eq!(count, -1);
+
+        let res_count = unsafe { unhwp_resource_count(ptr::null()) };
+        assert_eq!(res_count, -1);
+    }
+
+    #[test]
+    fn test_free_null() {
+        // Should not crash
         unsafe {
-            // Test null path
-            assert_eq!(unhwp_detect_format(ptr::null()), FORMAT_UNKNOWN);
-
-            // Test null output pointer
-            let path = CString::new("test.hwp").unwrap();
-            let result = unhwp_to_markdown(path.as_ptr(), ptr::null_mut(), ptr::null_mut());
-            assert_eq!(result, UNHWP_ERR_INVALID_ARG);
+            unhwp_free_document(ptr::null_mut());
+            unhwp_free_string(ptr::null_mut());
         }
     }
 }
