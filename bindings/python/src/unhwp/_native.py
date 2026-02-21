@@ -183,6 +183,55 @@ UNHWP_FLAG_PARAGRAPH_SPACING = 4
 UNHWP_JSON_PRETTY = 0
 UNHWP_JSON_COMPACT = 1
 
+# Format detection constants
+FORMAT_UNKNOWN = 0
+FORMAT_HWP5 = 1
+FORMAT_HWPX = 2
+FORMAT_HWP3 = 3
+
+# Error code constants
+UNHWP_ERR_FILE_NOT_FOUND = 1
+UNHWP_ERR_PARSE = 2
+UNHWP_ERR_RENDER = 3
+UNHWP_ERR_UNSUPPORTED = 4
+
+# Type alias for result pointer (opaque handle)
+UnhwpResultPtr = ctypes.c_void_p
+
+
+class UnhwpRenderOptions(ctypes.Structure):
+    """Render options structure passed to native library."""
+    _fields_ = [
+        ("include_frontmatter", ctypes.c_bool),
+        ("image_path_prefix", ctypes.c_char_p),
+        ("table_fallback", ctypes.c_int),
+        ("preserve_line_breaks", ctypes.c_bool),
+        ("escape_special_chars", ctypes.c_bool),
+    ]
+
+
+class UnhwpCleanupOptions(ctypes.Structure):
+    """Cleanup options structure passed to native library."""
+    _fields_ = [
+        ("enabled", ctypes.c_bool),
+        ("preset", ctypes.c_int),
+        ("detect_mojibake", ctypes.c_bool),
+        ("preserve_frontmatter", ctypes.c_bool),
+    ]
+
+
+class UnhwpImage(ctypes.Structure):
+    """Image structure returned from native library."""
+    _fields_ = [
+        ("name", ctypes.c_char_p),
+        ("data", ctypes.POINTER(ctypes.c_uint8)),
+        ("data_len", ctypes.c_size_t),
+    ]
+
+
+# Public alias for the loaded library
+lib = _lib
+
 
 def get_library():
     """Get the loaded native library."""

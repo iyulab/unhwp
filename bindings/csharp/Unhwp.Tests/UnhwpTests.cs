@@ -39,14 +39,7 @@ public class MarkdownOptionsTests
     }
 
     [Fact]
-    public void MarkdownOptions_ToFlags_Empty()
-    {
-        var opts = new MarkdownOptions();
-        Assert.Equal(0, opts.ToFlags());
-    }
-
-    [Fact]
-    public void MarkdownOptions_ToFlags_AllSet()
+    public void MarkdownOptions_CanSetAllProperties()
     {
         var opts = new MarkdownOptions
         {
@@ -54,10 +47,18 @@ public class MarkdownOptionsTests
             EscapeSpecialChars = true,
             ParagraphSpacing = true,
         };
-        var flags = opts.ToFlags();
-        Assert.Equal(NativeMethods.UNHWP_FLAG_FRONTMATTER
-            | NativeMethods.UNHWP_FLAG_ESCAPE_SPECIAL
-            | NativeMethods.UNHWP_FLAG_PARAGRAPH_SPACING, flags);
+        Assert.True(opts.IncludeFrontmatter);
+        Assert.True(opts.EscapeSpecialChars);
+        Assert.True(opts.ParagraphSpacing);
+    }
+
+    [Fact]
+    public void MarkdownOptions_CanSetIndividualProperties()
+    {
+        var opts = new MarkdownOptions { IncludeFrontmatter = true };
+        Assert.True(opts.IncludeFrontmatter);
+        Assert.False(opts.EscapeSpecialChars);
+        Assert.False(opts.ParagraphSpacing);
     }
 }
 
