@@ -12,7 +12,7 @@ license = "MIT"
 repository = "https://github.com/iyulab/unhwp"
 keywords = ["hwp", "hwpx", "korean", "document", "markdown"]
 categories = ["parser-implementations", "text-processing"]
-rust-version = "1.75"
+rust-version = "1.87"
 documentation = "https://docs.rs/unhwp"
 
 [features]
