@@ -446,7 +446,9 @@ fn run_convert(
     let doc = parse_file(input)?;
 
     // Prepare render options
-    let mut options = RenderOptions::default().with_frontmatter();
+    let mut options = RenderOptions::default()
+        .with_frontmatter()
+        .with_image_prefix("images/");
 
     apply_cleanup(&mut options, cleanup);
 

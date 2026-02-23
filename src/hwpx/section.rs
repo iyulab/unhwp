@@ -63,9 +63,10 @@ impl<'a> SectionParser<'a> {
                             };
                             buf.clear();
                             let para = self.parse_paragraph(attrs, Some(section))?;
-                            if !para.is_empty() {
-                                section.content.push(Block::Paragraph(para));
-                            }
+                            // Don't filter empty paragraphs here — let the renderer
+                            // decide based on include_empty_paragraphs option.
+                            // This matches HWP5 behavior for consistency.
+                            section.content.push(Block::Paragraph(para));
                         }
                         "tbl" => {
                             buf.clear();
@@ -498,9 +499,9 @@ impl<'a> SectionParser<'a> {
                         buf.clear();
                         // Pass None for section since we're inside a table cell
                         let para = self.parse_paragraph(para_attrs, None)?;
-                        if !para.is_empty() {
-                            paragraphs.push(para);
-                        }
+                        // Don't filter empty paragraphs here — renderer handles it.
+                        // This matches HWP5 cell parsing behavior.
+                        paragraphs.push(para);
                     }
                 }
                 Ok(Event::Empty(e)) => {

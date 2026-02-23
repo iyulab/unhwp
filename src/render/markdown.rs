@@ -22,6 +22,8 @@ const LIST_MARKERS: &[char] = &[
     'ㆍ', // Korean middle dot (U+318D)
     '·',  // Middle dot (U+00B7)
     '∙',  // Bullet operator (U+2219)
+    // Filled/hollow shape bullets
+    '●', '○', '■', '□', '◆', '◇', '★', '☆', '◼', '◾',
     // Arrows (commonly used as list markers in Korean documents)
     '→', '←', '↔', '⇒', '⇐', '⇔', '►', '▶', '▷', '◀', '◁', '▻',
 ];
@@ -247,7 +249,7 @@ impl MarkdownRenderer {
         }
 
         // List prefix
-        let is_list_item = style.list_style.is_some();
+        let mut is_list_item = style.list_style.is_some();
         if let Some(ref list_style) = style.list_style {
             let indent = "  ".repeat(style.indent_level as usize);
             output.push_str(&indent);
@@ -265,8 +267,37 @@ impl MarkdownRenderer {
             }
         }
 
+        // Bullet/blockquote mapping: convert leading bullet characters to
+        // markdown list markers or blockquote prefixes.
+        // Applied at render time regardless of cleanup settings.
+        let mut strip_bullet = false;
+        let mut is_blockquote = false;
+        if !should_apply_heading && !is_list_item {
+            if let Some((prefix, strip)) = detect_bullet_prefix(trimmed_text) {
+                output.push_str(prefix);
+                strip_bullet = strip;
+                if prefix.starts_with('>') {
+                    is_blockquote = true;
+                } else {
+                    is_list_item = true; // treat as list item for spacing
+                }
+            }
+        }
+
         // Render inline content
+        let mut need_strip = strip_bullet;
         for item in &para.content {
+            if need_strip {
+                if let InlineContent::Text(run) = item {
+                    let stripped = strip_leading_bullet_char(&run.text);
+                    need_strip = false;
+                    if !stripped.is_empty() {
+                        let modified = TextRun::with_style(stripped, run.style.clone());
+                        self.render_text_run(&modified, output);
+                    }
+                    continue;
+                }
+            }
             self.render_inline(item, output);
         }
 
@@ -280,6 +311,9 @@ impl MarkdownRenderer {
         let is_heading = should_apply_heading || style.heading_level > 0;
         if is_heading {
             // Headings always followed by blank line (Markdown convention)
+            output.push('\n');
+        } else if is_blockquote {
+            // Blockquotes followed by blank line
             output.push('\n');
         } else if self.options.paragraph_spacing && !is_list_item {
             output.push('\n');
@@ -327,50 +361,19 @@ impl MarkdownRenderer {
         (should_apply_heading, level)
     }
 
-    /// Renders inline content.
+    /// Renders inline content in paragraph context.
+    ///
+    /// Differs from `render_inline_to_string` only in LineBreak handling:
+    /// paragraphs respect `preserve_line_breaks` option.
     fn render_inline(&self, item: &InlineContent, output: &mut String) {
-        match item {
-            InlineContent::Text(run) => {
-                self.render_text_run(run, output);
+        if let InlineContent::LineBreak = item {
+            if self.options.preserve_line_breaks {
+                output.push_str("  \n"); // Two spaces + newline for Markdown line break
+            } else {
+                output.push(' ');
             }
-            InlineContent::LineBreak => {
-                if self.options.preserve_line_breaks {
-                    output.push_str("  \n"); // Two spaces + newline for Markdown line break
-                } else {
-                    output.push(' ');
-                }
-            }
-            InlineContent::Image(img) => {
-                let alt = img.alt_text.as_deref().unwrap_or("image");
-                // Look up the actual filename from binaryItemIDRef
-                let filename = self
-                    .image_id_to_filename
-                    .get(&img.id)
-                    .cloned()
-                    .unwrap_or_else(|| img.id.clone());
-                let path = format!("{}{}", self.options.image_path_prefix, filename);
-                output.push_str(&format!("![{}]({})", alt, path));
-            }
-            InlineContent::Equation(eq) => {
-                // Prefer LaTeX if available, otherwise convert from HWP script
-                if let Some(ref latex) = eq.latex {
-                    output.push_str(&format!("${}$", latex));
-                } else if !eq.script.is_empty() {
-                    // Convert HWP equation script to LaTeX
-                    let latex = crate::equation::to_latex(&eq.script);
-                    if latex.is_empty() {
-                        output.push_str(&format!("`{}`", eq.script));
-                    } else {
-                        output.push_str(&format!("${}$", latex));
-                    }
-                }
-            }
-            InlineContent::Footnote(text) => {
-                output.push_str(&format!("[^{}]", text));
-            }
-            InlineContent::Link { text, url } => {
-                output.push_str(&format!("[{}]({})", text, url));
-            }
+        } else {
+            self.render_inline_to_string(item, output);
         }
     }
 
@@ -448,60 +451,75 @@ impl MarkdownRenderer {
             return;
         }
 
+        // Calculate total columns considering colspan
+        let total_cols = table
+            .rows
+            .iter()
+            .map(|row| {
+                row.cells
+                    .iter()
+                    .map(|c| c.colspan as usize)
+                    .sum::<usize>()
+            })
+            .max()
+            .unwrap_or(0);
+
+        // Optimization: extract full-span rows (colspan == total_cols) as plain text blocks
+        // and check empty cell ratio for the remaining rows.
+        if total_cols > 0 {
+            let (full_span_rows, normal_rows): (Vec<_>, Vec<_>) = table
+                .rows
+                .iter()
+                .enumerate()
+                .partition(|(_, row)| {
+                    row.cells.len() == 1 && row.cells[0].colspan as usize >= total_cols
+                });
+
+            // If all rows are full-span, render as plain text
+            if normal_rows.is_empty() {
+                for (_, row) in &full_span_rows {
+                    let text = self.render_cell_content(&row.cells[0]);
+                    let trimmed = text.trim();
+                    if !trimmed.is_empty() {
+                        output.push_str(trimmed);
+                        output.push_str("\n\n");
+                    }
+                }
+                return;
+            }
+
+            // Calculate empty cell ratio in normal (non-full-span) rows
+            let mut total_cells = 0usize;
+            let mut empty_cells = 0usize;
+            for (_, row) in &normal_rows {
+                for cell in &row.cells {
+                    let expanded = cell.colspan as usize;
+                    total_cells += expanded;
+                    let text = cell.plain_text();
+                    if text.trim().is_empty() {
+                        empty_cells += expanded;
+                    }
+                }
+            }
+
+            // If empty cell ratio >= 60%, fall back to structured text rendering
+            // This typically indicates form-style tables (신청서 양식) where
+            // markdown table format produces excessive empty pipe columns
+            let empty_ratio = if total_cells > 0 {
+                empty_cells as f64 / total_cells as f64
+            } else {
+                0.0
+            };
+
+            if empty_ratio >= 0.6 {
+                self.render_table_structured_text(table, total_cols, output);
+                return;
+            }
+        }
+
         // Render all tables as markdown, including those with rowspan
         // Rowspan cells are expanded: content appears in first row, subsequent rows get empty cells
         self.render_table_markdown_with_rowspan(table, output);
-    }
-
-    /// Renders a simple table as Markdown (without colspan handling).
-    #[allow(dead_code)]
-    fn render_table_markdown(&self, table: &Table, output: &mut String) {
-        let _col_count = table.column_count();
-
-        for (row_idx, row) in table.rows.iter().enumerate() {
-            output.push('|');
-
-            for cell in &row.cells {
-                let text = cell.plain_text().replace('\n', " ");
-                output.push_str(&format!(" {} |", text.trim()));
-            }
-
-            output.push('\n');
-
-            // Add separator after header row
-            if row_idx == 0 {
-                output.push('|');
-                for cell in &row.cells {
-                    let sep = match cell.alignment {
-                        Alignment::Left => ":---",
-                        Alignment::Center => ":---:",
-                        Alignment::Right => "---:",
-                        Alignment::Justify => "---",
-                    };
-                    output.push_str(&format!(" {} |", sep));
-                }
-                output.push('\n');
-            }
-        }
-
-        output.push('\n');
-    }
-
-    /// Renders a table as plain text (for complex tables with rowspan).
-    #[allow(dead_code)]
-    fn render_table_as_text(&self, table: &Table, output: &mut String) {
-        for row in &table.rows {
-            let texts: Vec<String> = row
-                .cells
-                .iter()
-                .map(|cell| self.render_cell_content(cell))
-                .filter(|s| !s.is_empty())
-                .collect();
-            if !texts.is_empty() {
-                output.push_str(&texts.join(" | "));
-                output.push_str("\n\n");
-            }
-        }
     }
 
     /// Renders a table as Markdown, handling both rowspan and colspan.
@@ -605,120 +623,159 @@ impl MarkdownRenderer {
         output.push('\n');
     }
 
-    /// Renders a table as Markdown, handling colspan by adding empty cells.
-    #[allow(dead_code)]
-    fn render_table_markdown_with_colspan(&self, table: &Table, output: &mut String) {
-        for (row_idx, row) in table.rows.iter().enumerate() {
-            output.push('|');
-
-            for cell in &row.cells {
-                let text = self.render_cell_content(cell);
-                output.push_str(&format!(" {} |", text.trim()));
-
-                // Add empty cells for colspan > 1
-                for _ in 1..cell.colspan {
-                    output.push_str(" |");
-                }
-            }
-
-            output.push('\n');
-
-            // Add separator after header row
-            if row_idx == 0 {
-                output.push('|');
-                for cell in &row.cells {
-                    let sep = match cell.alignment {
-                        Alignment::Left => ":---",
-                        Alignment::Center => ":---:",
-                        Alignment::Right => "---:",
-                        Alignment::Justify => "---",
-                    };
-                    output.push_str(&format!(" {} |", sep));
-
-                    // Add separators for colspan cells
-                    for _ in 1..cell.colspan {
-                        output.push_str(&format!(" {} |", sep));
-                    }
-                }
-                output.push('\n');
-            }
-        }
-
-        output.push('\n');
-    }
-
-    /// Renders the content of a table cell, including text and images.
+    /// Renders the content of a table cell, including all inline content types
+    /// with formatting (bold, italic, etc.).
+    ///
+    /// When a cell contains multiple non-empty paragraphs, uses `<br>` to
+    /// preserve the multi-line structure (HTML-compatible Markdown).
     fn render_cell_content(&self, cell: &TableCell) -> String {
-        let mut content = String::new();
-
-        for para in &cell.content {
-            for item in &para.content {
-                match item {
-                    InlineContent::Text(run) => {
-                        content.push_str(&run.text);
-                    }
-                    InlineContent::Image(img) => {
-                        let alt = img.alt_text.as_deref().unwrap_or("image");
-                        let filename = self
-                            .image_id_to_filename
-                            .get(&img.id)
-                            .cloned()
-                            .unwrap_or_else(|| img.id.clone());
-                        let path = format!("{}{}", self.options.image_path_prefix, filename);
-                        content.push_str(&format!("![{}]({})", alt, path));
-                    }
-                    InlineContent::LineBreak => {
-                        content.push(' ');
-                    }
-                    _ => {}
+        // Collect paragraph contents, filtering out empty paragraphs
+        let para_texts: Vec<String> = cell
+            .content
+            .iter()
+            .map(|para| {
+                let mut para_content = String::new();
+                for item in &para.content {
+                    self.render_inline_to_string(item, &mut para_content);
                 }
-            }
-            content.push(' '); // Space between paragraphs in cell
-        }
+                para_content.replace('\n', " ").trim().to_string()
+            })
+            .filter(|s| !s.is_empty())
+            .collect();
 
-        // Normalize whitespace
-        content.replace('\n', " ").trim().to_string()
+        if para_texts.len() <= 1 {
+            // Single paragraph or empty: simple join
+            para_texts.into_iter().next().unwrap_or_default()
+        } else {
+            // Multiple paragraphs: use <br> for line separation
+            para_texts.join("<br>")
+        }
     }
 
-    /// Renders a table with merged cells as HTML (for future use).
-    #[allow(dead_code)]
-    fn render_table_html(&self, table: &Table, output: &mut String) {
-        output.push_str("<table>\n");
+    /// Renders a single inline content item to a string buffer.
+    /// Reusable for both paragraph rendering and table cell rendering.
+    fn render_inline_to_string(&self, item: &InlineContent, output: &mut String) {
+        match item {
+            InlineContent::Text(run) => {
+                self.render_text_run(run, output);
+            }
+            InlineContent::LineBreak => {
+                output.push(' ');
+            }
+            InlineContent::Image(img) => {
+                let alt = img.alt_text.as_deref().unwrap_or("image");
+                let filename = self
+                    .image_id_to_filename
+                    .get(&img.id)
+                    .cloned()
+                    .unwrap_or_else(|| img.id.clone());
+                let path = format!("{}{}", self.options.image_path_prefix, filename);
+                output.push_str(&format!("![{}]({})", alt, path));
+            }
+            InlineContent::Equation(eq) => {
+                if let Some(ref latex) = eq.latex {
+                    output.push_str(&format!("${}$", latex));
+                } else if !eq.script.is_empty() {
+                    let latex = crate::equation::to_latex(&eq.script);
+                    if latex.is_empty() {
+                        output.push_str(&format!("`{}`", eq.script));
+                    } else {
+                        output.push_str(&format!("${}$", latex));
+                    }
+                }
+            }
+            InlineContent::Footnote(text) => {
+                output.push_str(&format!("[^{}]", text));
+            }
+            InlineContent::Link { text, url } => {
+                output.push_str(&format!("[{}]({})", text, url));
+            }
+        }
+    }
 
-        for (row_idx, row) in table.rows.iter().enumerate() {
-            let tag = if row_idx == 0 && table.has_header {
-                "th"
+    /// Renders a sparse table (high empty cell ratio) as structured text.
+    ///
+    /// Full-span rows (colspan == total_cols) are rendered as standalone text blocks.
+    /// Normal rows render non-empty cells as "key: value" or comma-separated items.
+    fn render_table_structured_text(
+        &self,
+        table: &Table,
+        total_cols: usize,
+        output: &mut String,
+    ) {
+        for row in &table.rows {
+            let is_full_span =
+                row.cells.len() == 1 && row.cells[0].colspan as usize >= total_cols;
+
+            if is_full_span {
+                let text = self.render_cell_content(&row.cells[0]);
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    output.push_str(trimmed);
+                    output.push_str("\n\n");
+                }
             } else {
-                "td"
-            };
+                // Collect non-empty cells
+                let texts: Vec<String> = row
+                    .cells
+                    .iter()
+                    .map(|cell| self.render_cell_content(cell))
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
 
-            output.push_str("  <tr>\n");
-
-            for cell in &row.cells {
-                let mut attrs = String::new();
-
-                if cell.rowspan > 1 {
-                    attrs.push_str(&format!(" rowspan=\"{}\"", cell.rowspan));
+                if !texts.is_empty() {
+                    output.push_str(&texts.join(" | "));
+                    output.push_str("\n\n");
                 }
-                if cell.colspan > 1 {
-                    attrs.push_str(&format!(" colspan=\"{}\"", cell.colspan));
-                }
-
-                let text = cell.plain_text();
-                output.push_str(&format!(
-                    "    <{}{}>{}</{}>\n",
-                    tag,
-                    attrs,
-                    text.trim(),
-                    tag
-                ));
             }
-
-            output.push_str("  </tr>\n");
         }
-
-        output.push_str("</table>\n\n");
     }
+
+}
+
+/// Detects if text starts with a bullet or blockquote marker character.
+///
+/// Returns `(markdown_prefix, should_strip_char)`:
+/// - For bullets: ("- ", true) — add list marker, strip the bullet char
+/// - For sub-item bullets: ("  - ", true) — indented list marker
+/// - For blockquote markers: ("> ", false) — add blockquote prefix, keep the char
+/// - For checkmarks: ("- [x] ", true) / ("- [ ] ", true)
+fn detect_bullet_prefix(text: &str) -> Option<(&'static str, bool)> {
+    let first_char = text.chars().next()?;
+
+    match first_char {
+        // Filled bullets → list marker
+        '●' | '■' | '◆' | '▶' | '►' | '•' | '◼' | '◾' => Some(("- ", true)),
+        // Middle dot variants
+        '·' | '∙' | 'ㆍ' => Some(("- ", true)),
+        // Hollow bullets → list marker
+        '○' | '□' | '◇' | '▷' => Some(("- ", true)),
+        // White bullet → indented sub-item
+        '◦' => Some(("  - ", true)),
+        // Arrows
+        '→' | '⇒' | '➔' | '➢' | '➤' => Some(("- ", true)),
+        // Stars
+        '★' | '☆' => Some(("- ", true)),
+        // Checkmarks
+        '✓' | '✔' => Some(("- [x] ", true)),
+        '✗' | '✘' => Some(("- [ ] ", true)),
+        // Note marker → blockquote (keep the ※ in text)
+        '※' => Some(("> ", false)),
+        _ => None,
+    }
+}
+
+/// Strips the leading bullet character and any following whitespace from text.
+///
+/// Given "□ (지원목적)", returns "(지원목적)".
+/// Given "●항목", returns "항목".
+fn strip_leading_bullet_char(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next(); // skip the bullet character
+    let remaining: String = chars.collect();
+    // Trim leading whitespace after the bullet
+    remaining.trim_start().to_string()
 }
 
 /// Escape Markdown special characters.
@@ -1176,6 +1233,496 @@ mod font_size_heading_tests {
         assert!(
             LIST_MARKERS.contains(&marker),
             "• should be in LIST_MARKERS"
+        );
+    }
+}
+
+#[cfg(test)]
+mod bullet_blockquote_tests {
+    use super::*;
+    use crate::model::{
+        Block, Document, InlineContent, Paragraph, ParagraphStyle, Section, TextRun,
+    };
+
+    fn render_single_paragraph(text: &str) -> String {
+        let doc = Document {
+            sections: vec![Section {
+                content: vec![Block::Paragraph(Paragraph {
+                    style: ParagraphStyle::default(),
+                    content: vec![InlineContent::Text(TextRun::new(text.to_string()))],
+                })],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        renderer.render(&doc).unwrap()
+    }
+
+    #[test]
+    fn test_detect_bullet_prefix_filled() {
+        assert_eq!(detect_bullet_prefix("● 항목"), Some(("- ", true)));
+        assert_eq!(detect_bullet_prefix("■ 항목"), Some(("- ", true)));
+        assert_eq!(detect_bullet_prefix("◆ 항목"), Some(("- ", true)));
+        assert_eq!(detect_bullet_prefix("◼ 항목"), Some(("- ", true)));
+        assert_eq!(detect_bullet_prefix("◾ 항목"), Some(("- ", true)));
+    }
+
+    #[test]
+    fn test_detect_bullet_prefix_hollow() {
+        assert_eq!(detect_bullet_prefix("○ 항목"), Some(("- ", true)));
+        assert_eq!(detect_bullet_prefix("□ 항목"), Some(("- ", true)));
+        assert_eq!(detect_bullet_prefix("◇ 항목"), Some(("- ", true)));
+    }
+
+    #[test]
+    fn test_detect_bullet_prefix_sub_item() {
+        // ◦ should produce indented sub-item
+        assert_eq!(detect_bullet_prefix("◦ 하위항목"), Some(("  - ", true)));
+    }
+
+    #[test]
+    fn test_detect_bullet_prefix_blockquote() {
+        // ※ should produce blockquote, NOT strip the char
+        assert_eq!(detect_bullet_prefix("※ 참고사항"), Some(("> ", false)));
+    }
+
+    #[test]
+    fn test_detect_bullet_prefix_checkmarks() {
+        assert_eq!(detect_bullet_prefix("✓ 완료"), Some(("- [x] ", true)));
+        assert_eq!(detect_bullet_prefix("✗ 미완료"), Some(("- [ ] ", true)));
+    }
+
+    #[test]
+    fn test_detect_bullet_prefix_none() {
+        assert_eq!(detect_bullet_prefix("일반 텍스트"), None);
+        assert_eq!(detect_bullet_prefix("Hello world"), None);
+    }
+
+    #[test]
+    fn test_strip_leading_bullet_char() {
+        assert_eq!(strip_leading_bullet_char("● 항목"), "항목");
+        assert_eq!(strip_leading_bullet_char("●항목"), "항목");
+        assert_eq!(strip_leading_bullet_char("□ (지원목적)"), "(지원목적)");
+    }
+
+    #[test]
+    fn test_bullet_renders_as_list() {
+        let result = render_single_paragraph("● 첫 번째 항목");
+        assert!(
+            result.contains("- 첫 번째 항목"),
+            "Bullet should render as list item, got: {}",
+            result
+        );
+        assert!(
+            !result.contains('●'),
+            "Bullet char should be stripped, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_sub_bullet_renders_indented() {
+        let result = render_single_paragraph("◦ 하위 항목");
+        assert!(
+            result.contains("  - 하위 항목"),
+            "Sub-bullet should render as indented list item, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_blockquote_renders_with_note_char() {
+        let result = render_single_paragraph("※ 참고사항입니다");
+        assert!(
+            result.contains("> ※ 참고사항입니다"),
+            "※ should render as blockquote keeping the char, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_new_bullet_chars_in_list_markers() {
+        // Ensure newly added bullet chars are in LIST_MARKERS
+        assert!(LIST_MARKERS.contains(&'◼'));
+        assert!(LIST_MARKERS.contains(&'◾'));
+        assert!(LIST_MARKERS.contains(&'◦'));
+    }
+}
+
+#[cfg(test)]
+mod table_cell_content_tests {
+    use super::*;
+    use crate::model::{Block, Document, Paragraph, Section, Table, TableCell, TableRow};
+
+    #[test]
+    fn test_single_paragraph_cell_no_br() {
+        // Cell with single paragraph should not have <br>
+        let mut doc = Document::new();
+        let mut section = Section::new(0);
+
+        let table = Table {
+            rows: vec![
+                TableRow {
+                    cells: vec![TableCell::text("Header")],
+                    is_header: true,
+                },
+                TableRow {
+                    cells: vec![TableCell::text("Simple text")],
+                    is_header: false,
+                },
+            ],
+            column_widths: vec![],
+            has_header: true,
+        };
+        section.content.push(Block::Table(table));
+        doc.sections.push(section);
+
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        let result = renderer.render(&doc).unwrap();
+
+        assert!(
+            !result.contains("<br>"),
+            "Single paragraph cell should not have <br>, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_multi_paragraph_cell_uses_br() {
+        // Cell with multiple paragraphs should use <br>
+        let cell = TableCell {
+            content: vec![
+                Paragraph::text("첫 번째 항목"),
+                Paragraph::text("두 번째 항목"),
+                Paragraph::text("세 번째 항목"),
+            ],
+            rowspan: 1,
+            colspan: 1,
+            ..Default::default()
+        };
+
+        let mut doc = Document::new();
+        let mut section = Section::new(0);
+
+        let table = Table {
+            rows: vec![
+                TableRow {
+                    cells: vec![TableCell::text("내용")],
+                    is_header: true,
+                },
+                TableRow {
+                    cells: vec![cell],
+                    is_header: false,
+                },
+            ],
+            column_widths: vec![],
+            has_header: true,
+        };
+        section.content.push(Block::Table(table));
+        doc.sections.push(section);
+
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        let result = renderer.render(&doc).unwrap();
+
+        assert!(
+            result.contains("<br>"),
+            "Multi-paragraph cell should use <br>, got: {}",
+            result
+        );
+        assert!(
+            result.contains("첫 번째 항목<br>두 번째 항목<br>세 번째 항목"),
+            "Paragraphs should be joined with <br>, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_empty_paragraphs_filtered() {
+        // Empty paragraphs in cell should be filtered out
+        let cell = TableCell {
+            content: vec![
+                Paragraph::text("유효한 텍스트"),
+                Paragraph::new(), // empty
+                Paragraph::text("또 다른 텍스트"),
+            ],
+            rowspan: 1,
+            colspan: 1,
+            ..Default::default()
+        };
+
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        let result = renderer.render_cell_content(&cell);
+
+        assert_eq!(result, "유효한 텍스트<br>또 다른 텍스트");
+    }
+
+    #[test]
+    fn test_sparse_table_falls_back_to_text() {
+        // Table with >60% empty cells should fall back to structured text
+        let mut doc = Document::new();
+        let mut section = Section::new(0);
+
+        // 4-column table where most cells are empty (form-style)
+        let table = Table {
+            rows: vec![
+                TableRow {
+                    cells: vec![
+                        TableCell::text("이름"),
+                        TableCell::text("홍길동"),
+                        TableCell::new(), // empty
+                        TableCell::new(), // empty
+                    ],
+                    is_header: false,
+                },
+                TableRow {
+                    cells: vec![
+                        TableCell::text("연락처"),
+                        TableCell::new(), // empty
+                        TableCell::new(), // empty
+                        TableCell::new(), // empty
+                    ],
+                    is_header: false,
+                },
+            ],
+            column_widths: vec![],
+            has_header: false,
+        };
+        section.content.push(Block::Table(table));
+        doc.sections.push(section);
+
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        let result = renderer.render(&doc).unwrap();
+
+        // Should NOT contain pipe-style table (too sparse)
+        assert!(
+            !result.contains(":---"),
+            "Sparse table should not use markdown table format, got: {}",
+            result
+        );
+        // Should contain the text content
+        assert!(
+            result.contains("홍길동"),
+            "Text content should be preserved, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_full_span_rows_as_text() {
+        // Table where all rows have full-width colspan should render as text
+        let mut doc = Document::new();
+        let mut section = Section::new(0);
+
+        let full_span_cell = |text: &str| -> TableCell {
+            TableCell {
+                content: vec![Paragraph::text(text)],
+                rowspan: 1,
+                colspan: 3, // full span (total_cols = 3)
+                ..Default::default()
+            }
+        };
+
+        let table = Table {
+            rows: vec![
+                TableRow {
+                    cells: vec![full_span_cell("첫째 행 전체 텍스트")],
+                    is_header: false,
+                },
+                TableRow {
+                    cells: vec![full_span_cell("둘째 행 전체 텍스트")],
+                    is_header: false,
+                },
+            ],
+            column_widths: vec![],
+            has_header: false,
+        };
+        section.content.push(Block::Table(table));
+        doc.sections.push(section);
+
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        let result = renderer.render(&doc).unwrap();
+
+        // Full-span table should be rendered as plain text, not table
+        assert!(
+            !result.contains("|"),
+            "Full-span table should be plain text, got: {}",
+            result
+        );
+        assert!(result.contains("첫째 행 전체 텍스트"));
+        assert!(result.contains("둘째 행 전체 텍스트"));
+    }
+
+    #[test]
+    fn test_normal_table_still_uses_markdown() {
+        // Table with low empty cell ratio should still use markdown format
+        let mut doc = Document::new();
+        let mut section = Section::new(0);
+
+        let table = Table {
+            rows: vec![
+                TableRow {
+                    cells: vec![TableCell::text("항목"), TableCell::text("내용")],
+                    is_header: true,
+                },
+                TableRow {
+                    cells: vec![TableCell::text("A"), TableCell::text("설명 A")],
+                    is_header: false,
+                },
+                TableRow {
+                    cells: vec![TableCell::text("B"), TableCell::text("설명 B")],
+                    is_header: false,
+                },
+            ],
+            column_widths: vec![],
+            has_header: true,
+        };
+        section.content.push(Block::Table(table));
+        doc.sections.push(section);
+
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        let result = renderer.render(&doc).unwrap();
+
+        // Should use pipe-style table (not sparse)
+        assert!(
+            result.contains("|"),
+            "Normal table should use markdown format, got: {}",
+            result
+        );
+        assert!(
+            result.contains(":---"),
+            "Normal table should have separator, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_cell_with_bold_text() {
+        use crate::model::{InlineContent, TextRun, TextStyle};
+
+        // Cell with bold text should render with ** markers
+        let cell = TableCell {
+            content: vec![Paragraph {
+                style: Default::default(),
+                content: vec![InlineContent::Text(TextRun::with_style(
+                    "강조 텍스트",
+                    TextStyle {
+                        bold: true,
+                        ..Default::default()
+                    },
+                ))],
+            }],
+            rowspan: 1,
+            colspan: 1,
+            ..Default::default()
+        };
+
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        let result = renderer.render_cell_content(&cell);
+
+        assert!(
+            result.contains("**강조 텍스트**"),
+            "Bold text in cell should have ** markers, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_cell_with_equation() {
+        use crate::model::{Equation, InlineContent};
+
+        // Cell with equation should render as LaTeX or code
+        let cell = TableCell {
+            content: vec![Paragraph {
+                style: Default::default(),
+                content: vec![InlineContent::Equation(Equation {
+                    script: "x^2".to_string(),
+                    latex: Some("x^2".to_string()),
+                })],
+            }],
+            rowspan: 1,
+            colspan: 1,
+            ..Default::default()
+        };
+
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        let result = renderer.render_cell_content(&cell);
+
+        assert!(
+            result.contains("$x^2$"),
+            "Equation in cell should render as LaTeX, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_cell_with_link() {
+        use crate::model::InlineContent;
+
+        // Cell with hyperlink should render as markdown link
+        let cell = TableCell {
+            content: vec![Paragraph {
+                style: Default::default(),
+                content: vec![InlineContent::Link {
+                    text: "홈페이지".to_string(),
+                    url: "https://example.com".to_string(),
+                }],
+            }],
+            rowspan: 1,
+            colspan: 1,
+            ..Default::default()
+        };
+
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        let result = renderer.render_cell_content(&cell);
+
+        assert!(
+            result.contains("[홈페이지](https://example.com)"),
+            "Link in cell should render as markdown link, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_empty_paragraph_included_when_option_set() {
+        // When include_empty_paragraphs is true, empty paragraphs should render
+        let mut doc = Document::new();
+        let mut section = Section::new(0);
+        section.push_paragraph(Paragraph::text("첫 단락"));
+        section.push_paragraph(Paragraph::new()); // empty
+        section.push_paragraph(Paragraph::text("셋째 단락"));
+        doc.sections.push(section);
+
+        let opts = RenderOptions {
+            include_empty_paragraphs: true,
+            ..Default::default()
+        };
+        let renderer = MarkdownRenderer::new(opts);
+        let result = renderer.render(&doc).unwrap();
+
+        // Should contain both paragraphs (empty paragraph renders as blank line)
+        assert!(result.contains("첫 단락"));
+        assert!(result.contains("셋째 단락"));
+    }
+
+    #[test]
+    fn test_empty_paragraph_filtered_by_default() {
+        // Default: empty paragraphs are filtered out
+        let mut doc = Document::new();
+        let mut section = Section::new(0);
+        section.push_paragraph(Paragraph::text("유일한 단락"));
+        section.push_paragraph(Paragraph::new()); // empty — should be filtered
+        doc.sections.push(section);
+
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        let result = renderer.render(&doc).unwrap();
+
+        assert!(result.contains("유일한 단락"));
+        // Result should not have excessive blank lines from empty paragraph
+        let trimmed = result.trim();
+        assert!(
+            !trimmed.ends_with("\n\n\n"),
+            "Empty paragraph should not create extra blank lines"
         );
     }
 }

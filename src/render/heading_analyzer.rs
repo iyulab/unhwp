@@ -393,7 +393,12 @@ impl HeadingAnalyzer {
         // Fallback: Use explicit style if present (even when trust=false)
         // This handles numbered headings like "1. 서론" with explicit H1 style
         // Sequence analysis may still demote them if they form a consecutive pattern
-        if style.heading_level > 0 {
+        // Re-apply exclusions: bullets and over-length text are never headings
+        if style.heading_level > 0
+            && !self.looks_like_bullet_item(trimmed)
+            && !self.looks_like_caption(trimmed)
+            && trimmed.chars().count() <= self.config.max_text_length
+        {
             let level = self.cap_heading_level(style.heading_level);
             return HeadingDecision::Explicit(level);
         }
@@ -406,7 +411,10 @@ impl HeadingAnalyzer {
     /// For a paragraph to be inferred as a heading:
     /// - Font size must be >= base_font_size * size_threshold_ratio
     /// - Bold formatting is a bonus signal but not required
+    /// - Center-aligned text requires a higher threshold (to avoid signature/label misclassification)
     fn infer_heading_from_style(&self, para: &Paragraph) -> Option<u8> {
+        use crate::model::Alignment;
+
         // Must have text content
         let text = para.plain_text();
         let trimmed = text.trim();
@@ -417,11 +425,18 @@ impl HeadingAnalyzer {
         // Get dominant font size
         let font_size = para.dominant_font_size()?;
 
+        // Determine the effective threshold ratio.
+        // Center-aligned text (common for signatures, labels, footers in Korean docs)
+        // requires a higher font-size ratio to be inferred as a heading.
+        let effective_ratio = if para.style.alignment == Alignment::Center {
+            // Center-aligned: require at least 1.5x base font (vs default ~1.15x)
+            self.config.size_threshold_ratio.max(1.5)
+        } else {
+            self.config.size_threshold_ratio
+        };
+
         // Check if font is larger than base
-        if !self
-            .stats
-            .is_larger_than_base(font_size, self.config.size_threshold_ratio)
-        {
+        if !self.stats.is_larger_than_base(font_size, effective_ratio) {
             return None;
         }
 
@@ -473,10 +488,29 @@ impl HeadingAnalyzer {
         const BULLET_MARKERS: &[char] = &[
             'ㅇ', 'ㆍ', '○', '●', '◎', '■', '□', '▪', '▫', '◆', '◇', '★', '☆', '※', '•', '-', '–',
             '—', '→', '▶', '►', '▷', '▹', '◁', '◀', '◃', '◂', '·', '∙',
+            '*',  // Asterisk — common annotation marker in Korean official documents
+            '◦',  // U+25E6 WHITE BULLET (issue #3)
+            '◼',  // U+25FC BLACK MEDIUM SMALL SQUARE
+            '◾',  // U+25FE BLACK MEDIUM SMALL SQUARE
         ];
 
         let first_char = trimmed.chars().next().unwrap();
         BULLET_MARKERS.contains(&first_char)
+    }
+
+    /// Check if text looks like a figure/table caption (should not be a heading).
+    ///
+    /// Korean documents frequently use patterns like [그림 1], [표 2], [Figure 3]
+    /// as captions that may have large font or explicit heading styles but are not headings.
+    fn looks_like_caption(&self, text: &str) -> bool {
+        let trimmed = text.trim_start();
+        if trimmed.is_empty() {
+            return false;
+        }
+        const CAPTION_PREFIXES: &[&str] = &[
+            "[그림", "[표", "[Figure", "[Table", "[Fig.", "[그림]", "[표]",
+        ];
+        CAPTION_PREFIXES.iter().any(|prefix| trimmed.starts_with(prefix))
     }
 
     /// Cap heading level to configured maximum.
@@ -1269,5 +1303,166 @@ mod tests {
         assert!(stats.is_larger_than_base(16.0, 1.2)); // 1.33x
         assert!(!stats.is_larger_than_base(12.0, 1.2)); // 1.0x
         assert!(!stats.is_larger_than_base(14.0, 1.2)); // 1.16x (under threshold)
+    }
+
+    // ========================================================================
+    // Center-Alignment Heading Demotion Tests
+    // ========================================================================
+
+    fn make_center_styled_paragraph(
+        text: &str,
+        heading_level: u8,
+        style: TextStyle,
+    ) -> Paragraph {
+        use crate::model::Alignment;
+        let mut para = Paragraph::with_style(ParagraphStyle {
+            heading_level,
+            alignment: Alignment::Center,
+            ..Default::default()
+        });
+        para.content
+            .push(InlineContent::Text(TextRun::with_style(text, style)));
+        para
+    }
+
+    #[test]
+    fn test_center_aligned_moderate_font_not_inferred() {
+        // Center-aligned text with moderate large font (1.33x) should NOT be
+        // inferred as heading — common pattern for signatures/labels in Korean docs
+        let config = HeadingConfig::default()
+            .with_statistical_inference(true)
+            .with_trust_explicit(false);
+
+        let mut analyzer = HeadingAnalyzer::new(config);
+
+        let body = make_styled_paragraph(
+            "본문 텍스트입니다. 기준 폰트 크기를 설정하기 위한 텍스트.",
+            0,
+            TextStyle {
+                font_size: Some(12.0),
+                ..Default::default()
+            },
+        );
+
+        // Center-aligned, bold, 16pt (1.33x) — like a signature block
+        let signature = make_center_styled_paragraph(
+            "스마트제조혁신추진단장",
+            0,
+            TextStyle {
+                bold: true,
+                font_size: Some(16.0), // 1.33x — below 1.5x threshold for center
+                ..Default::default()
+            },
+        );
+
+        let doc = Document {
+            sections: vec![Section {
+                content: vec![Block::Paragraph(body), Block::Paragraph(signature)],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let decisions = analyzer.analyze(&doc);
+
+        assert!(
+            !decisions[1].is_heading(),
+            "Center-aligned moderate-font text should NOT be heading: {:?}",
+            decisions[1]
+        );
+    }
+
+    #[test]
+    fn test_center_aligned_very_large_font_inferred() {
+        // Center-aligned text with VERY large font (1.67x) SHOULD be heading
+        // — clearly a title, not a signature
+        let config = HeadingConfig::default()
+            .with_statistical_inference(true)
+            .with_trust_explicit(false);
+
+        let mut analyzer = HeadingAnalyzer::new(config);
+
+        let body = make_styled_paragraph(
+            "본문 텍스트입니다. 기준 폰트 크기를 설정하기 위한 텍스트.",
+            0,
+            TextStyle {
+                font_size: Some(12.0),
+                ..Default::default()
+            },
+        );
+
+        // Center-aligned, bold, 20pt (1.67x) — clearly a document title
+        let title = make_center_styled_paragraph(
+            "문서 제목",
+            0,
+            TextStyle {
+                bold: true,
+                font_size: Some(20.0), // 1.67x — above 1.5x threshold
+                ..Default::default()
+            },
+        );
+
+        let doc = Document {
+            sections: vec![Section {
+                content: vec![Block::Paragraph(body), Block::Paragraph(title)],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let decisions = analyzer.analyze(&doc);
+
+        assert!(
+            decisions[1].is_heading(),
+            "Center-aligned very-large-font text SHOULD be heading: {:?}",
+            decisions[1]
+        );
+    }
+
+    #[test]
+    fn test_left_aligned_moderate_font_still_heading() {
+        // Left-aligned text with moderate font (1.33x) should still be heading
+        // (standard threshold applies)
+        let config = HeadingConfig::default()
+            .with_statistical_inference(true)
+            .with_trust_explicit(false);
+
+        let mut analyzer = HeadingAnalyzer::new(config);
+
+        let body = make_styled_paragraph(
+            "본문 텍스트입니다. 기준 폰트 크기를 설정하기 위한 텍스트.",
+            0,
+            TextStyle {
+                font_size: Some(12.0),
+                ..Default::default()
+            },
+        );
+
+        // Left-aligned, bold, 16pt (1.33x)
+        let heading = make_styled_paragraph(
+            "섹션 제목",
+            0,
+            TextStyle {
+                bold: true,
+                font_size: Some(16.0), // 1.33x — above 1.15x default threshold
+                ..Default::default()
+            },
+        );
+
+        let doc = Document {
+            sections: vec![Section {
+                content: vec![Block::Paragraph(body), Block::Paragraph(heading)],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let decisions = analyzer.analyze(&doc);
+
+        assert!(
+            decisions[1].is_heading(),
+            "Left-aligned moderate-font text should still be heading: {:?}",
+            decisions[1]
+        );
     }
 }

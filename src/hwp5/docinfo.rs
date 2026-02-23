@@ -8,16 +8,28 @@ use crate::model::{Alignment, ListStyle, ParagraphStyle, StyleRegistry, TextStyl
 
 // ============================================================================
 // CharShape Record Byte Offsets (HWP 5.0 Spec 표 42)
+//
+// Exact layout:
+//   Offset  0-13: FaceID[7]       (7 × u16 = 14 bytes)
+//   Offset 14-20: CharRatio[7]    (7 × u8  =  7 bytes)
+//   Offset 21-27: CharSpacing[7]  (7 × i8  =  7 bytes)
+//   Offset 28-34: RelativeSize[7] (7 × u8  =  7 bytes)
+//   Offset 35-41: CharPosition[7] (7 × i8  =  7 bytes)
+//   Offset 42-45: BaseSize        (i32, hundredths of a point)
+//   Offset 46-49: Properties      (u32 bitmask)
+//   Offset 50:    ShadowGap1      (i8)
+//   Offset 51:    ShadowGap2      (i8)
+//   Offset 52-55: TextColor       (COLORREF)
 // ============================================================================
 
 /// Offset for face name ID (7 x u16 for different scripts)
 const CHAR_SHAPE_FACE_NAME_OFFSET: usize = 0;
 /// Offset for base font size (i32, in HWP units: hundredths of a point)
-const CHAR_SHAPE_BASE_SIZE_OFFSET: usize = 70;
+const CHAR_SHAPE_BASE_SIZE_OFFSET: usize = 42;
 /// Offset for text properties (u32 bitmask)
-const CHAR_SHAPE_PROPERTIES_OFFSET: usize = 74;
-/// Offset for text color (RGB, 3 bytes)
-const CHAR_SHAPE_TEXT_COLOR_OFFSET: usize = 78;
+const CHAR_SHAPE_PROPERTIES_OFFSET: usize = 46;
+/// Offset for text color (COLORREF, 4 bytes)
+const CHAR_SHAPE_TEXT_COLOR_OFFSET: usize = 52;
 
 // CharShape property bit masks
 const CHAR_PROP_BOLD: u32 = 1 << 0;
@@ -215,23 +227,23 @@ struct StyleData {
 /// Parses HWPTAG_FACE_NAME record.
 fn parse_face_name(record: &Record) -> Result<String> {
     let data = record.data();
-    if data.len() < 2 {
+    if data.len() < 3 {
         return Err(crate::error::Error::InvalidData(
             "FaceName too small".into(),
         ));
     }
 
-    // FaceName structure:
-    // - Property flags (1 byte)
-    // - Name length in WCHARs (1 byte) - sometimes
-    // - Name (UTF-16LE string)
-    // The exact structure varies by version
+    // FaceName structure (HWP 5.0 Spec):
+    // - Byte 0:   Property flags (u8)
+    // - Byte 1-2: Name length in WCHARs (u16 LE)
+    // - Byte 3+:  UTF-16LE name string
 
-    // Skip property byte and find the name
-    // Name is typically at offset 2 or later, UTF-16LE encoded
-    let name_start = 2;
-    if data.len() > name_start {
-        decode_utf16le_string(&data[name_start..])
+    let name_len = u16::from_le_bytes([data[1], data[2]]) as usize;
+    let name_start = 3;
+    let name_end = (name_start + name_len * 2).min(data.len());
+
+    if name_end > name_start {
+        decode_utf16le_string(&data[name_start..name_end])
     } else {
         Ok(String::new())
     }
@@ -242,14 +254,16 @@ fn parse_char_shape(record: &Record) -> Result<CharShapeData> {
     let data = record.data();
 
     // CharShape structure (HWP 5.0 Spec 표 42):
-    // Offset 0-13: Face name IDs for different scripts (7 x u16)
-    // Offset 14-27: Character ratios (7 x u8) for different scripts
-    // Offset 28-41: Character spacings (7 x i8)
-    // Offset 42-55: Relative sizes (7 x u8)
-    // Offset 56-69: Position adjustments (7 x i8)
-    // Offset 70-73: Base size (i32, in HWP units)
-    // Offset 74-77: Properties (u32)
-    // Offset 78-80: Text color (RGB, 3 bytes)
+    // Offset  0-13: FaceID[7]       (7 × u16 = 14 bytes)
+    // Offset 14-20: CharRatio[7]    (7 × u8  =  7 bytes)
+    // Offset 21-27: CharSpacing[7]  (7 × i8  =  7 bytes)
+    // Offset 28-34: RelativeSize[7] (7 × u8  =  7 bytes)
+    // Offset 35-41: CharPosition[7] (7 × i8  =  7 bytes)
+    // Offset 42-45: BaseSize        (i32, hundredths of a point)
+    // Offset 46-49: Properties      (u32 bitmask)
+    // Offset 50:    ShadowGap1      (i8)
+    // Offset 51:    ShadowGap2      (i8)
+    // Offset 52-55: TextColor       (COLORREF)
 
     // Need at least 2 bytes for face name index
     if data.len() < CHAR_SHAPE_FACE_NAME_OFFSET + 2 {
