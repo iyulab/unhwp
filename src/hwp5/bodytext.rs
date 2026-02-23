@@ -128,12 +128,7 @@ pub fn parse_section(
 
             TagId::ParaText => {
                 let text_data = record.data();
-                parse_para_text(
-                    text_data,
-                    &mut paragraph_context,
-                    picture_counter,
-                    styles,
-                )?;
+                parse_para_text(text_data, &mut paragraph_context, picture_counter, styles)?;
             }
 
             TagId::ParaCharShape => {
@@ -153,7 +148,9 @@ pub fn parse_section(
                 let table_end = find_block_end(&records, idx, table_level);
 
                 // Parse table from the collected records
-                if let Some(table) = parse_table_records(&records[idx..table_end], styles, picture_counter) {
+                if let Some(table) =
+                    parse_table_records(&records[idx..table_end], styles, picture_counter)
+                {
                     section.content.push(crate::model::Block::Table(table));
                 }
 
@@ -191,7 +188,11 @@ fn find_block_end(records: &[Record], start_idx: usize, base_level: u16) -> usiz
 }
 
 /// Parses table records into a Table structure.
-fn parse_table_records(records: &[Record], styles: &StyleRegistry, picture_counter: &mut u32) -> Option<Table> {
+fn parse_table_records(
+    records: &[Record],
+    styles: &StyleRegistry,
+    picture_counter: &mut u32,
+) -> Option<Table> {
     if records.is_empty() {
         return None;
     }
@@ -329,7 +330,11 @@ fn find_cell_end(records: &[Record], start_idx: usize, cell_level: u16) -> usize
 }
 
 /// Parses cell content from a slice of records starting with ListHeader
-fn parse_cell_content(records: &[Record], styles: &StyleRegistry, picture_counter: &mut u32) -> CellData {
+fn parse_cell_content(
+    records: &[Record],
+    styles: &StyleRegistry,
+    picture_counter: &mut u32,
+) -> CellData {
     let mut paragraphs = Vec::new();
     let mut rowspan = 1u32;
     let mut colspan = 1u32;
@@ -397,12 +402,7 @@ fn parse_cell_content(records: &[Record], styles: &StyleRegistry, picture_counte
             }
 
             TagId::ParaText => {
-                let _ = parse_para_text(
-                    record.data(),
-                    &mut para_context,
-                    picture_counter,
-                    styles,
-                );
+                let _ = parse_para_text(record.data(), &mut para_context, picture_counter, styles);
             }
 
             TagId::ParaCharShape => {
@@ -541,10 +541,7 @@ impl ParagraphContext {
         for (i, item) in old_content.into_iter().enumerate() {
             match item {
                 InlineContent::Text(run) => {
-                    let char_positions = old_positions
-                        .get(i)
-                        .map(|v| v.as_slice())
-                        .unwrap_or(&[]);
+                    let char_positions = old_positions.get(i).map(|v| v.as_slice()).unwrap_or(&[]);
 
                     if char_positions.is_empty() {
                         // No position info available, keep as-is
@@ -877,8 +874,7 @@ mod tests {
         // "ABCDEFGH" with bold(0-1), normal(2-4), italic(5-7)
         let shape_positions = vec![(0, 10u32), (2, 20u32), (5, 30u32)];
         let char_positions: Vec<usize> = (0..8).collect();
-        let runs =
-            split_text_run_by_shapes("ABCDEFGH", &char_positions, &shape_positions, &styles);
+        let runs = split_text_run_by_shapes("ABCDEFGH", &char_positions, &shape_positions, &styles);
 
         assert_eq!(runs.len(), 3);
         assert_eq!(runs[0].text, "AB");

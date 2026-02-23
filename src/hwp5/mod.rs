@@ -262,7 +262,12 @@ impl Hwp5Parser {
 #[inline]
 fn get4(data: &[u8], offset: usize) -> [u8; 4] {
     if offset + 4 <= data.len() {
-        [data[offset], data[offset + 1], data[offset + 2], data[offset + 3]]
+        [
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]
     } else {
         [0u8; 4]
     }
@@ -283,7 +288,10 @@ fn read_ole_string(section_data: &[u8], prop_off: usize, vt_type: u16) -> Option
             }
             // Trim trailing NUL bytes
             let bytes = &section_data[start..end];
-            let trimmed = bytes.iter().position(|&b| b == 0).map_or(bytes, |n| &bytes[..n]);
+            let trimmed = bytes
+                .iter()
+                .position(|&b| b == 0)
+                .map_or(bytes, |n| &bytes[..n]);
             // Attempt Windows-1252 (most common for Korean HWP metadata)
             Some(String::from_utf8_lossy(trimmed).into_owned())
         }
@@ -328,7 +336,10 @@ fn filetime_to_iso8601(filetime: u64) -> String {
     // Compute year/month/day from days since 1970-01-01
     let (year, month, day) = days_to_ymd(days);
 
-    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", year, month, day, h, m, s)
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        year, month, day, h, m, s
+    )
 }
 
 /// Converts days since Unix epoch to (year, month, day).
@@ -345,7 +356,18 @@ fn days_to_ymd(mut days: u64) -> (u32, u32, u32) {
     }
     let leap = is_leap(year);
     let month_days: [u64; 12] = [
-        31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+        31,
+        if leap { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
     ];
     let mut month = 1u32;
     for &md in &month_days {

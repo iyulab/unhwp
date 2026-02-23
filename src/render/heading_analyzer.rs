@@ -491,7 +491,7 @@ impl HeadingAnalyzer {
             '*',  // Asterisk — common annotation marker in Korean official documents
             '◦',  // U+25E6 WHITE BULLET (issue #3)
             '◼',  // U+25FC BLACK MEDIUM SMALL SQUARE
-            '◾',  // U+25FE BLACK MEDIUM SMALL SQUARE
+            '◾', // U+25FE BLACK MEDIUM SMALL SQUARE
         ];
 
         let first_char = trimmed.chars().next().unwrap();
@@ -510,7 +510,9 @@ impl HeadingAnalyzer {
         const CAPTION_PREFIXES: &[&str] = &[
             "[그림", "[표", "[Figure", "[Table", "[Fig.", "[그림]", "[표]",
         ];
-        CAPTION_PREFIXES.iter().any(|prefix| trimmed.starts_with(prefix))
+        CAPTION_PREFIXES
+            .iter()
+            .any(|prefix| trimmed.starts_with(prefix))
     }
 
     /// Cap heading level to configured maximum.
@@ -1309,11 +1311,7 @@ mod tests {
     // Center-Alignment Heading Demotion Tests
     // ========================================================================
 
-    fn make_center_styled_paragraph(
-        text: &str,
-        heading_level: u8,
-        style: TextStyle,
-    ) -> Paragraph {
+    fn make_center_styled_paragraph(text: &str, heading_level: u8, style: TextStyle) -> Paragraph {
         use crate::model::Alignment;
         let mut para = Paragraph::with_style(ParagraphStyle {
             heading_level,

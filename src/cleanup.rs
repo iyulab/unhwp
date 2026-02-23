@@ -126,7 +126,7 @@ const BULLET_MAPPINGS: &[(char, &str)] = &[
     // Additional bullets (issue #3 - missing bullet characters)
     ('◦', "  - "), // U+25E6 WHITE BULLET (sub-item, indented)
     ('◼', "- "),   // U+25FC BLACK MEDIUM SMALL SQUARE
-    ('◾', "- "),   // U+25FE BLACK MEDIUM SMALL SQUARE
+    ('◾', "- "),  // U+25FE BLACK MEDIUM SMALL SQUARE
     // HWP PUA (Private Use Area) bullet characters
     // These are custom glyphs used by Hancom HWP word processor
     ('\u{F0A3}', "- "),     // HWP filled bullet (●)

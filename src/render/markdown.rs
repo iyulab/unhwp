@@ -455,23 +455,15 @@ impl MarkdownRenderer {
         let total_cols = table
             .rows
             .iter()
-            .map(|row| {
-                row.cells
-                    .iter()
-                    .map(|c| c.colspan as usize)
-                    .sum::<usize>()
-            })
+            .map(|row| row.cells.iter().map(|c| c.colspan as usize).sum::<usize>())
             .max()
             .unwrap_or(0);
 
         // Optimization: extract full-span rows (colspan == total_cols) as plain text blocks
         // and check empty cell ratio for the remaining rows.
         if total_cols > 0 {
-            let (full_span_rows, normal_rows): (Vec<_>, Vec<_>) = table
-                .rows
-                .iter()
-                .enumerate()
-                .partition(|(_, row)| {
+            let (full_span_rows, normal_rows): (Vec<_>, Vec<_>) =
+                table.rows.iter().enumerate().partition(|(_, row)| {
                     row.cells.len() == 1 && row.cells[0].colspan as usize >= total_cols
                 });
 
@@ -697,15 +689,9 @@ impl MarkdownRenderer {
     ///
     /// Full-span rows (colspan == total_cols) are rendered as standalone text blocks.
     /// Normal rows render non-empty cells as "key: value" or comma-separated items.
-    fn render_table_structured_text(
-        &self,
-        table: &Table,
-        total_cols: usize,
-        output: &mut String,
-    ) {
+    fn render_table_structured_text(&self, table: &Table, total_cols: usize, output: &mut String) {
         for row in &table.rows {
-            let is_full_span =
-                row.cells.len() == 1 && row.cells[0].colspan as usize >= total_cols;
+            let is_full_span = row.cells.len() == 1 && row.cells[0].colspan as usize >= total_cols;
 
             if is_full_span {
                 let text = self.render_cell_content(&row.cells[0]);
@@ -731,7 +717,6 @@ impl MarkdownRenderer {
             }
         }
     }
-
 }
 
 /// Detects if text starts with a bullet or blockquote marker character.
