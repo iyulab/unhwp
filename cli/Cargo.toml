@@ -26,6 +26,9 @@ serde_json = "1.0"
 # Self-update from GitHub releases
 self_update = { version = "0.41", features = ["archive-zip", "archive-tar", "compression-flate2"] }
 
+# HTTP client (used for self_update header types)
+reqwest = { version = "0.12", default-features = false }
+
 # Async runtime for self-update
 tokio = { version = "1.42", features = ["rt-multi-thread", "macros"] }
 

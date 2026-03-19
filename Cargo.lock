@@ -2114,6 +2114,7 @@ dependencies = [
  "clap",
  "colored",
  "indicatif",
+ "reqwest",
  "self_update",
  "semver",
  "serde_json",
