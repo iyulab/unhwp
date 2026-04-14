@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-04-14
+
+### Fixed
+- `unhwp update` failed on Windows with "Compression method not supported" because
+  `self_update`'s `archive-zip` feature only handles stored-only zips. PowerShell's
+  `Compress-Archive` (used by the release workflow) emits Deflate. Added the
+  `compression-zip-deflate` feature so self-updating binaries can extract the
+  downloaded archive. Users on 0.2.3 or earlier must install 0.2.4 manually once.
+
+### Added
+- CI `version-check` job fails fast when the four canonical version files
+  (root `Cargo.toml`, `cli/Cargo.toml` + its `unhwp` dep, `pyproject.toml`,
+  `Unhwp.csproj`) drift out of sync, preventing partial releases.
+- Release workflow `cleanup-old-releases` job keeps the 10 newest GitHub
+  Releases and deletes the rest with `--cleanup-tag`, honoring the global
+  GitHub Actions resource-management policy.
+
 ## [0.1.3] - 2024-12-19
 
 ### Fixed
