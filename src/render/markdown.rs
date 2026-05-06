@@ -78,21 +78,53 @@ impl MarkdownRenderer {
     /// Image references in the output will use the `image_path_prefix` from
     /// [`RenderOptions`] but will not resolve to actual filenames (resources are
     /// emitted separately via [`ParseEvent::ResourceExtracted`] after all sections).
-    pub fn render_section(&self, section: &Section, _styles: &StyleRegistry) -> Result<String> {
-        // Build a minimal single-section document so we can reuse the existing
-        // render_standard block-level logic without duplicating it.
-        let mut doc = Document::new();
-        doc.sections.push(section.clone());
+    pub fn render_section(&self, section: &Section, styles: &StyleRegistry) -> Result<String> {
+        Self::render_section_standalone(section, styles, &self.options)
+    }
 
-        // Use a renderer without heading_config to force the standard path.
+    /// Renders a single section to Markdown without requiring a full Document.
+    /// Used by the streaming API to process sections one at a time.
+    ///
+    /// `styles` is accepted for API forward-compatibility (heading level information
+    /// is already embedded in [`ParagraphStyle`]).
+    ///
+    /// The heading analyzer path is **not** used because it requires cross-section
+    /// font-size statistics. Frontmatter is also skipped (only meaningful for full
+    /// documents). Cleanup is applied if configured in `opts`.
+    pub fn render_section_standalone(
+        section: &Section,
+        _styles: &StyleRegistry,
+        opts: &RenderOptions,
+    ) -> Result<String> {
+        // Build a renderer without heading_config (forces standard path)
+        // and without an image mapping (resources are emitted separately).
         let renderer = Self {
             options: RenderOptions {
                 heading_config: None,
-                ..self.options.clone()
+                ..opts.clone()
             },
             image_id_to_filename: HashMap::new(),
         };
-        renderer.render_standard(&doc)
+
+        let mut output = String::new();
+
+        for block in &section.content {
+            match block {
+                Block::Paragraph(para) => {
+                    renderer.render_paragraph(para, &mut output, None);
+                }
+                Block::Table(table) => {
+                    renderer.render_table(table, &mut output);
+                }
+            }
+        }
+
+        // Apply cleanup pipeline if enabled
+        if let Some(ref cleanup_options) = renderer.options.cleanup {
+            output = crate::cleanup::cleanup(&output, cleanup_options);
+        }
+
+        Ok(output)
     }
 
     /// Standard rendering (legacy behavior without heading analyzer).
