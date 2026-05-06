@@ -342,18 +342,16 @@ impl Hwp5Parser {
                         }
                     }
                 }
-                12 | 13 => {
+                12 | 13 if vt_type == 0x0040 && prop_off + 12 <= section_data.len() => {
                     // VT_FILETIME = 0x0040
-                    if vt_type == 0x0040 && prop_off + 12 <= section_data.len() {
-                        let lo = u32::from_le_bytes(get4(section_data, prop_off + 4)) as u64;
-                        let hi = u32::from_le_bytes(get4(section_data, prop_off + 8)) as u64;
-                        let filetime = (hi << 32) | lo;
-                        let iso = filetime_to_iso8601(filetime);
-                        match prop_id {
-                            12 => document.metadata.created = Some(iso),
-                            13 => document.metadata.modified = Some(iso),
-                            _ => {}
-                        }
+                    let lo = u32::from_le_bytes(get4(section_data, prop_off + 4)) as u64;
+                    let hi = u32::from_le_bytes(get4(section_data, prop_off + 8)) as u64;
+                    let filetime = (hi << 32) | lo;
+                    let iso = filetime_to_iso8601(filetime);
+                    match prop_id {
+                        12 => document.metadata.created = Some(iso),
+                        13 => document.metadata.modified = Some(iso),
+                        _ => {}
                     }
                 }
                 _ => {}

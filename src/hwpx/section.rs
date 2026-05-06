@@ -230,12 +230,10 @@ impl<'a> SectionParser<'a> {
                         }
                     }
                 }
-                Ok(Event::Text(t)) => {
+                Ok(Event::Text(t)) if in_text_element && !in_ctrl => {
                     // Only capture text inside <hp:t> elements, not inside control elements
-                    if in_text_element && !in_ctrl {
-                        if let Ok(s) = t.unescape() {
-                            text.push_str(&s);
-                        }
+                    if let Ok(s) = t.unescape() {
+                        text.push_str(&s);
                     }
                 }
                 Ok(Event::End(e)) => {
