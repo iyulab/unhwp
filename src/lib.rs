@@ -41,6 +41,7 @@ pub mod error;
 pub mod model;
 pub mod parse_options;
 pub mod render;
+pub mod streaming;
 
 #[cfg(feature = "ffi")]
 pub mod ffi;
@@ -64,6 +65,7 @@ pub use error::{Error, Result};
 pub use model::Document;
 pub use parse_options::{ErrorMode, ExtractMode, ParseOptions};
 pub use render::{RenderOptions, TableFallback};
+pub use streaming::{parse_file_streaming, ParseEvent, SectionStreamOptions};
 
 use std::io::{Read, Seek};
 use std::path::Path;

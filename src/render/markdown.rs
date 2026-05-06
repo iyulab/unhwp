@@ -4,7 +4,8 @@ use super::heading_analyzer::{HeadingAnalyzer, HeadingDecision};
 use super::RenderOptions;
 use crate::error::Result;
 use crate::model::{
-    Alignment, Block, Document, InlineContent, ListStyle, Paragraph, Table, TableCell, TextRun,
+    Alignment, Block, Document, InlineContent, ListStyle, Paragraph, Section, StyleRegistry, Table,
+    TableCell, TextRun,
 };
 
 use std::collections::HashMap;
@@ -64,6 +65,34 @@ impl MarkdownRenderer {
 
         // Standard rendering without sophisticated heading analysis
         renderer.render_standard(document)
+    }
+
+    /// Renders a single section to a Markdown string.
+    ///
+    /// This is the streaming-compatible rendering path. Unlike [`render`](Self::render),
+    /// it does not require a complete [`Document`] — only the section and the
+    /// style registry are needed. The heading analyzer path (`heading_config`) is
+    /// **not** used because it requires cross-section font-size statistics;
+    /// only the standard (legacy inline) heading detection is applied.
+    ///
+    /// Image references in the output will use the `image_path_prefix` from
+    /// [`RenderOptions`] but will not resolve to actual filenames (resources are
+    /// emitted separately via [`ParseEvent::ResourceExtracted`] after all sections).
+    pub fn render_section(&self, section: &Section, _styles: &StyleRegistry) -> Result<String> {
+        // Build a minimal single-section document so we can reuse the existing
+        // render_standard block-level logic without duplicating it.
+        let mut doc = Document::new();
+        doc.sections.push(section.clone());
+
+        // Use a renderer without heading_config to force the standard path.
+        let renderer = Self {
+            options: RenderOptions {
+                heading_config: None,
+                ..self.options.clone()
+            },
+            image_id_to_filename: HashMap::new(),
+        };
+        renderer.render_standard(&doc)
     }
 
     /// Standard rendering (legacy behavior without heading analyzer).

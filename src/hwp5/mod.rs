@@ -15,7 +15,9 @@ pub use record::{Record, RecordHeader, RecordIterator, TagId};
 
 use crate::error::Result;
 use crate::model::Document;
+use crate::streaming::{ParseEvent, SectionStreamOptions};
 use std::io::{Read, Seek};
+use std::ops::ControlFlow;
 use std::path::Path;
 
 /// HWP 5.0 document parser.
@@ -81,6 +83,117 @@ impl Hwp5Parser {
         self.extract_bindata(&mut document)?;
 
         Ok(document)
+    }
+
+    /// Parses the document in streaming mode, emitting events for each section.
+    ///
+    /// This is the bounded-memory alternative to [`parse`](Self::parse). Each
+    /// section is parsed and emitted individually; its memory is freed before
+    /// the next section is loaded.
+    ///
+    /// See [`crate::streaming::parse_file_streaming`] for the public API.
+    pub fn for_each_section<F>(&mut self, opts: SectionStreamOptions, mut f: F) -> Result<()>
+    where
+        F: FnMut(ParseEvent<'_>) -> ControlFlow<()>,
+    {
+        if self.is_encrypted() {
+            return Err(crate::error::Error::Encrypted);
+        }
+
+        // Phase 1: parse prerequisites using a temporary Document so we can
+        // call the existing (document-oriented) helper methods without
+        // refactoring them. We then move metadata and styles out of the
+        // temporary document so they become owned stack locals, giving us
+        // stack-frame lifetimes that satisfy the `'doc` bound on ParseEvent.
+        let (metadata, styles) = {
+            let mut tmp = Document::new();
+            tmp.metadata.format_version = Some(self.header.version_string());
+            tmp.metadata.is_distribution = self.header.is_distribution();
+            let _ = self.parse_metadata(&mut tmp); // best-effort
+            self.parse_docinfo(&mut tmp)?;
+            (tmp.metadata, tmp.styles)
+        };
+
+        let section_names = self.container.list_bodytext_sections()?;
+        let section_count = section_names.len();
+
+        // Emit DocumentStart — metadata and styles live on the stack in this
+        // function frame; references into them are valid for the whole loop.
+        if f(ParseEvent::DocumentStart {
+            metadata: &metadata,
+            styles: &styles,
+            section_count,
+        }) == ControlFlow::Break(())
+        {
+            return Ok(());
+        }
+
+        // Phase 2: parse and emit sections one at a time.
+        // picture_counter is shared across sections to correctly track BinId
+        // references in multi-section documents.
+        let is_compressed = self.is_compressed();
+        let mut picture_counter: u32 = 0;
+
+        for (index, name) in section_names.iter().enumerate() {
+            let data = self
+                .container
+                .read_stream_decompressed(name, is_compressed);
+
+            match data {
+                Err(e) if opts.error_mode == crate::parse_options::ErrorMode::Lenient => {
+                    if f(ParseEvent::SectionFailed { index, error: e })
+                        == ControlFlow::Break(())
+                    {
+                        return Ok(());
+                    }
+                }
+                Err(e) => return Err(e),
+                Ok(bytes) => {
+                    match bodytext::parse_section(&bytes, index, &styles, &mut picture_counter) {
+                        Err(e)
+                            if opts.error_mode == crate::parse_options::ErrorMode::Lenient =>
+                        {
+                            if f(ParseEvent::SectionFailed { index, error: e })
+                                == ControlFlow::Break(())
+                            {
+                                return Ok(());
+                            }
+                        }
+                        Err(e) => return Err(e),
+                        Ok(section) => {
+                            if f(ParseEvent::SectionParsed(&section)) == ControlFlow::Break(()) {
+                                return Ok(());
+                            }
+                            // `section` is dropped here — memory reclaimed before
+                            // the next section is loaded.
+                        }
+                    }
+                }
+            }
+        }
+
+        // Phase 3: emit DocumentEnd before resources.
+        if f(ParseEvent::DocumentEnd) == ControlFlow::Break(()) {
+            return Ok(());
+        }
+
+        // Phase 4: resource extraction (after DocumentEnd so section memory
+        // is fully freed before any large binary data arrives).
+        if opts.extract_resources {
+            if let Ok(resources) = self.container.list_bindata() {
+                for name in resources {
+                    if let Ok(data) = self.container.read_bindata(&name, is_compressed) {
+                        if f(ParseEvent::ResourceExtracted { name, data })
+                            == ControlFlow::Break(())
+                        {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Parses DocInfo stream for style definitions.

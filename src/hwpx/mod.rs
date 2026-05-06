@@ -12,10 +12,12 @@ pub use container::HwpxContainer;
 
 use crate::error::Result;
 use crate::model::Document;
+use crate::streaming::{ParseEvent, SectionStreamOptions};
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use rayon::prelude::*;
 use std::io::{Read, Seek};
+use std::ops::ControlFlow;
 use std::path::Path;
 
 /// HWPX XML namespaces.
@@ -71,6 +73,100 @@ impl HwpxParser {
         self.extract_resources(&mut document)?;
 
         Ok(document)
+    }
+
+    /// Parses the document in streaming mode, emitting events for each section.
+    ///
+    /// This is the bounded-memory alternative to [`parse`](Self::parse). Each
+    /// section is parsed and emitted individually; its memory is freed before
+    /// the next section is loaded. The `rayon` parallel path used by `parse()`
+    /// is not used here — sections are always processed sequentially.
+    ///
+    /// See [`crate::streaming::parse_file_streaming`] for the public API.
+    pub fn for_each_section<F>(&mut self, opts: SectionStreamOptions, mut f: F) -> Result<()>
+    where
+        F: FnMut(ParseEvent<'_>) -> ControlFlow<()>,
+    {
+        // Phase 1: parse prerequisites using a temporary Document.
+        // We move metadata and styles out so they become owned stack locals,
+        // giving us the stack-frame lifetime that satisfies ParseEvent<'doc>.
+        let (metadata, styles) = {
+            let mut tmp = Document::new();
+            tmp.metadata.format_version = Some("HWPX".to_string());
+            self.parse_metadata(&mut tmp)?;
+            self.parse_header_options(&mut tmp)?;
+            self.parse_styles(&mut tmp)?;
+            (tmp.metadata, tmp.styles)
+        };
+
+        let section_files = self.container.list_sections()?;
+        let section_count = section_files.len();
+
+        if f(ParseEvent::DocumentStart {
+            metadata: &metadata,
+            styles: &styles,
+            section_count,
+        }) == ControlFlow::Break(())
+        {
+            return Ok(());
+        }
+
+        // Phase 2: parse and emit sections one at a time (no rayon).
+        for (index, path) in section_files.iter().enumerate() {
+            match self.container.read_file(path) {
+                Err(e) if opts.error_mode == crate::parse_options::ErrorMode::Lenient => {
+                    if f(ParseEvent::SectionFailed { index, error: e }) == ControlFlow::Break(())
+                    {
+                        return Ok(());
+                    }
+                }
+                Err(e) => return Err(e),
+                Ok(xml) => match section::parse_section(&xml, index, &styles) {
+                    Err(e) if opts.error_mode == crate::parse_options::ErrorMode::Lenient => {
+                        if f(ParseEvent::SectionFailed { index, error: e })
+                            == ControlFlow::Break(())
+                        {
+                            return Ok(());
+                        }
+                    }
+                    Err(e) => return Err(e),
+                    Ok(sec) => {
+                        if f(ParseEvent::SectionParsed(&sec)) == ControlFlow::Break(()) {
+                            return Ok(());
+                        }
+                        // `sec` is dropped here — memory reclaimed before
+                        // the next section is loaded.
+                    }
+                },
+            }
+        }
+
+        // Phase 3: emit DocumentEnd before resources.
+        if f(ParseEvent::DocumentEnd) == ControlFlow::Break(()) {
+            return Ok(());
+        }
+
+        // Phase 4: resource extraction (after DocumentEnd).
+        if opts.extract_resources {
+            if let Ok(resources) = self.container.list_bindata() {
+                for resource_path in resources {
+                    if let Ok(data) = self.container.read_binary(&resource_path) {
+                        let name = resource_path
+                            .rsplit('/')
+                            .next()
+                            .unwrap_or(&resource_path)
+                            .to_string();
+                        if f(ParseEvent::ResourceExtracted { name, data })
+                            == ControlFlow::Break(())
+                        {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Parses document metadata from content.hpf.
