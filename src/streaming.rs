@@ -26,7 +26,7 @@
 use crate::detect::{detect_format_from_path, FormatType};
 use crate::error::Result;
 use crate::model::{Metadata, Section, StyleRegistry};
-use crate::parse_options::{ErrorMode, ExtractMode, ParseOptions};
+use crate::parse_options::{ErrorMode, ParseOptions};
 use crate::Error;
 use std::ops::ControlFlow;
 use std::path::Path;
@@ -92,9 +92,6 @@ pub struct SectionStreamOptions {
     /// How to handle per-section parse errors.
     pub error_mode: ErrorMode,
 
-    /// What content to extract from each section.
-    pub extract_mode: ExtractMode,
-
     /// Whether to read binary resources (images) from BinData.
     ///
     /// When `true`, each resource is emitted as a [`ParseEvent::ResourceExtracted`]
@@ -106,7 +103,6 @@ impl Default for SectionStreamOptions {
     fn default() -> Self {
         Self {
             error_mode: ErrorMode::Strict,
-            extract_mode: ExtractMode::Full,
             extract_resources: true,
         }
     }
@@ -116,7 +112,6 @@ impl From<&ParseOptions> for SectionStreamOptions {
     fn from(opts: &ParseOptions) -> Self {
         Self {
             error_mode: opts.error_mode,
-            extract_mode: opts.extract_mode,
             extract_resources: opts.extract_resources,
         }
     }

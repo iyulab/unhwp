@@ -71,9 +71,12 @@ impl MarkdownRenderer {
     ///
     /// This is the streaming-compatible rendering path. Unlike [`render`](Self::render),
     /// it does not require a complete [`Document`] — only the section and the
-    /// style registry are needed. The heading analyzer path (`heading_config`) is
-    /// **not** used because it requires cross-section font-size statistics;
-    /// only the standard (legacy inline) heading detection is applied.
+    /// style registry are needed.
+    ///
+    /// **Note:** The `HeadingAnalyzer` (configured via `RenderOptions::heading_config`) is
+    /// not used in this path. Statistical font-size heading detection requires a full
+    /// multi-section corpus; per-section rendering uses the `ParagraphStyle.heading_level`
+    /// embedded during parsing instead.
     ///
     /// Image references in the output will use the `image_path_prefix` from
     /// [`RenderOptions`] but will not resolve to actual filenames (resources are
@@ -88,9 +91,13 @@ impl MarkdownRenderer {
     /// `styles` is accepted for API forward-compatibility (heading level information
     /// is already embedded in [`ParagraphStyle`]).
     ///
-    /// The heading analyzer path is **not** used because it requires cross-section
-    /// font-size statistics. Frontmatter is also skipped (only meaningful for full
-    /// documents). Cleanup is applied if configured in `opts`.
+    /// **Note:** The `HeadingAnalyzer` (configured via `RenderOptions::heading_config`) is
+    /// not used in this path. Statistical font-size heading detection requires a full
+    /// multi-section corpus; per-section rendering uses the `ParagraphStyle.heading_level`
+    /// embedded during parsing instead.
+    ///
+    /// Frontmatter is also skipped (only meaningful for full documents).
+    /// Cleanup is applied if configured in `opts`.
     pub fn render_section_standalone(
         section: &Section,
         _styles: &StyleRegistry,
