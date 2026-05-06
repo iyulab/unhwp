@@ -3,6 +3,7 @@
 //! A command-line tool for extracting content from HWP and HWPX files.
 
 mod update;
+mod writer;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use colored::*;
@@ -11,6 +12,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use unhwp::{parse_file, render, RenderOptions, TableFallback};
+use writer::{MultiFormatWriter, OutputFormat};
 
 /// HWP/HWPX document extraction to Markdown, text, and JSON
 #[derive(Parser)]
@@ -22,7 +24,7 @@ use unhwp::{parse_file, render, RenderOptions, TableFallback};
     long_about = "unhwp - High-performance HWP/HWPX document extraction tool.\n\n\
                   Converts HWP and HWPX files to Markdown, plain text, or JSON.\n\n\
                   Usage:\n  \
-                  unhwp <file>              Extract all formats to output directory\n  \
+                  unhwp <file>              Extract Markdown to output directory\n  \
                   unhwp <file> <output>     Extract to specified directory\n  \
                   unhwp md <file>           Convert to Markdown only"
 )]
@@ -43,21 +45,41 @@ struct Cli {
     cleanup: Option<CleanupMode>,
 }
 
+/// Arguments for the `convert` subcommand.
+#[derive(Parser, Debug)]
+struct ConvertArgs {
+    /// Input file path
+    input: PathBuf,
+
+    /// Output directory (default: <filename>_output)
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+
+    /// Apply text cleanup preset
+    #[arg(long)]
+    cleanup: Option<CleanupMode>,
+
+    /// Output formats to produce (comma-separated: md,txt,json)
+    #[arg(long, value_delimiter = ',', default_value = "md")]
+    formats: Vec<String>,
+
+    /// Produce all output formats (md + txt + json)
+    #[arg(long)]
+    all: bool,
+
+    /// Skip image extraction (images are extracted by default)
+    #[arg(long)]
+    no_images: bool,
+
+    /// Suppress progress output
+    #[arg(short, long)]
+    quiet: bool,
+}
+
 #[derive(Subcommand)]
 enum Commands {
-    /// Convert a document (default command - extracts all formats)
-    Convert {
-        /// Input file path
-        input: PathBuf,
-
-        /// Output directory (default: <filename>_output)
-        #[arg(short, long)]
-        output: Option<PathBuf>,
-
-        /// Apply text cleanup
-        #[arg(long)]
-        cleanup: Option<CleanupMode>,
-    },
+    /// Convert a document (default command — Markdown output by default)
+    Convert(ConvertArgs),
 
     /// Convert a document to Markdown
     #[command(visible_alias = "md")]
@@ -146,7 +168,7 @@ enum Commands {
 }
 
 /// Table rendering mode
-#[derive(Clone, ValueEnum)]
+#[derive(Clone, ValueEnum, Debug)]
 enum TableMode {
     /// Standard Markdown tables
     Markdown,
@@ -167,7 +189,7 @@ impl From<TableMode> for TableFallback {
 }
 
 /// Cleanup mode
-#[derive(Clone, ValueEnum)]
+#[derive(Clone, ValueEnum, Debug)]
 enum CleanupMode {
     /// No cleanup
     None,
@@ -219,7 +241,17 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     // Handle default command (unhwp <file> [output])
     if cli.command.is_none() {
         if let Some(input) = cli.input {
-            return run_convert(&input, cli.output.as_ref(), cli.cleanup);
+            // Synthesize ConvertArgs with defaults (MD-only, images on)
+            let args = ConvertArgs {
+                input,
+                output: cli.output,
+                cleanup: cli.cleanup,
+                formats: vec!["md".to_string()],
+                all: false,
+                no_images: false,
+                quiet: false,
+            };
+            return cmd_convert(args);
         } else {
             // No input provided, show help
             use clap::CommandFactory;
@@ -229,12 +261,8 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     match cli.command.unwrap() {
-        Commands::Convert {
-            input,
-            output,
-            cleanup,
-        } => {
-            run_convert(&input, output.as_ref(), cleanup)?;
+        Commands::Convert(args) => {
+            cmd_convert(args)?;
         }
 
         Commands::Markdown {
@@ -417,24 +445,28 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Run the default convert command - extracts all formats to output directory
-fn run_convert(
-    input: &PathBuf,
-    output: Option<&PathBuf>,
-    cleanup: Option<CleanupMode>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let pb = create_spinner("Parsing document...");
+/// Run the `convert` subcommand.
+fn cmd_convert(args: ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let pb = if args.quiet {
+        None
+    } else {
+        Some(create_spinner("Parsing document..."))
+    };
 
     // Determine output directory
-    let output_dir = match output {
-        Some(p) => p.clone(),
+    let output_dir = match args.output {
+        Some(ref p) => p.clone(),
         None => {
-            let stem = input
+            let stem = args
+                .input
                 .file_stem()
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
-            let parent = input.parent().unwrap_or(std::path::Path::new("."));
+            let parent = args
+                .input
+                .parent()
+                .unwrap_or(std::path::Path::new("."));
             parent.join(format!("{}_output", stem))
         }
     };
@@ -443,66 +475,112 @@ fn run_convert(
     fs::create_dir_all(&output_dir)?;
 
     // Parse document
-    let doc = parse_file(input)?;
+    let doc = parse_file(&args.input)?;
 
-    // Prepare render options
-    let mut options = RenderOptions::default()
+    // Resolve formats: --all overrides --formats
+    let formats: Vec<OutputFormat> = if args.all {
+        vec![OutputFormat::Markdown, OutputFormat::Text, OutputFormat::Json]
+    } else {
+        let mut fmts = Vec::new();
+        for s in &args.formats {
+            match OutputFormat::from_str(s) {
+                Some(f) => fmts.push(f),
+                None => {
+                    return Err(format!(
+                        "Unknown format '{}'. Use: md, txt, json",
+                        s
+                    )
+                    .into())
+                }
+            }
+        }
+        if fmts.is_empty() {
+            // Default to MD if nothing parsed (shouldn't happen with default_value)
+            fmts.push(OutputFormat::Markdown);
+        }
+        fmts
+    };
+
+    // Build render options
+    let mut render_opts = RenderOptions::default()
         .with_frontmatter()
         .with_image_prefix("images/");
+    apply_cleanup(&mut render_opts, args.cleanup);
 
-    apply_cleanup(&mut options, cleanup);
+    // Images directory (None = skip)
+    let images_dir = if args.no_images {
+        None
+    } else {
+        Some(output_dir.join("images"))
+    };
 
-    // Generate Markdown
-    pb.set_message("Generating Markdown...");
-    let markdown = render::render_markdown(&doc, &options)?;
-    let md_path = output_dir.join("extract.md");
-    fs::write(&md_path, &markdown)?;
+    // Create MultiFormatWriter
+    let mut mfw = MultiFormatWriter::new(&output_dir, &formats, render_opts, images_dir)?;
 
-    // Generate plain text
-    pb.set_message("Generating text...");
-    let text = doc.plain_text();
-    let txt_path = output_dir.join("extract.txt");
-    fs::write(&txt_path, &text)?;
-
-    // Generate JSON
-    pb.set_message("Generating JSON...");
-    let json = serde_json::to_string_pretty(&doc)?;
-    let json_path = output_dir.join("content.json");
-    fs::write(&json_path, &json)?;
-
-    // Extract resources
-    let mut image_count = 0;
-    if !doc.resources.is_empty() {
-        pb.set_message("Extracting resources...");
-        let images_dir = output_dir.join("images");
-        fs::create_dir_all(&images_dir)?;
-
-        for (name, resource) in &doc.resources {
-            fs::write(images_dir.join(name), &resource.data)?;
-            image_count += 1;
-        }
+    // Kick off document processing
+    if let Some(ref pb) = pb {
+        pb.set_message("Processing sections...");
     }
 
-    pb.finish_and_clear();
+    mfw.write_document_start(&doc.metadata)?;
+    for section in &doc.sections {
+        mfw.write_section(section)?;
+    }
+
+    // Extract images before finish (while we still have &doc.resources)
+    mfw.extract_images(&doc.resources)?;
+    let image_count = mfw.image_count;
+
+    // Finalize all writers — pass original doc so MD rendering uses full styles/resources
+    if let Some(ref pb) = pb {
+        pb.set_message("Finalizing output...");
+    }
+    let summary = mfw.finish(&doc)?;
+
+    if let Some(pb) = pb {
+        pb.finish_and_clear();
+    }
 
     // Print summary
     println!("{}", "Conversion Complete".green().bold());
     println!("{}", "─".repeat(40));
     println!("{}: {}", "Output".bold(), output_dir.display());
-    println!("  {} extract.md", "✓".green());
-    println!("  {} extract.txt", "✓".green());
-    println!("  {} content.json", "✓".green());
+
+    if let Some(ref p) = summary.md_path {
+        println!(
+            "  {} {}",
+            "✓".green(),
+            p.file_name().unwrap_or_default().to_string_lossy()
+        );
+    }
+    if let Some(ref p) = summary.txt_path {
+        println!(
+            "  {} {}",
+            "✓".green(),
+            p.file_name().unwrap_or_default().to_string_lossy()
+        );
+    }
+    if let Some(ref p) = summary.json_path {
+        println!(
+            "  {} {}",
+            "✓".green(),
+            p.file_name().unwrap_or_default().to_string_lossy()
+        );
+    }
     if image_count > 0 {
         println!("  {} images/ ({} files)", "✓".green(), image_count);
     }
 
-    // Print statistics
+    // Statistics
+    let text = doc.plain_text();
     let word_count = text.split_whitespace().count();
     println!("\n{}", "Statistics".cyan().bold());
     println!("{}", "─".repeat(40));
     println!("{}: {}", "Sections".bold(), doc.sections.len());
     println!("{}: {}", "Words".bold(), word_count);
-    println!("{}: {}", "Resources".bold(), image_count);
+    if image_count > 0 {
+        println!("{}: {}", "Resources".bold(), image_count);
+    }
 
     Ok(())
 }
@@ -561,5 +639,19 @@ mod tests {
     fn test_cli_parse() {
         use clap::CommandFactory;
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn test_output_format_from_str() {
+        assert_eq!(OutputFormat::from_str("md"), Some(OutputFormat::Markdown));
+        assert_eq!(
+            OutputFormat::from_str("markdown"),
+            Some(OutputFormat::Markdown)
+        );
+        assert_eq!(OutputFormat::from_str("txt"), Some(OutputFormat::Text));
+        assert_eq!(OutputFormat::from_str("text"), Some(OutputFormat::Text));
+        assert_eq!(OutputFormat::from_str("json"), Some(OutputFormat::Json));
+        assert_eq!(OutputFormat::from_str("JSON"), Some(OutputFormat::Json));
+        assert_eq!(OutputFormat::from_str("unknown"), None);
     }
 }
