@@ -192,8 +192,8 @@ impl MultiFormatWriter {
     /// Finalize all writers.
     ///
     /// - Renders Markdown from the original `doc` (preserves styles, resources,
-    ///   and cross-section heading analysis).
-    /// - Applies the cleanup pipeline to Markdown output if configured.
+    ///   and cross-section heading analysis). Cleanup is handled inside
+    ///   `render::render_markdown` via `RenderOptions`.
     /// - Closes the JSON envelope.
     /// - Flushes the TXT writer.
     ///
