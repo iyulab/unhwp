@@ -236,6 +236,10 @@ impl MultiFormatWriter {
     /// - Flushes the TXT writer.
     /// - Closes the JSON array+object envelope.
     ///
+    /// If the streaming pipeline exits early (e.g., on error), `finish()` will not
+    /// be called. The output files may be incomplete or malformed. Callers should
+    /// delete partial output files on error.
+    ///
     /// Returns a summary of which paths were written.
     pub fn finish(mut self) -> io::Result<WriteSummary> {
         let mut summary = WriteSummary::default();

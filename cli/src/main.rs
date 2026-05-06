@@ -598,6 +598,8 @@ fn cmd_convert(args: ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
                         cb_err = Some(e.into());
                         return ControlFlow::Break(());
                     }
+                } else if !quiet {
+                    eprintln!("Warning: section data arrived before DocumentStart — skipping");
                 }
                 if let Some(ref pb) = pb {
                     pb.inc(1);
@@ -629,6 +631,8 @@ fn cmd_convert(args: ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
                             summary_result = Some(s);
                         }
                     }
+                } else {
+                    // cb_err is set from DocumentStart failure; post-closure check handles it
                 }
             }
 
@@ -636,7 +640,11 @@ fn cmd_convert(args: ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
                 if let Some(ref dir) = images_dir_clone {
                     let result: io::Result<()> = (|| {
                         std::fs::create_dir_all(dir)?;
-                        std::fs::write(dir.join(&name), &data)?;
+                        // Sanitize resource name to prevent path traversal attacks
+                        let safe_name = std::path::Path::new(&name)
+                            .file_name()
+                            .unwrap_or_else(|| std::ffi::OsStr::new(&name));
+                        std::fs::write(dir.join(safe_name), &data)?;
                         Ok(())
                     })();
                     match result {
