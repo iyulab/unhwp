@@ -522,20 +522,20 @@ fn cmd_convert(args: ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
         pb.set_message("Processing sections...");
     }
 
-    mfw.write_document_start(&doc.metadata)?;
+    mfw.write_document_start(&doc)?;
     for section in &doc.sections {
         mfw.write_section(section)?;
     }
 
     // Extract images before finish (while we still have &doc.resources)
     mfw.extract_images(&doc.resources)?;
-    let image_count = mfw.image_count;
 
     // Finalize all writers — pass original doc so MD rendering uses full styles/resources
     if let Some(ref pb) = pb {
         pb.set_message("Finalizing output...");
     }
     let summary = mfw.finish(&doc)?;
+    let image_count = summary.image_count;
 
     if let Some(pb) = pb {
         pb.finish_and_clear();

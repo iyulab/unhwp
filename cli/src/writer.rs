@@ -7,7 +7,7 @@ use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use unhwp::model::{Document, Metadata, Section};
+use unhwp::model::{Document, Section};
 use unhwp::{render, RenderOptions};
 
 /// Output formats supported by the convert command.
@@ -52,9 +52,9 @@ pub struct MultiFormatWriter {
     want_md: bool,
 
     /// Directory for images (None = skip image extraction)
-    pub images_dir: Option<PathBuf>,
+    images_dir: Option<PathBuf>,
     /// How many images were extracted
-    pub image_count: u32,
+    image_count: u32,
 }
 
 impl MultiFormatWriter {
@@ -114,13 +114,19 @@ impl MultiFormatWriter {
 
     /// Write document-level metadata (called once before any sections).
     ///
-    /// For JSON: emits the opening envelope `{"metadata":...,"sections":[`.
-    pub fn write_document_start(&mut self, metadata: &Metadata) -> io::Result<()> {
-        // JSON: emit opening {"metadata":...,"sections":[
+    /// For JSON: emits the opening envelope `{"metadata":...,"styles":...,"sections":[`.
+    pub fn write_document_start(&mut self, doc: &Document) -> io::Result<()> {
+        // JSON: emit opening {"metadata":...,"styles":...,"sections":[
         if let Some(ref mut json) = self.json {
-            let meta_json = serde_json::to_string(metadata)
+            let meta_json = serde_json::to_string(&doc.metadata)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-            write!(json, "{{\"metadata\":{},\"sections\":[", meta_json)?;
+            let styles_json = serde_json::to_string(&doc.styles)
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            write!(
+                json,
+                "{{\"metadata\":{},\"styles\":{},\"sections\":[",
+                meta_json, styles_json
+            )?;
         }
         Ok(())
     }
@@ -201,14 +207,7 @@ impl MultiFormatWriter {
                 let raw_md = render::render_markdown(doc, &self.render_opts)
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
-                // Cleanup pass — applied after full render (not per-section)
-                let final_md = if let Some(ref cleanup_opts) = self.render_opts.cleanup {
-                    unhwp::cleanup::cleanup(&raw_md, cleanup_opts)
-                } else {
-                    raw_md
-                };
-
-                std::fs::write(md_path, &final_md)?;
+                std::fs::write(md_path, &raw_md)?;
                 summary.md_path = Some(md_path.clone());
             }
         }
@@ -226,6 +225,9 @@ impl MultiFormatWriter {
             summary.json_path = Some(json_path);
         }
 
+        // --- Images: propagate count ---
+        summary.image_count = self.image_count;
+
         Ok(summary)
     }
 }
@@ -236,4 +238,6 @@ pub struct WriteSummary {
     pub md_path: Option<PathBuf>,
     pub txt_path: Option<PathBuf>,
     pub json_path: Option<PathBuf>,
+    /// Number of images extracted
+    pub image_count: u32,
 }
