@@ -1,14 +1,15 @@
 //! Multi-format fan-out writer for the convert command.
 //!
-//! Buffers document sections and writes Markdown, plain text, and/or JSON
-//! outputs in a single pass over the parsed document.
+//! Writes Markdown, plain text, and/or JSON outputs in a single streaming
+//! pass over the parsed document. All formats are written section-by-section
+//! in `write_section`; no full `Document` is ever held in memory.
 
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-use unhwp::model::{Document, Section};
-use unhwp::{render, RenderOptions};
+use unhwp::model::{Block, Metadata, Section, StyleRegistry};
+use unhwp::render::{render_frontmatter, MarkdownRenderer, RenderOptions};
 
 /// Output formats supported by the convert command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,9 +31,14 @@ impl OutputFormat {
     }
 }
 
-/// Fan-out writer that streams text and JSON per section, then renders
-/// Markdown from the original full `Document` in `finish()` to preserve
-/// cross-section heading analysis and correct resource/style resolution.
+/// Fan-out writer that streams text, JSON, and Markdown per section.
+///
+/// Markdown is rendered section-by-section using
+/// [`MarkdownRenderer::render_section_standalone`], which does not require
+/// a full `Document` — only the section and the style registry are needed.
+/// The `HeadingAnalyzer` (statistical font-size inference) is not used on
+/// this path; heading levels come from `ParagraphStyle.heading_level`
+/// embedded during parsing.
 pub struct MultiFormatWriter {
     /// Buffered text writer — streamed per section
     txt: Option<BufWriter<File>>,
@@ -43,18 +49,15 @@ pub struct MultiFormatWriter {
     json_path: Option<PathBuf>,
     json_first_section: bool,
 
-    /// Render options for Markdown
-    render_opts: RenderOptions,
-    /// Path for the Markdown file (written in finish)
+    /// Markdown writer — streamed per section
+    md: Option<BufWriter<File>>,
     md_path: Option<PathBuf>,
 
-    /// Whether MD format is requested
-    want_md: bool,
+    /// Markdown renderer (holds render_opts for per-section rendering)
+    md_renderer: Option<MarkdownRenderer>,
 
-    /// Directory for images (None = skip image extraction)
-    images_dir: Option<PathBuf>,
-    /// How many images were extracted
-    image_count: u32,
+    /// Accumulated word count across all sections
+    word_count: usize,
 }
 
 impl MultiFormatWriter {
@@ -62,22 +65,30 @@ impl MultiFormatWriter {
     ///
     /// `formats`: which output formats to produce.
     /// `render_opts`: options for Markdown rendering (including cleanup).
-    /// `images_dir`: if `Some`, extract images there; `None` skips extraction.
+    /// `styles`: the [`StyleRegistry`] from `ParseEvent::DocumentStart` — used
+    ///   for API consistency; `render_section_standalone` uses embedded heading
+    ///   levels from the parsed data.
     pub fn new(
         out_dir: &Path,
         formats: &[OutputFormat],
         render_opts: RenderOptions,
-        images_dir: Option<PathBuf>,
+        styles: &StyleRegistry,
     ) -> io::Result<Self> {
         let want_md = formats.contains(&OutputFormat::Markdown);
         let want_txt = formats.contains(&OutputFormat::Text);
         let want_json = formats.contains(&OutputFormat::Json);
 
-        // Markdown — deferred to finish()
-        let md_path = if want_md {
-            Some(out_dir.join("extract.md"))
+        // Suppress unused-variable warning; styles accepted for API symmetry
+        let _ = styles;
+
+        // Markdown — open writer now; render section-by-section in write_section
+        let (md, md_path, md_renderer) = if want_md {
+            let p = out_dir.join("extract.md");
+            let f = File::create(&p)?;
+            let renderer = MarkdownRenderer::new(render_opts.clone());
+            (Some(BufWriter::new(f)), Some(p), Some(renderer))
         } else {
-            None
+            (None, None, None)
         };
 
         // Text
@@ -104,23 +115,27 @@ impl MultiFormatWriter {
             json,
             json_path,
             json_first_section: true,
-            render_opts,
+            md,
             md_path,
-            want_md,
-            images_dir,
-            image_count: 0,
+            md_renderer,
+            word_count: 0,
         })
     }
 
     /// Write document-level metadata (called once before any sections).
     ///
     /// For JSON: emits the opening envelope `{"metadata":...,"styles":...,"sections":[`.
-    pub fn write_document_start(&mut self, doc: &Document) -> io::Result<()> {
+    /// For Markdown: emits YAML frontmatter if `include_frontmatter` is enabled.
+    pub fn write_document_start(
+        &mut self,
+        metadata: &Metadata,
+        styles: &StyleRegistry,
+    ) -> io::Result<()> {
         // JSON: emit opening {"metadata":...,"styles":...,"sections":[
         if let Some(ref mut json) = self.json {
-            let meta_json = serde_json::to_string(&doc.metadata)
+            let meta_json = serde_json::to_string(metadata)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-            let styles_json = serde_json::to_string(&doc.styles)
+            let styles_json = serde_json::to_string(styles)
                 .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
             write!(
                 json,
@@ -128,20 +143,32 @@ impl MultiFormatWriter {
                 meta_json, styles_json
             )?;
         }
+
+        // Markdown: write YAML frontmatter if requested
+        if let (Some(ref mut md), Some(ref renderer)) = (&mut self.md, &self.md_renderer) {
+            if renderer.options().include_frontmatter {
+                let frontmatter = render_frontmatter(metadata);
+                if !frontmatter.is_empty() {
+                    md.write_all(frontmatter.as_bytes())?;
+                }
+            }
+        }
+
         Ok(())
     }
 
-    /// Process one section: stream to TXT and JSON.
+    /// Process one section: stream to TXT, JSON, and MD.
     ///
-    /// MD is rendered from the full document in `finish()`.
-    pub fn write_section(&mut self, section: &Section) -> io::Result<()> {
-        // TXT: emit plain text lines for this section
+    /// `styles` is passed to `render_section_standalone` for API correctness;
+    /// the function primarily uses embedded heading levels from `section`.
+    pub fn write_section(&mut self, section: &Section, styles: &StyleRegistry) -> io::Result<()> {
+        // TXT: emit plain text lines for this section and accumulate word count
         if let Some(ref mut txt) = self.txt {
-            use unhwp::model::Block;
             for block in &section.content {
                 match block {
                     Block::Paragraph(p) => {
                         let line = p.plain_text();
+                        self.word_count += line.split_whitespace().count();
                         writeln!(txt, "{}", line)?;
                     }
                     Block::Table(t) => {
@@ -149,7 +176,27 @@ impl MultiFormatWriter {
                             for cell in &row.cells {
                                 let text = cell.plain_text();
                                 if !text.is_empty() {
+                                    self.word_count += text.split_whitespace().count();
                                     writeln!(txt, "{}", text)?;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // No TXT output, but still accumulate word count
+            for block in &section.content {
+                match block {
+                    Block::Paragraph(p) => {
+                        self.word_count += p.plain_text().split_whitespace().count();
+                    }
+                    Block::Table(t) => {
+                        for row in &t.rows {
+                            for cell in &row.cells {
+                                let text = cell.plain_text();
+                                if !text.is_empty() {
+                                    self.word_count += text.split_whitespace().count();
                                 }
                             }
                         }
@@ -169,47 +216,34 @@ impl MultiFormatWriter {
             self.json_first_section = false;
         }
 
-        Ok(())
-    }
-
-    /// Extract images from document resources to the images directory.
-    ///
-    /// Call this before `finish()` while `doc.resources` is still available.
-    pub fn extract_images(
-        &mut self,
-        resources: &std::collections::HashMap<String, unhwp::model::Resource>,
-    ) -> io::Result<()> {
-        if let Some(ref images_dir) = self.images_dir {
-            std::fs::create_dir_all(images_dir)?;
-            for (name, resource) in resources {
-                std::fs::write(images_dir.join(name), &resource.data)?;
-                self.image_count += 1;
-            }
+        // Markdown: render section standalone and write
+        if let (Some(ref mut md), Some(ref renderer)) = (&mut self.md, &self.md_renderer) {
+            let rendered = MarkdownRenderer::render_section_standalone(
+                section,
+                styles,
+                renderer.options(),
+            )
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+            md.write_all(rendered.as_bytes())?;
         }
+
         Ok(())
     }
 
     /// Finalize all writers.
     ///
-    /// - Renders Markdown from the original `doc` (preserves styles, resources,
-    ///   and cross-section heading analysis). Cleanup is handled inside
-    ///   `render::render_markdown` via `RenderOptions`.
-    /// - Closes the JSON envelope.
+    /// - Flushes the Markdown writer (already written section-by-section).
     /// - Flushes the TXT writer.
+    /// - Closes the JSON array+object envelope.
     ///
     /// Returns a summary of which paths were written.
-    pub fn finish(mut self, doc: &Document) -> io::Result<WriteSummary> {
+    pub fn finish(mut self) -> io::Result<WriteSummary> {
         let mut summary = WriteSummary::default();
 
-        // --- Markdown: render the full document in one pass ---
-        if self.want_md {
-            if let Some(md_path) = &self.md_path {
-                let raw_md = render::render_markdown(doc, &self.render_opts)
-                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
-
-                std::fs::write(md_path, &raw_md)?;
-                summary.md_path = Some(md_path.clone());
-            }
+        // --- Markdown: flush ---
+        if let (Some(mut md), Some(md_path)) = (self.md.take(), self.md_path.take()) {
+            md.flush()?;
+            summary.md_path = Some(md_path);
         }
 
         // --- TXT: flush ---
@@ -225,8 +259,7 @@ impl MultiFormatWriter {
             summary.json_path = Some(json_path);
         }
 
-        // --- Images: propagate count ---
-        summary.image_count = self.image_count;
+        summary.word_count = self.word_count;
 
         Ok(summary)
     }
@@ -238,6 +271,6 @@ pub struct WriteSummary {
     pub md_path: Option<PathBuf>,
     pub txt_path: Option<PathBuf>,
     pub json_path: Option<PathBuf>,
-    /// Number of images extracted
-    pub image_count: u32,
+    /// Accumulated word count across all sections
+    pub word_count: usize,
 }

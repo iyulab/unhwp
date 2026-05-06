@@ -50,6 +50,11 @@ impl MarkdownRenderer {
         }
     }
 
+    /// Returns a reference to the render options.
+    pub fn options(&self) -> &RenderOptions {
+        &self.options
+    }
+
     /// Renders a document to Markdown string.
     pub fn render(&self, document: &Document) -> Result<String> {
         // Build image ID to filename mapping from resources

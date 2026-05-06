@@ -11,7 +11,11 @@ use indicatif::{ProgressBar, ProgressStyle};
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use unhwp::{parse_file, render, RenderOptions, TableFallback};
+use std::ops::ControlFlow;
+use unhwp::{
+    parse_file, parse_file_streaming, render, ErrorMode, ParseEvent, RenderOptions,
+    SectionStreamOptions, TableFallback,
+};
 use writer::{MultiFormatWriter, OutputFormat};
 
 /// HWP/HWPX document extraction to Markdown, text, and JSON
@@ -445,14 +449,12 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Run the `convert` subcommand.
+/// Run the `convert` subcommand — streaming path.
+///
+/// Uses `parse_file_streaming` to process sections one at a time, keeping
+/// memory bounded for large documents. The full `Document` is never
+/// materialized in memory.
 fn cmd_convert(args: ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let pb = if args.quiet {
-        None
-    } else {
-        Some(create_spinner("Parsing document..."))
-    };
-
     // Determine output directory
     let output_dir = match args.output {
         Some(ref p) => p.clone(),
@@ -463,19 +465,13 @@ fn cmd_convert(args: ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
-            let parent = args
-                .input
-                .parent()
-                .unwrap_or(std::path::Path::new("."));
+            let parent = args.input.parent().unwrap_or(std::path::Path::new("."));
             parent.join(format!("{}_output", stem))
         }
     };
 
     // Create output directory
     fs::create_dir_all(&output_dir)?;
-
-    // Parse document
-    let doc = parse_file(&args.input)?;
 
     // Resolve formats: --all overrides --formats
     let formats: Vec<OutputFormat> = if args.all {
@@ -486,16 +482,11 @@ fn cmd_convert(args: ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
             match OutputFormat::from_str(s) {
                 Some(f) => fmts.push(f),
                 None => {
-                    return Err(format!(
-                        "Unknown format '{}'. Use: md, txt, json",
-                        s
-                    )
-                    .into())
+                    return Err(format!("Unknown format '{}'. Use: md, txt, json", s).into())
                 }
             }
         }
         if fmts.is_empty() {
-            // Default to MD if nothing parsed (shouldn't happen with default_value)
             fmts.push(OutputFormat::Markdown);
         }
         fmts
@@ -508,38 +499,171 @@ fn cmd_convert(args: ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
     apply_cleanup(&mut render_opts, args.cleanup);
 
     // Images directory (None = skip)
-    let images_dir = if args.no_images {
+    let images_dir: Option<PathBuf> = if args.no_images {
         None
     } else {
         Some(output_dir.join("images"))
     };
 
-    // Create MultiFormatWriter
-    let mut mfw = MultiFormatWriter::new(&output_dir, &formats, render_opts, images_dir)?;
+    // Streaming options: lenient for CLI (best-effort)
+    let opts = SectionStreamOptions {
+        error_mode: ErrorMode::Lenient,
+        extract_resources: images_dir.is_some(),
+    };
 
-    // Kick off document processing
+    // Progress bar — starts at 0; length set in DocumentStart handler
+    let pb = if args.quiet {
+        None
+    } else {
+        let pb = ProgressBar::new(0);
+        pb.set_style(
+            ProgressStyle::default_bar()
+                .template("{spinner:.green} [{bar:40.cyan/blue}] {pos}/{len} sections {msg}")
+                .unwrap()
+                .progress_chars("#>-"),
+        );
+        Some(pb)
+    };
+
+    // State accumulated across events
+    let mut mfw: Option<MultiFormatWriter> = None;
+    let mut summary_result: Option<writer::WriteSummary> = None;
+    let mut section_count_total: usize = 0;
+    let mut image_count: u32 = 0;
+
+    // Carry errors out of the closure (FnMut cannot return Result)
+    let mut cb_err: Option<Box<dyn std::error::Error>> = None;
+
+    let quiet = args.quiet;
+    let output_dir_clone = output_dir.clone();
+    let images_dir_clone = images_dir.clone();
+
+    // `styles` from DocumentStart has lifetime tied to the streaming call.
+    // Pass an empty StyleRegistry to write_section — render_section_standalone
+    // uses embedded heading_level from parsed data, not from the registry.
+    use unhwp::model::StyleRegistry;
+    let empty_styles = StyleRegistry::new();
+
+    parse_file_streaming(&args.input, opts, |event| {
+        match event {
+            ParseEvent::DocumentStart {
+                metadata,
+                styles,
+                section_count,
+            } => {
+                section_count_total = section_count;
+                // Create MultiFormatWriter with styles from this event
+                match MultiFormatWriter::new(
+                    &output_dir_clone,
+                    &formats,
+                    render_opts.clone(),
+                    styles,
+                ) {
+                    Err(e) => {
+                        cb_err = Some(e.into());
+                        return ControlFlow::Break(());
+                    }
+                    Ok(mut writer) => {
+                        if let Err(e) = writer.write_document_start(metadata, styles) {
+                            cb_err = Some(e.into());
+                            return ControlFlow::Break(());
+                        }
+                        mfw = Some(writer);
+                    }
+                }
+                if let Some(ref pb) = pb {
+                    if section_count > 0 {
+                        pb.set_length(section_count as u64);
+                    } else {
+                        // Unknown section count — switch to spinner style
+                        pb.set_style(
+                            ProgressStyle::default_spinner()
+                                .tick_strings(&[
+                                    "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
+                                ])
+                                .template("{spinner:.blue} {msg}")
+                                .unwrap(),
+                        );
+                        pb.enable_steady_tick(std::time::Duration::from_millis(100));
+                        pb.set_message("Processing sections...");
+                    }
+                }
+            }
+
+            ParseEvent::SectionParsed(section) => {
+                if let Some(ref mut writer) = mfw {
+                    // render_section_standalone uses embedded heading_level from
+                    // parsed data; passing empty_styles is correct here.
+                    if let Err(e) = writer.write_section(section, &empty_styles) {
+                        cb_err = Some(e.into());
+                        return ControlFlow::Break(());
+                    }
+                }
+                if let Some(ref pb) = pb {
+                    pb.inc(1);
+                }
+            }
+
+            ParseEvent::SectionFailed { index, error } => {
+                if !quiet {
+                    eprintln!(
+                        "{}: section {} failed: {}",
+                        "Warning".yellow().bold(),
+                        index,
+                        error
+                    );
+                }
+                if let Some(ref pb) = pb {
+                    pb.inc(1);
+                }
+            }
+
+            ParseEvent::DocumentEnd => {
+                if let Some(writer) = mfw.take() {
+                    match writer.finish() {
+                        Err(e) => {
+                            cb_err = Some(e.into());
+                            return ControlFlow::Break(());
+                        }
+                        Ok(s) => {
+                            summary_result = Some(s);
+                        }
+                    }
+                }
+            }
+
+            ParseEvent::ResourceExtracted { name, data } => {
+                if let Some(ref dir) = images_dir_clone {
+                    let result: io::Result<()> = (|| {
+                        std::fs::create_dir_all(dir)?;
+                        std::fs::write(dir.join(&name), &data)?;
+                        Ok(())
+                    })();
+                    match result {
+                        Err(e) => {
+                            cb_err = Some(e.into());
+                            return ControlFlow::Break(());
+                        }
+                        Ok(()) => {
+                            image_count += 1;
+                        }
+                    }
+                }
+            }
+        }
+        ControlFlow::Continue(())
+    })?;
+
+    // Propagate any error from inside the closure
+    if let Some(e) = cb_err {
+        return Err(e);
+    }
+
     if let Some(ref pb) = pb {
-        pb.set_message("Processing sections...");
-    }
-
-    mfw.write_document_start(&doc)?;
-    for section in &doc.sections {
-        mfw.write_section(section)?;
-    }
-
-    // Extract images before finish (while we still have &doc.resources)
-    mfw.extract_images(&doc.resources)?;
-
-    // Finalize all writers — pass original doc so MD rendering uses full styles/resources
-    if let Some(ref pb) = pb {
-        pb.set_message("Finalizing output...");
-    }
-    let summary = mfw.finish(&doc)?;
-    let image_count = summary.image_count;
-
-    if let Some(pb) = pb {
         pb.finish_and_clear();
     }
+
+    let summary = summary_result.unwrap_or_default();
 
     // Print summary
     println!("{}", "Conversion Complete".green().bold());
@@ -572,12 +696,10 @@ fn cmd_convert(args: ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Statistics
-    let text = doc.plain_text();
-    let word_count = text.split_whitespace().count();
     println!("\n{}", "Statistics".cyan().bold());
     println!("{}", "─".repeat(40));
-    println!("{}: {}", "Sections".bold(), doc.sections.len());
-    println!("{}: {}", "Words".bold(), word_count);
+    println!("{}: {}", "Sections".bold(), section_count_total);
+    println!("{}: {}", "Words".bold(), summary.word_count);
     if image_count > 0 {
         println!("{}: {}", "Resources".bold(), image_count);
     }
