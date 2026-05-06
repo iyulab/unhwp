@@ -218,12 +218,9 @@ impl MultiFormatWriter {
 
         // Markdown: render section standalone and write
         if let (Some(ref mut md), Some(ref renderer)) = (&mut self.md, &self.md_renderer) {
-            let rendered = MarkdownRenderer::render_section_standalone(
-                section,
-                styles,
-                renderer.options(),
-            )
-            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
+            let rendered =
+                MarkdownRenderer::render_section_standalone(section, styles, renderer.options())
+                    .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
             md.write_all(rendered.as_bytes())?;
         }
 

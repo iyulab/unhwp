@@ -10,8 +10,8 @@ use colored::*;
 use indicatif::{ProgressBar, ProgressStyle};
 use std::fs;
 use std::io::{self, Write};
-use std::path::PathBuf;
 use std::ops::ControlFlow;
+use std::path::PathBuf;
 use unhwp::{
     parse_file, parse_file_streaming, render, ErrorMode, ParseEvent, RenderOptions,
     SectionStreamOptions, TableFallback,
@@ -475,15 +475,17 @@ fn cmd_convert(args: ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     // Resolve formats: --all overrides --formats
     let formats: Vec<OutputFormat> = if args.all {
-        vec![OutputFormat::Markdown, OutputFormat::Text, OutputFormat::Json]
+        vec![
+            OutputFormat::Markdown,
+            OutputFormat::Text,
+            OutputFormat::Json,
+        ]
     } else {
         let mut fmts = Vec::new();
         for s in &args.formats {
             match OutputFormat::from_str(s) {
                 Some(f) => fmts.push(f),
-                None => {
-                    return Err(format!("Unknown format '{}'. Use: md, txt, json", s).into())
-                }
+                None => return Err(format!("Unknown format '{}'. Use: md, txt, json", s).into()),
             }
         }
         if fmts.is_empty() {
@@ -578,9 +580,7 @@ fn cmd_convert(args: ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
                         // Unknown section count — switch to spinner style
                         pb.set_style(
                             ProgressStyle::default_spinner()
-                                .tick_strings(&[
-                                    "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
-                                ])
+                                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
                                 .template("{spinner:.blue} {msg}")
                                 .unwrap(),
                         );

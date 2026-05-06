@@ -135,24 +135,18 @@ impl Hwp5Parser {
         let mut picture_counter: u32 = 0;
 
         for (index, name) in section_names.iter().enumerate() {
-            let data = self
-                .container
-                .read_stream_decompressed(name, is_compressed);
+            let data = self.container.read_stream_decompressed(name, is_compressed);
 
             match data {
                 Err(e) if opts.error_mode == crate::parse_options::ErrorMode::Lenient => {
-                    if f(ParseEvent::SectionFailed { index, error: e })
-                        == ControlFlow::Break(())
-                    {
+                    if f(ParseEvent::SectionFailed { index, error: e }) == ControlFlow::Break(()) {
                         return Ok(());
                     }
                 }
                 Err(e) => return Err(e),
                 Ok(bytes) => {
                     match bodytext::parse_section(&bytes, index, &styles, &mut picture_counter) {
-                        Err(e)
-                            if opts.error_mode == crate::parse_options::ErrorMode::Lenient =>
-                        {
+                        Err(e) if opts.error_mode == crate::parse_options::ErrorMode::Lenient => {
                             if f(ParseEvent::SectionFailed { index, error: e })
                                 == ControlFlow::Break(())
                             {
@@ -183,8 +177,7 @@ impl Hwp5Parser {
             if let Ok(resources) = self.container.list_bindata() {
                 for name in resources {
                     if let Ok(data) = self.container.read_bindata(&name, is_compressed) {
-                        if f(ParseEvent::ResourceExtracted { name, data })
-                            == ControlFlow::Break(())
+                        if f(ParseEvent::ResourceExtracted { name, data }) == ControlFlow::Break(())
                         {
                             return Ok(());
                         }

@@ -115,8 +115,7 @@ impl HwpxParser {
         for (index, path) in section_files.iter().enumerate() {
             match self.container.read_file(path) {
                 Err(e) if opts.error_mode == crate::parse_options::ErrorMode::Lenient => {
-                    if f(ParseEvent::SectionFailed { index, error: e }) == ControlFlow::Break(())
-                    {
+                    if f(ParseEvent::SectionFailed { index, error: e }) == ControlFlow::Break(()) {
                         return Ok(());
                     }
                 }
@@ -156,8 +155,7 @@ impl HwpxParser {
                             .next()
                             .unwrap_or(&resource_path)
                             .to_string();
-                        if f(ParseEvent::ResourceExtracted { name, data })
-                            == ControlFlow::Break(())
+                        if f(ParseEvent::ResourceExtracted { name, data }) == ControlFlow::Break(())
                         {
                             return Ok(());
                         }
