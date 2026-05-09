@@ -15,9 +15,11 @@ A high-performance Rust library for extracting HWP/HWPX Korean word processor do
 - **Multiple output formats**: Markdown, Plain Text, JSON (with full metadata)
 - **Structure preservation**: Headings, lists, tables, inline formatting
 - **Asset extraction**: Images and binary resources
+- **Streaming API**: Memory-efficient section-by-section processing for large documents
+- **Section markers**: Optional `<!-- section N -->` boundary markers in output
 - **Self-update**: Built-in update mechanism via GitHub releases
 - **C-ABI FFI**: Native library for C#, Python, and other languages
-- **Parallel processing**: Uses Rayon for multi-section documents
+- **Parallel processing**: HWPX sections parsed in parallel via Rayon
 - **Async support**: Optional Tokio integration
 
 ---
@@ -30,6 +32,9 @@ A high-performance Rust library for extracting HWP/HWPX Korean word processor do
   - [Install via Cargo](#install-via-cargo)
 - [CLI Usage](#cli-usage)
 - [Rust Library Usage](#rust-library-usage)
+  - [Quick Start](#quick-start)
+  - [Streaming API](#streaming-api)
+  - [Builder API](#builder-api)
 - [C# / .NET Integration](#c--net-integration)
 - [Output Formats](#output-formats)
 - [Feature Flags](#feature-flags)
@@ -161,38 +166,74 @@ unhwp convert document.hwp -o ./output
 
 ### Output Structure
 
-```
-document_output/
-├── extract.md      # Markdown output
-├── extract.txt     # Plain text output
-├── content.json    # Full structured JSON
-└── images/         # Extracted images
-    ├── image1.png
-    └── image2.jpg
+By default, only Markdown is produced. Use `--formats` or `--all` to add more formats:
+
+```bash
+# Default: Markdown only
+unhwp document.hwp
+# → document_output/extract.md
+# → document_output/images/
+
+# All formats
+unhwp convert document.hwp --all
+# → document_output/extract.md
+# → document_output/extract.txt
+# → document_output/content.json
+# → document_output/images/
+
+# Specific formats
+unhwp convert document.hwp --formats md,txt
 ```
 
 ### Cleanup Options (for LLM Training Data)
 
 ```bash
-# Default cleanup - balanced normalization
+# Standard cleanup (default when --cleanup is specified without a value)
 unhwp document.hwp --cleanup
 
-# Minimal cleanup - essential normalization only
-unhwp document.hwp --cleanup-minimal
+# Preset selection
+unhwp document.hwp --cleanup minimal      # Essential normalization only
+unhwp document.hwp --cleanup standard     # Balanced (default)
+unhwp document.hwp --cleanup aggressive   # Maximum purification
+unhwp document.hwp --cleanup none         # Disable cleanup
+```
 
-# Aggressive cleanup - maximum purification
-unhwp document.hwp --cleanup-aggressive
+### Section Markers
+
+Insert `<!-- section N -->` boundaries to identify document sections in output:
+
+```bash
+unhwp convert document.hwp --section-markers
+```
+
+Output:
+
+```markdown
+<!-- section 0 -->
+
+# Introduction
+
+Lorem ipsum...
+
+<!-- section 1 -->
+
+## Appendix
 ```
 
 ### Commands
 
 ```bash
-unhwp --help                    # Show help
-unhwp --version                 # Show version
-unhwp version                   # Show detailed version info
-unhwp update --check            # Check for updates
-unhwp update                    # Self-update to latest version
-unhwp convert FILE [OPTIONS]    # Convert with explicit subcommand
+unhwp --help                              # Show help
+unhwp --version                           # Show version
+unhwp version                             # Show detailed version info
+unhwp update --check                      # Check for updates
+unhwp update                              # Self-update to latest version
+unhwp convert FILE [OPTIONS]              # Convert to directory (default command)
+unhwp md FILE [-o OUTPUT]                 # Convert to Markdown (stdout or file)
+unhwp text FILE [-o OUTPUT]               # Extract plain text
+unhwp json FILE [-o OUTPUT]               # Convert to JSON
+unhwp info FILE                           # Show document metadata
+unhwp extract FILE [-o DIR]               # Extract binary resources only
 ```
 
 ### Examples
@@ -201,14 +242,20 @@ unhwp convert FILE [OPTIONS]    # Convert with explicit subcommand
 # Basic conversion
 unhwp report.hwp
 
-# Convert with cleanup for AI training
-unhwp report.hwp ./cleaned --cleanup-aggressive
+# All formats + cleanup for AI training
+unhwp convert report.hwp --all --cleanup aggressive
 
-# Batch conversion (shell)
-for f in *.hwp; do unhwp "$f" --cleanup; done
+# Section-aware Markdown for downstream parsing
+unhwp convert report.hwp --section-markers
 
-# Batch conversion (PowerShell)
-Get-ChildItem *.hwp | ForEach-Object { unhwp $_.FullName --cleanup }
+# Skip image extraction (faster)
+unhwp convert report.hwp --no-images
+
+# Quiet batch conversion (shell)
+for f in *.hwp; do unhwp "$f" -q; done
+
+# Quiet batch conversion (PowerShell)
+Get-ChildItem *.hwp | ForEach-Object { unhwp $_.FullName -q }
 ```
 
 ---
@@ -231,6 +278,56 @@ fn main() -> unhwp::Result<()> {
 
     Ok(())
 }
+```
+
+### Streaming API
+
+For large documents, process section-by-section without loading the entire document:
+
+```rust
+use std::ops::ControlFlow;
+use unhwp::{parse_file_streaming, ParseEvent, SectionStreamOptions};
+
+fn main() -> unhwp::Result<()> {
+    parse_file_streaming(
+        "large.hwp",
+        SectionStreamOptions::default(),
+        |event| {
+            match event {
+                ParseEvent::DocumentStart { metadata, section_count, .. } => {
+                    println!("Title: {:?}, sections: {}", metadata.title, section_count);
+                }
+                ParseEvent::SectionParsed(section) => {
+                    println!("Section {}: {} blocks", section.index, section.content.len());
+                    // section memory is freed after this callback returns
+                }
+                ParseEvent::SectionFailed { index, error } => {
+                    eprintln!("Section {} failed: {}", index, error);
+                }
+                ParseEvent::DocumentEnd => {}
+                ParseEvent::ResourceExtracted { name, data } => {
+                    std::fs::write(format!("images/{}", name), data).ok();
+                }
+            }
+            ControlFlow::Continue(())
+        },
+    )?;
+    Ok(())
+}
+```
+
+Event order is always: `DocumentStart → (SectionParsed | SectionFailed)* → DocumentEnd → ResourceExtracted*`
+
+### Section Markers
+
+```rust
+use unhwp::{to_markdown_with_options, RenderOptions, SectionMarkerStyle};
+
+let options = RenderOptions::default()
+    .with_section_markers(SectionMarkerStyle::Comment);
+
+let markdown = to_markdown_with_options("document.hwp", &options)?;
+// Each section preceded by <!-- section N -->
 ```
 
 ## Output Formats
@@ -260,7 +357,7 @@ let json = doc.raw_content();
 // - images, equations, links
 ```
 
-## Builder API
+### Builder API
 
 ```rust
 use unhwp::{Unhwp, TableFallback};
@@ -270,9 +367,26 @@ let markdown = Unhwp::new()
     .with_image_dir("./assets")
     .with_table_fallback(TableFallback::Html)
     .with_frontmatter()
-    .lenient()  // Skip invalid sections
+    .lenient()  // Continue past invalid sections
     .parse("document.hwp")?
     .to_markdown()?;
+```
+
+### RenderOptions
+
+```rust
+use unhwp::{to_markdown_with_options, RenderOptions, SectionMarkerStyle, TableFallback};
+
+let options = RenderOptions::default()
+    .with_frontmatter()
+    .with_table_fallback(TableFallback::Html)
+    .with_max_heading_level(3)
+    .with_image_dir("./images")
+    .with_image_prefix("images/")
+    .with_cleanup()                                      // Standard cleanup
+    .with_section_markers(SectionMarkerStyle::Comment);  // <!-- section N -->
+
+let markdown = to_markdown_with_options("document.hwp", &options)?;
 ```
 
 ## C# / .NET Integration

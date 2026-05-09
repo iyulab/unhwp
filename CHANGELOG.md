@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-09
+
+### Added
+
+#### Streaming API
+- `parse_file_streaming()` — processes large documents section-by-section with bounded memory
+- `ParseEvent` enum: `DocumentStart`, `SectionParsed`, `SectionFailed`, `DocumentEnd`, `ResourceExtracted`
+- `SectionStreamOptions` — configure error mode and resource extraction for streaming
+
+#### Section Boundary Markers
+- `SectionMarkerStyle` enum (`None`, `Comment`) — insert `<!-- section N -->` before each section
+- `RenderOptions::with_section_markers()` builder method
+- CLI `--section-markers` flag on `convert` subcommand
+
+#### CLI Improvements
+- `--formats <md,txt,json>` — select output formats (default: `md` only)
+- `--all` — shorthand for `--formats md,txt,json`
+- `--no-images` — skip binary resource extraction
+- `--quiet` / `-q` — suppress progress output
+
+### Changed
+- `convert` default output is now **Markdown only** (`extract.md` + `images/`); use `--all` or `--formats` for additional formats
+- `--cleanup` without a preset argument defaults to `standard`
+- `cmd_convert` rewired to streaming pipeline — sections are processed and written one at a time; peak memory no longer scales with document size
+
+### Fixed
+- CLI path sanitization in resource extraction (prevent path traversal)
+- Removed silent-drop warning on render result
+- `render_section_standalone` no longer clones the section (performance)
+- Dead `extract_mode` field removed from streaming options
+
+## [0.2.5] - 2026-04-xx
+
+### Changed
+- CI: opt all JS Actions into Node.js 24 ahead of GitHub's forced migration
+
 ## [0.2.4] - 2026-04-14
 
 ### Fixed
@@ -143,7 +179,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `thiserror` for error types
 - `bytes` for buffer handling
 
-[Unreleased]: https://github.com/iyulab/unhwp/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/iyulab/unhwp/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/iyulab/unhwp/compare/v0.2.5...v0.3.0
+[0.2.5]: https://github.com/iyulab/unhwp/compare/v0.2.4...v0.2.5
+[0.2.4]: https://github.com/iyulab/unhwp/compare/v0.1.3...v0.2.4
 [0.1.3]: https://github.com/iyulab/unhwp/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/iyulab/unhwp/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/iyulab/unhwp/compare/v0.1.0...v0.1.1
