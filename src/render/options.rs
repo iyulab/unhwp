@@ -53,6 +53,9 @@ pub struct RenderOptions {
     /// When set, enables sophisticated heading detection with sequence analysis.
     /// If None, uses legacy inline heading detection.
     pub heading_config: Option<HeadingConfig>,
+
+    /// Style for section boundary markers in Markdown output.
+    pub section_markers: SectionMarkerStyle,
 }
 
 impl Default for RenderOptions {
@@ -72,6 +75,7 @@ impl Default for RenderOptions {
             cleanup: None,
             // Enable statistical heading analysis by default (font-size based)
             heading_config: Some(super::heading_analyzer::HeadingConfig::default()),
+            section_markers: SectionMarkerStyle::None,
         }
     }
 }
@@ -165,6 +169,22 @@ impl RenderOptions {
         self.heading_config = Some(config);
         self
     }
+
+    /// Sets the section marker style.
+    pub fn with_section_markers(mut self, style: SectionMarkerStyle) -> Self {
+        self.section_markers = style;
+        self
+    }
+}
+
+/// Style for section boundary markers in Markdown output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SectionMarkerStyle {
+    /// No markers (default).
+    #[default]
+    None,
+    /// HTML comment: `<!-- section N -->` inserted before each section's content.
+    Comment,
 }
 
 /// Fallback modes for tables with merged cells.

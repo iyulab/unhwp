@@ -14,7 +14,7 @@ use std::ops::ControlFlow;
 use std::path::PathBuf;
 use unhwp::{
     parse_file, parse_file_streaming, render, ErrorMode, ParseEvent, RenderOptions,
-    SectionStreamOptions, TableFallback,
+    SectionMarkerStyle, SectionStreamOptions, TableFallback,
 };
 use writer::{MultiFormatWriter, OutputFormat};
 
@@ -74,6 +74,10 @@ struct ConvertArgs {
     /// Skip image extraction (images are extracted by default)
     #[arg(long)]
     no_images: bool,
+
+    /// Emit <!-- section N --> markers before each section in Markdown output
+    #[arg(long)]
+    section_markers: bool,
 
     /// Suppress progress output
     #[arg(short, long)]
@@ -253,6 +257,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 formats: vec!["md".to_string()],
                 all: false,
                 no_images: false,
+                section_markers: false,
                 quiet: false,
             };
             return cmd_convert(args);
@@ -297,11 +302,11 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             pb.finish_and_clear();
             write_output(output.as_ref(), &markdown)?;
 
-            if output.is_some() {
+            if let Some(ref path) = output {
                 println!(
                     "{} Converted to Markdown: {}",
                     "✓".green().bold(),
-                    output.unwrap().display()
+                    path.display()
                 );
             }
         }
@@ -321,11 +326,11 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             pb.finish_and_clear();
             write_output(output.as_ref(), &text)?;
 
-            if output.is_some() {
+            if let Some(ref path) = output {
                 println!(
                     "{} Converted to text: {}",
                     "✓".green().bold(),
-                    output.unwrap().display()
+                    path.display()
                 );
             }
 
@@ -352,11 +357,11 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             pb.finish_and_clear();
             write_output(output.as_ref(), &json)?;
 
-            if output.is_some() {
+            if let Some(ref path) = output {
                 println!(
                     "{} Converted to JSON: {}",
                     "✓".green().bold(),
-                    output.unwrap().display()
+                    path.display()
                 );
             }
         }
@@ -393,7 +398,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 println!("{}: {}", "Modified".bold(), modified);
             }
             if doc.metadata.is_distribution {
-                println!("{}: {}", "Distribution".bold(), "Yes (DRM protected)");
+                println!("{}: Yes (DRM protected)", "Distribution".bold());
             }
 
             let text = doc.plain_text();
@@ -498,6 +503,9 @@ fn cmd_convert(args: ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
     let mut render_opts = RenderOptions::default()
         .with_frontmatter()
         .with_image_prefix("images/");
+    if args.section_markers {
+        render_opts = render_opts.with_section_markers(SectionMarkerStyle::Comment);
+    }
     apply_cleanup(&mut render_opts, args.cleanup);
 
     // Images directory (None = skip)

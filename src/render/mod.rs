@@ -9,7 +9,7 @@ pub use heading_analyzer::{
     HeadingConfig, HeadingDecision, KoreanChapterInfo, KoreanChapterType,
 };
 pub use markdown::MarkdownRenderer;
-pub use options::{RenderOptions, TableFallback};
+pub use options::{RenderOptions, SectionMarkerStyle, TableFallback};
 
 use crate::error::Result;
 use crate::model::{Document, Metadata};

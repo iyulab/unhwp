@@ -64,7 +64,7 @@ pub use detect::{detect_format, detect_format_from_bytes, detect_format_from_pat
 pub use error::{Error, Result};
 pub use model::Document;
 pub use parse_options::{ErrorMode, ExtractMode, ParseOptions};
-pub use render::{RenderOptions, TableFallback};
+pub use render::{RenderOptions, SectionMarkerStyle, TableFallback};
 pub use streaming::{parse_file_streaming, ParseEvent, SectionStreamOptions};
 
 use std::io::{Read, Seek};

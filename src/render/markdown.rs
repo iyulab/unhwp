@@ -120,6 +120,10 @@ impl MarkdownRenderer {
 
         let mut output = String::new();
 
+        if renderer.options.section_markers == super::SectionMarkerStyle::Comment {
+            output.push_str(&format!("<!-- section {} -->\n\n", section.index));
+        }
+
         for block in &section.content {
             match block {
                 Block::Paragraph(para) => {
@@ -150,6 +154,9 @@ impl MarkdownRenderer {
 
         // Render each section
         for section in &document.sections {
+            if self.options.section_markers == super::SectionMarkerStyle::Comment {
+                output.push_str(&format!("<!-- section {} -->\n\n", section.index));
+            }
             for block in &section.content {
                 match block {
                     Block::Paragraph(para) => {
@@ -192,6 +199,9 @@ impl MarkdownRenderer {
 
         // Render each section with pre-computed heading decisions
         for section in &document.sections {
+            if self.options.section_markers == super::SectionMarkerStyle::Comment {
+                output.push_str(&format!("<!-- section {} -->\n\n", section.index));
+            }
             for block in &section.content {
                 match block {
                     Block::Paragraph(para) => {
