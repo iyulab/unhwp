@@ -234,7 +234,11 @@ mod tests {
     #[test]
     fn test_parse_section_order_single_line() {
         let sections = parse_section_order(SINGLE_LINE_HPF);
-        assert_eq!(sections.len(), 2, "must find both sections in compact single-line XML");
+        assert_eq!(
+            sections.len(),
+            2,
+            "must find both sections in compact single-line XML"
+        );
         assert_eq!(sections[0], "Contents/section0.xml");
         assert_eq!(sections[1], "Contents/section1.xml");
     }

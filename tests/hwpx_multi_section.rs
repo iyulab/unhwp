@@ -5,8 +5,10 @@
 /// would miss — such as the section1 drop bug fixed in container.rs.
 use unhwp::{parse_file, to_markdown};
 
-const FIXTURE_TWO_SECTIONS: &str =
-    concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/two_sections.hwpx");
+const FIXTURE_TWO_SECTIONS: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/two_sections.hwpx"
+);
 
 #[test]
 fn hwpx_two_sections_both_parsed() {
