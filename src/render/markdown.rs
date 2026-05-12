@@ -108,14 +108,15 @@ impl MarkdownRenderer {
         _styles: &StyleRegistry,
         opts: &RenderOptions,
     ) -> Result<String> {
-        // Build a renderer without heading_config (forces standard path)
-        // and without an image mapping (resources are emitted separately).
+        // Build a renderer without heading_config (forces standard path).
+        // Use image_id_map from opts so streaming callers that populated it
+        // from the manifest get correct image filenames (with extension).
         let renderer = Self {
+            image_id_to_filename: opts.image_id_map.clone(),
             options: RenderOptions {
                 heading_config: None,
                 ..opts.clone()
             },
-            image_id_to_filename: HashMap::new(),
         };
 
         let mut output = String::new();
@@ -886,6 +887,61 @@ fn escape_yaml(text: &str) -> String {
 mod tests {
     use super::*;
     use crate::model::{Block, ImageRef, Section, Table, TableCell, TableRow, TextStyle};
+
+    #[test]
+    fn test_streaming_image_path_includes_extension() {
+        // render_section_standalone must use opts.image_id_map to resolve
+        // binaryItemIDRef ("image5") → filename with extension ("image5.bmp").
+        // Without the map it falls back to the bare ID, omitting the extension.
+        let opts = RenderOptions {
+            image_id_map: [("image5".to_string(), "image5.bmp".to_string())]
+                .into_iter()
+                .collect(),
+            image_path_prefix: "images/".to_string(),
+            ..Default::default()
+        };
+
+        let mut section = Section::new(0);
+        let mut para = Paragraph::new();
+        para.content
+            .push(InlineContent::Image(ImageRef::new("image5")));
+        section.push_paragraph(para);
+
+        let styles = crate::model::StyleRegistry::new();
+        let result = MarkdownRenderer::render_section_standalone(&section, &styles, &opts).unwrap();
+
+        assert!(
+            result.contains("images/image5.bmp"),
+            "streaming path must resolve image ID to filename with extension; got: {result}"
+        );
+        assert!(
+            !result.contains("images/image5)"),
+            "bare ID without extension must not appear in output; got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_streaming_image_path_fallback_when_no_map() {
+        // When image_id_map is empty (e.g. HWP5 streaming), the ID is used as-is.
+        let opts = RenderOptions {
+            image_path_prefix: "images/".to_string(),
+            ..Default::default()
+        };
+
+        let mut section = Section::new(0);
+        let mut para = Paragraph::new();
+        para.content
+            .push(InlineContent::Image(ImageRef::new("BIN0001.png")));
+        section.push_paragraph(para);
+
+        let styles = crate::model::StyleRegistry::new();
+        let result = MarkdownRenderer::render_section_standalone(&section, &styles, &opts).unwrap();
+
+        assert!(
+            result.contains("images/BIN0001.png"),
+            "fallback should pass the ID through unchanged; got: {result}"
+        );
+    }
 
     #[test]
     fn test_render_simple_paragraph() {

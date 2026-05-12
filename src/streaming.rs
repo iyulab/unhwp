@@ -49,6 +49,12 @@ pub enum ParseEvent<'doc> {
         styles: &'doc StyleRegistry,
         /// Number of sections detected (may be 0 if the manifest is unavailable).
         section_count: usize,
+        /// Maps each binary resource ID (e.g. `"image5"`) to its filename with
+        /// extension (e.g. `"image5.bmp"`). Built from the document manifest
+        /// before any sections are emitted so streaming renderers can produce
+        /// correct image paths without waiting for `ResourceExtracted` events.
+        /// Empty for formats that do not have a manifest (e.g. HWP 5.0).
+        image_map: std::collections::HashMap<String, String>,
     },
 
     /// A section was successfully parsed.

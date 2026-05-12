@@ -135,15 +135,25 @@ impl HwpxContainer {
     pub fn file_exists(&mut self, path: &str) -> bool {
         self.archive.by_name(path).is_ok()
     }
+
+    /// Builds a `binaryItemIDRef → filename` map from the OPF manifest.
+    ///
+    /// Returns e.g. `"image5"` → `"image5.bmp"` for use by the streaming
+    /// renderer so image paths include the correct file extension.
+    pub fn build_image_map(&mut self) -> HashMap<String, String> {
+        if let Ok(hpf) = self.read_content_hpf() {
+            build_image_map_from_hpf(&hpf)
+        } else {
+            HashMap::new()
+        }
+    }
 }
 
-/// Parses section order from content.hpf manifest using proper XML parsing.
+/// Parses the OPF manifest from content.hpf into an `id → href` map.
 ///
-/// Reads the OPF manifest to build an id→href map, then follows the spine
-/// order to resolve section file paths. This handles compact single-line XML
-/// (which real HWPX files use) correctly — the previous string/line approach
-/// only found the first section per line.
-fn parse_section_order(hpf_content: &str) -> Vec<String> {
+/// Handles compact single-line XML (as real HWPX files use). Shared by
+/// `parse_section_order` and `build_image_map_from_hpf`.
+fn parse_manifest_map(hpf_content: &str) -> (HashMap<String, String>, Vec<String>) {
     let mut manifest: HashMap<String, String> = HashMap::new();
     let mut spine: Vec<String> = Vec::new();
     let mut in_spine = false;
@@ -198,11 +208,40 @@ fn parse_section_order(hpf_content: &str) -> Vec<String> {
         buf.clear();
     }
 
+    (manifest, spine)
+}
+
+/// Parses section order from content.hpf manifest using proper XML parsing.
+///
+/// Reads the OPF manifest to build an id→href map, then follows the spine
+/// order to resolve section file paths. This handles compact single-line XML
+/// (which real HWPX files use) correctly — the previous string/line approach
+/// only found the first section per line.
+fn parse_section_order(hpf_content: &str) -> Vec<String> {
+    let (manifest, spine) = parse_manifest_map(hpf_content);
+
     // Resolve spine idrefs → file paths via manifest, keeping only section XMLs.
     spine
         .into_iter()
         .filter_map(|idref| manifest.get(&idref).cloned())
         .filter(|href| href.ends_with(".xml") && href.to_lowercase().contains("section"))
+        .collect()
+}
+
+/// Builds a `binaryItemIDRef → filename` map from content.hpf manifest.
+///
+/// e.g. `"image5"` → `"image5.bmp"`. Used by the streaming path to resolve
+/// image IDs to filenames with extensions before sections are rendered.
+fn build_image_map_from_hpf(hpf_content: &str) -> HashMap<String, String> {
+    let (manifest, _) = parse_manifest_map(hpf_content);
+
+    manifest
+        .into_iter()
+        .filter(|(_, href)| !href.ends_with(".xml") && !href.ends_with(".js"))
+        .filter_map(|(id, href)| {
+            let filename = href.rsplit('/').next()?.to_string();
+            Some((id, filename))
+        })
         .collect()
 }
 

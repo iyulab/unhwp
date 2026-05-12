@@ -101,11 +101,13 @@ impl HwpxParser {
 
         let section_files = self.container.list_sections()?;
         let section_count = section_files.len();
+        let image_map = self.container.build_image_map();
 
         if f(ParseEvent::DocumentStart {
             metadata: &metadata,
             styles: &styles,
             section_count,
+            image_map,
         }) == ControlFlow::Break(())
         {
             return Ok(());

@@ -560,8 +560,12 @@ fn cmd_convert(args: ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
                 metadata,
                 styles,
                 section_count,
+                image_map,
             } => {
                 section_count_total = section_count;
+                // Inject image map so streaming renderer resolves IDs to
+                // filenames with extensions (e.g. "image5" → "image5.bmp").
+                render_opts.image_id_map = image_map;
                 // Create MultiFormatWriter with styles from this event
                 match MultiFormatWriter::new(
                     &output_dir_clone,

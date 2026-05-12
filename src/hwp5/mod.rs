@@ -123,6 +123,7 @@ impl Hwp5Parser {
             metadata: &metadata,
             styles: &styles,
             section_count,
+            image_map: std::collections::HashMap::new(),
         }) == ControlFlow::Break(())
         {
             return Ok(());

@@ -2,6 +2,7 @@
 
 use super::heading_analyzer::HeadingConfig;
 use crate::cleanup::CleanupOptions;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Options for Markdown rendering.
@@ -56,6 +57,12 @@ pub struct RenderOptions {
 
     /// Style for section boundary markers in Markdown output.
     pub section_markers: SectionMarkerStyle,
+
+    /// Maps binary resource IDs (e.g. `"image5"`) to filenames with extensions
+    /// (e.g. `"image5.bmp"`). Populated by the streaming path from the document
+    /// manifest at `DocumentStart` time so `render_section_standalone` can emit
+    /// correct image paths. Not a user-facing configuration option.
+    pub image_id_map: HashMap<String, String>,
 }
 
 impl Default for RenderOptions {
@@ -76,6 +83,7 @@ impl Default for RenderOptions {
             // Enable statistical heading analysis by default (font-size based)
             heading_config: Some(super::heading_analyzer::HeadingConfig::default()),
             section_markers: SectionMarkerStyle::None,
+            image_id_map: HashMap::new(),
         }
     }
 }
