@@ -51,8 +51,9 @@ Download the latest release from [GitHub Releases](https://github.com/iyulab/unh
 #### Windows (x64)
 
 ```powershell
-# Download and extract
-Invoke-WebRequest -Uri "https://github.com/iyulab/unhwp/releases/latest/download/unhwp-cli-x86_64-pc-windows-msvc.zip" -OutFile "unhwp.zip"
+# Auto-detect latest version and download
+$VERSION = (Invoke-RestMethod "https://api.github.com/repos/iyulab/unhwp/releases/latest").tag_name
+Invoke-WebRequest -Uri "https://github.com/iyulab/unhwp/releases/latest/download/unhwp-windows-x86_64-${VERSION}.zip" -OutFile "unhwp.zip"
 Expand-Archive -Path "unhwp.zip" -DestinationPath "."
 
 # Move to a directory in PATH (optional)
@@ -62,17 +63,13 @@ Move-Item -Path "unhwp.exe" -Destination "$env:LOCALAPPDATA\Microsoft\WindowsApp
 unhwp --version
 ```
 
-Or manually:
-1. Download `unhwp-cli-x86_64-pc-windows-msvc.zip`
-2. Extract `unhwp.exe`
-3. Add to PATH or run directly
-
 #### Linux (x64)
 
 ```bash
-# Download and extract
-curl -LO https://github.com/iyulab/unhwp/releases/latest/download/unhwp-cli-x86_64-unknown-linux-gnu.tar.gz
-tar -xzf unhwp-cli-x86_64-unknown-linux-gnu.tar.gz
+# Auto-detect latest version and download
+VERSION=$(curl -s "https://api.github.com/repos/iyulab/unhwp/releases/latest" | grep '"tag_name"' | cut -d'"' -f4)
+curl -LO "https://github.com/iyulab/unhwp/releases/latest/download/unhwp-linux-x86_64-${VERSION}.tar.gz"
+tar -xzf "unhwp-linux-x86_64-${VERSION}.tar.gz"
 
 # Install to /usr/local/bin (requires sudo)
 sudo mv unhwp /usr/local/bin/
@@ -90,13 +87,15 @@ unhwp --version
 #### macOS
 
 ```bash
-# Intel Mac
-curl -LO https://github.com/iyulab/unhwp/releases/latest/download/unhwp-cli-x86_64-apple-darwin.tar.gz
-tar -xzf unhwp-cli-x86_64-apple-darwin.tar.gz
+VERSION=$(curl -s "https://api.github.com/repos/iyulab/unhwp/releases/latest" | grep '"tag_name"' | cut -d'"' -f4)
 
-# Apple Silicon (M1/M2/M3)
-curl -LO https://github.com/iyulab/unhwp/releases/latest/download/unhwp-cli-aarch64-apple-darwin.tar.gz
-tar -xzf unhwp-cli-aarch64-apple-darwin.tar.gz
+# Intel Mac
+curl -LO "https://github.com/iyulab/unhwp/releases/latest/download/unhwp-macos-x86_64-${VERSION}.tar.gz"
+tar -xzf "unhwp-macos-x86_64-${VERSION}.tar.gz"
+
+# Apple Silicon (M1/M2/M3/M4)
+curl -LO "https://github.com/iyulab/unhwp/releases/latest/download/unhwp-macos-aarch64-${VERSION}.tar.gz"
+tar -xzf "unhwp-macos-aarch64-${VERSION}.tar.gz"
 
 # Install
 sudo mv unhwp /usr/local/bin/
@@ -109,10 +108,10 @@ unhwp --version
 
 | Platform | Architecture | File |
 |----------|--------------|------|
-| Windows | x64 | `unhwp-cli-x86_64-pc-windows-msvc.zip` |
-| Linux | x64 | `unhwp-cli-x86_64-unknown-linux-gnu.tar.gz` |
-| macOS | Intel | `unhwp-cli-x86_64-apple-darwin.tar.gz` |
-| macOS | Apple Silicon | `unhwp-cli-aarch64-apple-darwin.tar.gz` |
+| Windows | x64 | `unhwp-windows-x86_64-{version}.zip` |
+| Linux | x64 | `unhwp-linux-x86_64-{version}.tar.gz` |
+| macOS | Intel | `unhwp-macos-x86_64-{version}.tar.gz` |
+| macOS | Apple Silicon | `unhwp-macos-aarch64-{version}.tar.gz` |
 
 ### Updating
 
@@ -251,11 +250,11 @@ unhwp convert report.hwp --section-markers
 # Skip image extraction (faster)
 unhwp convert report.hwp --no-images
 
-# Quiet batch conversion (shell)
-for f in *.hwp; do unhwp "$f" -q; done
+# Quiet batch conversion (shell) — -q is on the `convert` subcommand
+for f in *.hwp; do unhwp convert "$f" -q; done
 
 # Quiet batch conversion (PowerShell)
-Get-ChildItem *.hwp | ForEach-Object { unhwp $_.FullName -q }
+Get-ChildItem *.hwp | ForEach-Object { unhwp convert $_.FullName -q }
 ```
 
 ---
@@ -393,7 +392,19 @@ let markdown = to_markdown_with_options("document.hwp", &options)?;
 
 unhwp provides C-ABI compatible bindings for seamless integration with C# and .NET applications.
 
-### Getting the Native Library
+### Installation via NuGet
+
+```bash
+dotnet add package Unhwp
+```
+
+Or via Package Manager Console:
+
+```powershell
+Install-Package Unhwp
+```
+
+### Getting the Native Library (Manual)
 
 Build from source or download from [GitHub Releases](https://github.com/iyulab/unhwp/releases):
 
@@ -404,11 +415,8 @@ Build from source or download from [GitHub Releases](https://github.com/iyulab/u
 | macOS | `libunhwp.dylib` |
 
 ```bash
-# Build native library from source
-cargo build --release
-# Output: target/release/unhwp.dll (Windows)
-#         target/release/libunhwp.so (Linux)
-#         target/release/libunhwp.dylib (macOS)
+# Build native library from source (requires ffi feature)
+cargo build --release --features ffi
 ```
 
 ### Quick Start
@@ -416,61 +424,50 @@ cargo build --release
 ```csharp
 using Unhwp;
 
-// Parse document once, access multiple outputs
-using var doc = HwpDocument.Parse("document.hwp");
+// Parse document — always use `using` to release native memory
+using var doc = UnhwpDocument.ParseFile("document.hwp");
 
 // Get Markdown
-string markdown = doc.Markdown;
+string markdown = doc.ToMarkdown();
 File.WriteAllText("output.md", markdown);
 
 // Get plain text
-string text = doc.RawText;
+string text = doc.ToText();
 
-// Get full structured JSON (metadata, styles, formatting)
-string json = doc.RawContent;
+// Get full structured JSON
+string json = doc.ToJson();
 
-// Extract all images
-foreach (var image in doc.Images)
-{
-    image.SaveTo($"./images/{image.Name}");
-    Console.WriteLine($"Saved: {image.Name} ({image.Size} bytes)");
-}
+// With frontmatter
+var opts = new MarkdownOptions { IncludeFrontmatter = true };
+string mdWithFm = doc.ToMarkdown(opts);
 
 // Document statistics
 Console.WriteLine($"Sections: {doc.SectionCount}");
-Console.WriteLine($"Paragraphs: {doc.ParagraphCount}");
+Console.WriteLine($"Resources: {doc.ResourceCount}");
+Console.WriteLine($"Title: {doc.Title}");
+Console.WriteLine($"Author: {doc.Author}");
 ```
 
-### With Cleanup Options
+### Parse from Bytes
 
 ```csharp
-var options = new ConversionOptions
-{
-    EnableCleanup = true,
-    CleanupPreset = CleanupPreset.Aggressive,  // For LLM training
-    IncludeFrontmatter = true,
-    TableFallback = TableFallback.Html
-};
-
-using var doc = HwpDocument.Parse("document.hwp", options);
-File.WriteAllText("cleaned.md", doc.Markdown);
-```
-
-### Static Methods (Simple API)
-
-```csharp
-// One-liner conversion
-string markdown = HwpConverter.ToMarkdown("document.hwp");
-
-// With cleanup
-string cleanedMarkdown = HwpConverter.ToMarkdown("document.hwp", enableCleanup: true);
-
-// Plain text extraction
-string text = HwpConverter.ExtractText("document.hwp");
-
-// From byte array or stream
 byte[] data = File.ReadAllBytes("document.hwp");
-string md = HwpConverter.BytesToMarkdown(data);
+using var doc = UnhwpDocument.ParseBytes(data);
+string markdown = doc.ToMarkdown();
+```
+
+### Extract Resources
+
+```csharp
+using var doc = UnhwpDocument.ParseFile("document.hwp");
+Directory.CreateDirectory("./images");
+
+foreach (var resourceId in doc.GetResourceIds())
+{
+    var bytes = doc.GetResourceData(resourceId);
+    if (bytes != null)
+        File.WriteAllBytes($"./images/{resourceId}", bytes);
+}
 ```
 
 ### ASP.NET Core Example
@@ -490,23 +487,17 @@ public class DocumentController : ControllerBase
 
         try
         {
-            var markdown = HwpConverter.BytesToMarkdown(ms.ToArray(), enableCleanup: true);
-            return Ok(new { markdown });
+            using var doc = UnhwpDocument.ParseBytes(ms.ToArray());
+            var opts = new MarkdownOptions { IncludeFrontmatter = true };
+            return Ok(new { markdown = doc.ToMarkdown(opts) });
         }
-        catch (HwpException ex)
+        catch (UnhwpException ex)
         {
             return BadRequest(new { error = ex.Message });
         }
     }
 }
 ```
-
-See [C# Integration Guide](docs/csharp-integration.md) for complete documentation including:
-- Full P/Invoke wrapper code
-- NuGet package setup
-- Error handling
-- Memory management
-- Thread safety
 
 ## Supported Formats
 
@@ -534,6 +525,7 @@ unhwp maintains document structure during conversion:
 | `hwp5` | HWP 5.0 binary format support | ✅ |
 | `hwpx` | HWPX XML format support | ✅ |
 | `hwp3` | Legacy HWP 3.x support (EUC-KR) | ❌ |
+| `ffi` | C-ABI foreign function interface (required for C# / native bindings) | ❌ |
 | `async` | Async I/O with Tokio | ❌ |
 
 ## Performance
