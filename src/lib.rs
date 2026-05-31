@@ -165,7 +165,10 @@ pub fn parse_bytes(data: &[u8]) -> Result<Document> {
 }
 
 /// Parses a document from a reader with custom options.
-pub fn parse_reader_with_options<R: Read + Seek>(reader: R, opts: &ParseOptions) -> Result<Document> {
+pub fn parse_reader_with_options<R: Read + Seek>(
+    reader: R,
+    opts: &ParseOptions,
+) -> Result<Document> {
     let mut buf_reader = std::io::BufReader::new(reader);
     let format = detect::detect_format(&mut buf_reader)?;
 
