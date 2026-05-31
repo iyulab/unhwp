@@ -123,7 +123,7 @@ jobs:
         run: wasm-pack build unhwp-wasm --target nodejs
 
       - name: Run WASM tests
-        run: wasm-pack test unhwp-wasm --node
+        run: wasm-pack test --node unhwp-wasm
 
   lint:
     name: Lint
