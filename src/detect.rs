@@ -2,6 +2,7 @@
 
 use crate::error::{Error, Result};
 use std::io::{Read, Seek, SeekFrom};
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 
 /// Magic bytes for OLE Compound File (HWP 5.x)
@@ -38,6 +39,7 @@ impl std::fmt::Display for FormatType {
 }
 
 /// Detect document format from a file path.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn detect_format_from_path(path: impl AsRef<Path>) -> Result<FormatType> {
     let mut file = std::fs::File::open(path)?;
     detect_format(&mut file)

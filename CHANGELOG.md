@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-31
+
+### Added
+
+#### WASM Support
+- `unhwp-wasm` crate — WebAssembly bindings via `wasm-bindgen`
+- `parse(data: &[u8])` — parse HWP/HWPX from bytes (WASM entry point)
+- `parseWithOptions(data, opts)` — parse with options (lenient, textOnly)
+- `HwpDocument` — WASM struct with `toMarkdown()`, `toText()`, `toJson()`, `sectionCount()`, `paragraphCount()`
+- `ParseOptions` — WASM struct with `lenient()`, `textOnly()` builder methods
+- npm package `@iyulab/unhwp` — ES Module for browser and bundler targets
+
+#### GitHub Pages Playground
+- `docs/index.html` — single-file SPA: drag-and-drop HWP/HWPX → Markdown/text conversion
+- Automatic deployment via `pages.yml` GitHub Actions workflow
+
+#### CI/CD
+- `build-wasm` job in `ci.yml` — validates WASM compilation + wasm-pack tests on every push
+- `pages.yml` — GitHub Pages deployment on main branch changes
+- `publish-npm` job in `release.yml` — publishes `@iyulab/unhwp` to npm on release
+
+### Changed
+- `rayon` moved to native-only dependency (not available under `wasm32-unknown-unknown`)
+- `zip` uses deflate-only feature set under `wasm32` (bzip2/lzma/xz require C libraries)
+- `parse_file`, `extract_text`, `to_markdown`, `to_markdown_with_options`, `parse_file_streaming`, `detect_format_from_path` gated as `#[cfg(not(target_arch = "wasm32"))]`
+
 ## [0.3.0] - 2026-05-09
 
 ### Added

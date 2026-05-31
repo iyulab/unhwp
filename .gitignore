@@ -11,6 +11,9 @@ claudedocs/
 # Added by cargo
 /target
 
+# wasm-pack build output
+unhwp-wasm/pkg/
+
 # C# build artifacts
 bindings/csharp/**/bin/
 bindings/csharp/**/obj/

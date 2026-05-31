@@ -1,10 +1,10 @@
 [workspace]
-members = [".", "cli"]
+members = [".", "cli", "unhwp-wasm"]
 resolver = "2"
 
 [package]
 name = "unhwp"
-version = "0.3.2"
+version = "0.4.0"
 edition = "2021"
 authors = ["iyulab"]
 description = "A high-performance library for extracting HWP/HWPX documents into structured Markdown"
@@ -30,9 +30,6 @@ cfb = "0.10"
 # Compression
 flate2 = "1.0"
 
-# ZIP archive (HWPX)
-zip = "2.2"
-
 # XML parsing (HWPX)
 quick-xml = "0.37"
 
@@ -53,14 +50,20 @@ unicode-normalization = "0.1"
 pulldown-cmark = { version = "0.12", default-features = false }
 pulldown-cmark-to-cmark = "18"
 
-# Parallel processing
-rayon = "1.10"
-
 # Optional: Legacy encoding (HWP 3.x)
 encoding_rs = { version = "0.8", optional = true }
 
+# ZIP archive (HWPX) — native: full features with bzip2/lzma/xz/zstd support
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+zip = "2.2"
+# Parallel processing (native only — rayon requires threading not available under wasm32)
+rayon = "1.10"
 # Optional: Async support
 tokio = { version = "1.42", features = ["fs", "io-util", "rt", "macros"], optional = true }
+
+# ZIP archive (HWPX) — wasm32: deflate-only (bzip2/lzma/xz/zstd require C libraries)
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 criterion = "0.5"

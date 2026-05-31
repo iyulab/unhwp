@@ -23,12 +23,16 @@
 //! callback to stop parsing early. No `DocumentEnd` event is emitted on early
 //! break. Any output files written up to that point are **not** cleaned up.
 
+#[cfg(not(target_arch = "wasm32"))]
 use crate::detect::{detect_format_from_path, FormatType};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::error::Result;
 use crate::model::{Metadata, Section, StyleRegistry};
 use crate::parse_options::{ErrorMode, ParseOptions};
 use crate::Error;
+#[cfg(not(target_arch = "wasm32"))]
 use std::ops::ControlFlow;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 
 /// An event emitted during streaming document parsing.
@@ -161,6 +165,7 @@ impl From<&ParseOptions> for SectionStreamOptions {
 /// })?;
 /// # Ok::<(), unhwp::Error>(())
 /// ```
+#[cfg(not(target_arch = "wasm32"))]
 pub fn parse_file_streaming<F>(
     path: impl AsRef<Path>,
     opts: SectionStreamOptions,

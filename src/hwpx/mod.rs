@@ -15,6 +15,7 @@ use crate::model::Document;
 use crate::streaming::{ParseEvent, SectionStreamOptions};
 use quick_xml::events::Event;
 use quick_xml::Reader;
+#[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
 use std::io::{Read, Seek};
 use std::ops::ControlFlow;
@@ -241,21 +242,27 @@ impl HwpxParser {
 
         // Use parallel processing only when there are enough sections to benefit
         // Threshold of 3 sections avoids parallel overhead for small documents
+        #[cfg(not(target_arch = "wasm32"))]
         const PARALLEL_THRESHOLD: usize = 3;
 
+        #[cfg(not(target_arch = "wasm32"))]
         let mut sections: Vec<_> = if section_data.len() >= PARALLEL_THRESHOLD {
-            // Parse sections in parallel
             section_data
                 .par_iter()
                 .filter_map(|(index, xml)| section::parse_section(xml, *index, &styles).ok())
                 .collect()
         } else {
-            // Parse sections sequentially for small documents
             section_data
                 .iter()
                 .filter_map(|(index, xml)| section::parse_section(xml, *index, &styles).ok())
                 .collect()
         };
+
+        #[cfg(target_arch = "wasm32")]
+        let mut sections: Vec<_> = section_data
+            .iter()
+            .filter_map(|(index, xml)| section::parse_section(xml, *index, &styles).ok())
+            .collect();
 
         // Sort by index to maintain order
         sections.sort_by_key(|s| s.index);

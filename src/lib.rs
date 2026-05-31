@@ -60,14 +60,19 @@ pub mod async_api;
 
 // Re-exports
 pub use cleanup::{cleanup, CleanupOptions};
-pub use detect::{detect_format, detect_format_from_bytes, detect_format_from_path, FormatType};
+#[cfg(not(target_arch = "wasm32"))]
+pub use detect::detect_format_from_path;
+pub use detect::{detect_format, detect_format_from_bytes, FormatType};
 pub use error::{Error, Result};
 pub use model::Document;
 pub use parse_options::{ErrorMode, ExtractMode, ParseOptions};
 pub use render::{RenderOptions, SectionMarkerStyle, TableFallback};
-pub use streaming::{parse_file_streaming, ParseEvent, SectionStreamOptions};
+#[cfg(not(target_arch = "wasm32"))]
+pub use streaming::parse_file_streaming;
+pub use streaming::{ParseEvent, SectionStreamOptions};
 
 use std::io::{Read, Seek};
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 
 /// Parses a document from a file path.
@@ -83,6 +88,7 @@ use std::path::Path;
 /// println!("Paragraphs: {}", document.paragraph_count());
 /// # Ok::<(), unhwp::Error>(())
 /// ```
+#[cfg(not(target_arch = "wasm32"))]
 pub fn parse_file(path: impl AsRef<Path>) -> Result<Document> {
     let path = path.as_ref();
     let format = detect_format_from_path(path)?;
@@ -166,6 +172,7 @@ pub fn parse_bytes(data: &[u8]) -> Result<Document> {
 /// println!("{}", text);
 /// # Ok::<(), unhwp::Error>(())
 /// ```
+#[cfg(not(target_arch = "wasm32"))]
 pub fn extract_text(path: impl AsRef<Path>) -> Result<String> {
     let document = parse_file(path)?;
     Ok(document.plain_text())
@@ -182,6 +189,7 @@ pub fn extract_text(path: impl AsRef<Path>) -> Result<String> {
 /// std::fs::write("output.md", markdown)?;
 /// # Ok::<(), unhwp::Error>(())
 /// ```
+#[cfg(not(target_arch = "wasm32"))]
 pub fn to_markdown(path: impl AsRef<Path>) -> Result<String> {
     let document = parse_file(path)?;
     render::render_markdown(&document, &RenderOptions::default())
@@ -203,6 +211,7 @@ pub fn to_markdown(path: impl AsRef<Path>) -> Result<String> {
 /// std::fs::write("output.md", markdown)?;
 /// # Ok::<(), unhwp::Error>(())
 /// ```
+#[cfg(not(target_arch = "wasm32"))]
 pub fn to_markdown_with_options(path: impl AsRef<Path>, options: &RenderOptions) -> Result<String> {
     let document = parse_file(path)?;
     render::render_markdown(&document, options)
@@ -295,6 +304,7 @@ impl Unhwp {
     }
 
     /// Parses a document from a file path.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn parse(self, path: impl AsRef<Path>) -> Result<ParsedDocument> {
         let document = parse_file(path)?;
         Ok(ParsedDocument {
@@ -309,6 +319,7 @@ impl Unhwp {
 pub struct ParsedDocument {
     document: Document,
     render_options: RenderOptions,
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     extract_images: bool,
 }
 
@@ -320,7 +331,7 @@ impl ParsedDocument {
 
     /// Renders the document to Markdown.
     pub fn to_markdown(&self) -> Result<String> {
-        // Extract images if requested
+        #[cfg(not(target_arch = "wasm32"))]
         if self.extract_images {
             if let Some(ref image_dir) = self.render_options.image_dir {
                 std::fs::create_dir_all(image_dir)?;
