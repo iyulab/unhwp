@@ -33,10 +33,14 @@ pub async fn parse_file(path: impl AsRef<Path>) -> Result<Document> {
 
 /// Asynchronously parses a document from bytes.
 pub async fn parse_bytes(data: &[u8]) -> Result<Document> {
-    // Async wrapper around sync parsing
-    // The actual parsing is CPU-bound, so we spawn it in a blocking task
+    parse_bytes_with_options(data, &ParseOptions::default()).await
+}
+
+/// Asynchronously parses a document from bytes with custom options.
+pub async fn parse_bytes_with_options(data: &[u8], opts: &ParseOptions) -> Result<Document> {
     let data = data.to_vec();
-    tokio::task::spawn_blocking(move || crate::parse_bytes(&data))
+    let opts = opts.clone();
+    tokio::task::spawn_blocking(move || crate::parse_bytes_with_options(&data, &opts))
         .await
         .map_err(|e| crate::error::Error::Io(std::io::Error::other(e.to_string())))?
 }
@@ -163,7 +167,8 @@ impl AsyncUnhwp {
 
     /// Parses a document asynchronously.
     pub async fn parse(self, path: impl AsRef<Path>) -> Result<AsyncParsedDocument> {
-        let document = parse_file(path).await?;
+        let data = fs::read(path).await?;
+        let document = parse_bytes_with_options(&data, &self.parse_options).await?;
         Ok(AsyncParsedDocument {
             document,
             render_options: self.render_options,

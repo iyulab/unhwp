@@ -90,6 +90,12 @@ use std::path::Path;
 /// ```
 #[cfg(not(target_arch = "wasm32"))]
 pub fn parse_file(path: impl AsRef<Path>) -> Result<Document> {
+    parse_file_with_options(path, &ParseOptions::default())
+}
+
+/// Parses a document from a file path with custom options.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn parse_file_with_options(path: impl AsRef<Path>, opts: &ParseOptions) -> Result<Document> {
     let path = path.as_ref();
     let format = detect_format_from_path(path)?;
 
@@ -97,12 +103,12 @@ pub fn parse_file(path: impl AsRef<Path>) -> Result<Document> {
         #[cfg(feature = "hwp5")]
         FormatType::Hwp5 => {
             let mut parser = hwp5::Hwp5Parser::open(path)?;
-            parser.parse()
+            parser.parse_with_options(opts)
         }
         #[cfg(feature = "hwpx")]
         FormatType::Hwpx => {
             let mut parser = hwpx::HwpxParser::open(path)?;
-            parser.parse()
+            parser.parse_with_options(opts)
         }
         #[cfg(feature = "hwp3")]
         FormatType::Hwp3 => {
@@ -156,6 +162,42 @@ pub fn parse_reader<R: Read + Seek>(reader: R) -> Result<Document> {
 pub fn parse_bytes(data: &[u8]) -> Result<Document> {
     let cursor = std::io::Cursor::new(data);
     parse_reader(cursor)
+}
+
+/// Parses a document from a reader with custom options.
+pub fn parse_reader_with_options<R: Read + Seek>(reader: R, opts: &ParseOptions) -> Result<Document> {
+    let mut buf_reader = std::io::BufReader::new(reader);
+    let format = detect::detect_format(&mut buf_reader)?;
+
+    match format {
+        #[cfg(feature = "hwp5")]
+        FormatType::Hwp5 => {
+            let mut parser = hwp5::Hwp5Parser::from_reader(buf_reader)?;
+            parser.parse_with_options(opts)
+        }
+        #[cfg(feature = "hwpx")]
+        FormatType::Hwpx => {
+            let mut parser = hwpx::HwpxParser::from_reader(buf_reader)?;
+            parser.parse_with_options(opts)
+        }
+        #[cfg(feature = "hwp3")]
+        FormatType::Hwp3 => {
+            let mut parser = hwp3::Hwp3Parser::from_reader(buf_reader)?;
+            parser.parse()
+        }
+        #[cfg(not(feature = "hwp3"))]
+        FormatType::Hwp3 => Err(Error::UnsupportedFormat(
+            "HWP 3.x support requires 'hwp3' feature".into(),
+        )),
+        #[allow(unreachable_patterns)]
+        _ => Err(Error::UnsupportedFormat(format.to_string())),
+    }
+}
+
+/// Parses a document from bytes with custom options.
+pub fn parse_bytes_with_options(data: &[u8], opts: &ParseOptions) -> Result<Document> {
+    let cursor = std::io::Cursor::new(data);
+    parse_reader_with_options(cursor, opts)
 }
 
 /// Extracts plain text from a document file.
@@ -306,7 +348,7 @@ impl Unhwp {
     /// Parses a document from a file path.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn parse(self, path: impl AsRef<Path>) -> Result<ParsedDocument> {
-        let document = parse_file(path)?;
+        let document = parse_file_with_options(path, &self.parse_options)?;
         Ok(ParsedDocument {
             document,
             render_options: self.render_options,

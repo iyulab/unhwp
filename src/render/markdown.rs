@@ -831,6 +831,9 @@ fn detect_bullet_prefix(text: &str) -> Option<(&'static str, bool)> {
         '✗' | '✘' => Some(("- [ ] ", true)),
         // Note marker → blockquote (keep the ※ in text)
         '※' => Some(("> ", false)),
+        // HWP PUA (Private Use Area) bullet characters
+        '\u{F0A3}' | '\u{F09E}' | '\u{F020}' | '\u{F076}' | '\u{F0A8}' => Some(("- ", true)),
+        '\u{F09F}' => Some(("  - ", true)), // HWP hollow bullet (indented sub-item)
         _ => None,
     }
 }

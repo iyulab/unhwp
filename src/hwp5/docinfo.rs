@@ -31,9 +31,9 @@ const CHAR_SHAPE_PROPERTIES_OFFSET: usize = 46;
 /// Offset for text color (COLORREF, 4 bytes)
 const CHAR_SHAPE_TEXT_COLOR_OFFSET: usize = 52;
 
-// CharShape property bit masks
-const CHAR_PROP_BOLD: u32 = 1 << 0;
-const CHAR_PROP_ITALIC: u32 = 1 << 1;
+// CharShape property bit masks (HWP 5.0 스펙 Table 35: bit0=italic, bit1=bold)
+const CHAR_PROP_ITALIC: u32 = 1 << 0;
+const CHAR_PROP_BOLD: u32 = 1 << 1;
 const CHAR_PROP_UNDERLINE: u32 = 1 << 2;
 const CHAR_PROP_SUPERSCRIPT: u32 = 1 << 11;
 const CHAR_PROP_SUBSCRIPT: u32 = 1 << 12;
@@ -585,4 +585,72 @@ fn parse_bindata_record(record: &Record) -> Option<(u16, String)> {
 
     // Format filename: BIN + 4-digit hex + extension
     Some((bin_id, format!("BIN{:04X}.{}", bin_id, ext)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::hwp5::record::{Record, RecordHeader, TagId};
+
+    /// Builds a minimal CharShape binary payload with the given properties bitmask.
+    ///
+    /// Layout (HWP 5.0 Spec Table 35):
+    ///   0-13:  FaceID[7]      (7 × u16 = 14 bytes, zeroed)
+    ///   14-20: CharRatio[7]   (7 × u8  =  7 bytes, 100 each)
+    ///   21-27: CharSpacing[7] (7 × i8  =  7 bytes, zeroed)
+    ///   28-34: RelativeSize[7](7 × u8  =  7 bytes, 100 each)
+    ///   35-41: CharPosition[7](7 × i8  =  7 bytes, zeroed)
+    ///   42-45: BaseSize       (i32 LE, 1000 = 10pt in hundredths of a point)
+    ///   46-49: Properties     (u32 LE bitmask)
+    ///   50-55: ShadowGap + TextColor (zeroed)
+    fn make_char_shape_record(properties: u32) -> Record {
+        let mut data = vec![0u8; 56];
+        // CharRatio and RelativeSize fields default to 100
+        for i in 14..21 {
+            data[i] = 100;
+        }
+        for i in 28..35 {
+            data[i] = 100;
+        }
+        // BaseSize = 1000 (10pt)
+        let base_size: i32 = 1000;
+        data[42..46].copy_from_slice(&base_size.to_le_bytes());
+        // Properties bitmask
+        data[46..50].copy_from_slice(&properties.to_le_bytes());
+
+        Record {
+            header: RecordHeader {
+                tag_id: TagId::CharShape as u16,
+                level: 0,
+                size: data.len() as u32,
+            },
+            data,
+            offset: 0,
+        }
+    }
+
+    #[test]
+    fn test_char_shape_bit0_is_italic_not_bold() {
+        // HWP 5.0 Spec Table 35: bit0 = italic (기울임), bit1 = bold (진하게)
+        let record = make_char_shape_record(0b01); // bit0 set
+        let shape = parse_char_shape(&record).expect("parse should succeed");
+        assert!(shape.italic, "bit0 must be italic");
+        assert!(!shape.bold, "bit0 must NOT be bold");
+    }
+
+    #[test]
+    fn test_char_shape_bit1_is_bold_not_italic() {
+        let record = make_char_shape_record(0b10); // bit1 set
+        let shape = parse_char_shape(&record).expect("parse should succeed");
+        assert!(shape.bold, "bit1 must be bold");
+        assert!(!shape.italic, "bit1 must NOT be italic");
+    }
+
+    #[test]
+    fn test_char_shape_both_bits() {
+        let record = make_char_shape_record(0b11); // both bits set
+        let shape = parse_char_shape(&record).expect("parse should succeed");
+        assert!(shape.bold, "bit1 must be bold");
+        assert!(shape.italic, "bit0 must be italic");
+    }
 }

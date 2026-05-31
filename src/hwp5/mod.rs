@@ -58,6 +58,11 @@ impl Hwp5Parser {
 
     /// Parses the document into the unified document model.
     pub fn parse(&mut self) -> Result<Document> {
+        self.parse_with_options(&crate::ParseOptions::default())
+    }
+
+    /// Parses the document with the given options.
+    pub fn parse_with_options(&mut self, opts: &crate::ParseOptions) -> Result<Document> {
         if self.is_encrypted() {
             return Err(crate::error::Error::Encrypted);
         }
@@ -79,8 +84,10 @@ impl Hwp5Parser {
         // Parse BodyText sections
         self.parse_bodytext(&mut document)?;
 
-        // Extract BinData resources
-        self.extract_bindata(&mut document)?;
+        // Extract BinData resources (skip if resources not requested)
+        if opts.extract_resources {
+            self.extract_bindata(&mut document)?;
+        }
 
         Ok(document)
     }

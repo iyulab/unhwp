@@ -53,6 +53,11 @@ impl HwpxParser {
 
     /// Parses the document into the unified document model.
     pub fn parse(&mut self) -> Result<Document> {
+        self.parse_with_options(&crate::ParseOptions::default())
+    }
+
+    /// Parses the document with the given options.
+    pub fn parse_with_options(&mut self, opts: &crate::ParseOptions) -> Result<Document> {
         let mut document = Document::new();
 
         // Set format info
@@ -70,8 +75,10 @@ impl HwpxParser {
         // Parse sections
         self.parse_sections(&mut document)?;
 
-        // Extract resources
-        self.extract_resources(&mut document)?;
+        // Extract resources (skip if not requested)
+        if opts.extract_resources {
+            self.extract_resources(&mut document)?;
+        }
 
         Ok(document)
     }

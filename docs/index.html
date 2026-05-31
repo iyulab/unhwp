@@ -53,6 +53,10 @@
       border: 1px solid var(--err); border-radius: var(--radius);
       padding: 1rem; font-size: 0.9rem; color: var(--err); }
     .hidden { display: none !important; }
+    .options-row { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center;
+      font-size: 0.85rem; color: var(--text-dim); }
+    .options-row label { display: flex; align-items: center; gap: 0.4rem; cursor: pointer; }
+    .options-row input[type=checkbox] { accent-color: var(--accent); cursor: pointer; }
   </style>
 </head>
 <body>
@@ -60,6 +64,15 @@
     <h1><span>unhwp</span> WASM 플레이그라운드</h1>
     <p>HWP / HWPX 파일을 드래그하거나 클릭하여 Markdown으로 변환합니다.</p>
   </header>
+
+  <div class="options-row">
+    <label title="파싱 오류 발생 시 해당 섹션을 건너뛰고 계속 파싱합니다">
+      <input type="checkbox" id="opt-lenient"> 관대 모드 (오류 허용)
+    </label>
+    <label title="이미지 등 바이너리 리소스를 추출하지 않아 속도가 빠릅니다">
+      <input type="checkbox" id="opt-text-only"> 텍스트 전용
+    </label>
+  </div>
 
   <div class="drop-zone" id="dropZone">
     <p><strong>HWP 또는 HWPX 파일 선택</strong></p>
@@ -85,7 +98,7 @@
   </div>
 
   <script type="module">
-    import init, { parse } from './pkg/unhwp_wasm.js';
+    import init, { parse, parseWithOptions, ParseOptions } from './pkg/unhwp_wasm.js';
 
     let wasmReady = false;
     let tabs = { markdown: '', text: '' };
@@ -138,7 +151,17 @@
       try {
         const buf = await file.arrayBuffer();
         const data = new Uint8Array(buf);
-        const doc = parse(data);
+        const isLenient = document.getElementById('opt-lenient').checked;
+        const isTextOnly = document.getElementById('opt-text-only').checked;
+        let doc;
+        if (isLenient || isTextOnly) {
+          let opts = new ParseOptions();
+          if (isLenient) opts = opts.lenient();
+          if (isTextOnly) opts = opts.textOnly();
+          doc = parseWithOptions(data, opts);
+        } else {
+          doc = parse(data);
+        }
 
         tabs.markdown = doc.toMarkdown();
         tabs.text = doc.toText();

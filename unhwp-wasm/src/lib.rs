@@ -13,12 +13,10 @@ pub fn parse(data: &[u8]) -> Result<HwpDocument, JsValue> {
         .map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
-/// Parse with options — options are applied where supported.
-/// Note: full option integration requires parse_reader_with_options in unhwp core.
+/// Parse with options.
 #[wasm_bindgen(js_name = parseWithOptions)]
 pub fn parse_with_options(data: &[u8], opts: &ParseOptions) -> Result<HwpDocument, JsValue> {
-    let _ = opts.to_parse_options(); // validate options; future: pass to core
-    unhwp::parse_bytes(data)
+    unhwp::parse_bytes_with_options(data, &opts.to_parse_options())
         .map(|inner| HwpDocument { inner })
         .map_err(|e| JsValue::from_str(&e.to_string()))
 }
