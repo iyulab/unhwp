@@ -181,6 +181,7 @@ jobs:
     name: Publish npm (@iyulab/unhwp)
     needs: [check-version, create-release]
     if: needs.check-version.outputs.should_release == 'true'
+    continue-on-error: true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -1,17 +1,16 @@
 # unhwp — 핸드오프 문서
 
-> **현재 상태:** v0.4.0 WASM 구현 완료. 버전 범프 완료, 커밋/태그 대기.
+> **현재 상태:** v0.4.0 완료 및 배포. 다음 세션은 v0.5 품질 향상 작업.
 
 ## 지금 하고 있는 것
 
-v0.4.0 릴리즈 준비 — 코드 구현 완료, 커밋 및 GitHub 릴리즈 태그 생성 필요.
+없음 — v0.4.0 릴리즈 완료.
 
 ## 다음에 해야 할 것
 
-1. **GitHub Pages 활성화** (수동): 리포 Settings → Pages → Source: `GitHub Actions`
-2. **NPM_TOKEN 시크릿 설정** (수동): 리포 Settings → Secrets → `NPM_TOKEN`
-3. **커밋 & 태그**: `git commit`, `git tag v0.4.0`, `git push --tags`
-4. **CI 검증**: `build-wasm` 잡이 Ubuntu에서 `wasm-pack test --node` 통과하는지 확인
+1. **NPM_TOKEN 시크릿 설정** (선택): 리포 Settings → Secrets → `NPM_TOKEN`
+   - 없으면 `publish-npm` 잡이 `continue-on-error: true`로 스킵됨 (릴리즈 자체는 성공)
+2. **v0.5 작업 시작** — `ROADMAP.md` § v0.5 참고
 
 ## 알려진 제약
 
@@ -39,9 +38,9 @@ docs/
   .gitignore              # pkg/ 제외
   index.html              # WASM 플레이그라운드 SPA
 .github/workflows/
-  pages.yml               # GitHub Pages 자동 배포 (신규)
-  ci.yml                  # build-wasm 잡 추가됨
-  release.yml             # publish-npm 잡 추가됨
+  pages.yml               # GitHub Pages 자동 배포
+  ci.yml                  # build-wasm 잡 포함
+  release.yml             # publish-npm 잡 포함 (continue-on-error: true)
 ```
 
 ### 버전 동기화 대상 파일 (5개 모두 동시 변경)
@@ -52,6 +51,10 @@ unhwp-wasm/Cargo.toml                # 0.4.0
 bindings/python/pyproject.toml       # 0.4.0
 bindings/csharp/Unhwp/Unhwp.csproj   # 0.4.0
 ```
+
+### 라이브 URL
+- 플레이그라운드: https://iyulab.github.io/unhwp/
+- npm: https://www.npmjs.com/package/@iyulab/unhwp (NPM_TOKEN 설정 후 릴리즈 시 게시)
 
 ## 로드맵 앵커
 
