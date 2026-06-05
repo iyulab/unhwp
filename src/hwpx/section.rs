@@ -676,7 +676,10 @@ mod tests {
         // space so the renderer emits `**1.** 바코드`, not `**1.**바코드`.
         // Regression for D8: trim_text(true) used to strip it.
         let xml = r#"<hs:sec xmlns:hp="x"><hp:p><hp:run><hp:t>1. </hp:t></hp:run><hp:run><hp:t>바코드</hp:t></hp:run></hp:p></hs:sec>"#;
-        assert_eq!(run_texts(xml), vec!["1. ".to_string(), "바코드".to_string()]);
+        assert_eq!(
+            run_texts(xml),
+            vec!["1. ".to_string(), "바코드".to_string()]
+        );
     }
 
     #[test]
