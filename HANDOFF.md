@@ -1,6 +1,6 @@
 # unhwp — 핸드오프 문서
 
-> **현재 상태:** v0.5.0 구현 완료(미태깅). HWPX 충실도 결함 D1·D2·D8 + CLI 출력 결함 D9 수정 완료. 버전 라벨(v0.5.0 흡수 vs v0.5.1 패치) **사용자 결정 대기**.
+> **현재 상태:** **v0.5.1** 범프 완료(미태깅·미푸시). HWPX 충실도 결함 D1·D2·D8 + CLI 출력 결함 D9 수정. v0.5.1 패치 분리 결정(2026-06-05). 릴리즈는 **태그·푸시만** 남음.
 
 ## 지금 하고 있는 것
 
@@ -13,14 +13,18 @@ v0.5.0(Cycles 17–26) 위에 실측 결함을 순차 수정:
 
 ## 다음에 해야 할 것
 
-### 옵션 A: 릴리즈 (수동) — **버전 라벨 결정 필요**
+### 옵션 A: v0.5.1 릴리즈 (수동) — **push만** 남음
 
-D1/D2는 미릴리즈 v0.5.0에 흡수 결정됨. D8/D9는 그 위에 추가된 **사용자 가시 수정**(fidelity·출력 정확성).
-- 권고: (b) **v0.5.1 패치** 분리 — 버그 수정 단위라 정석. 5개 버전 파일 동시 범프(아래 § 버전 동기화) 후 태그.
-- 대안: (a) 아직 미태깅이므로 v0.5.0에 함께 흡수.
+v0.5.1 코드·버전 범프 모두 커밋 완료(최신 범프 커밋, `7b63f2e` D8/D9). **수동 태그 불필요** — `release.yml`이 CI 성공 후 `workflow_run`으로 Cargo.toml 버전을 읽어 미존재 시 자동 릴리즈·태그 생성:
 
-태그 후 GitHub Actions 자동: CI 빌드 / npm 배포 / GitHub Pages.
+```
+git push        # main push → CI → Release 워크플로우 자동 v0.5.1 태그·릴리즈
+```
+
+자동: CI 빌드 / GitHub Release(바이너리) / npm 배포(`@iyulab/unhwp@0.5.1`) / GitHub Pages.
 최초 1회 설정: GitHub Pages "GitHub Actions" 소스 활성화, NPM_TOKEN 시크릿 등록.
+
+> ⚠️ **빌드 quirk**: 루트 `cargo build --release`는 cli 버전만 바뀌면 cli 바이너리를 relink하지 않음. 버전 검증 전 `cargo build --release -p unhwp-cli` 명시 실행 필수. (이번 세션 3회 발생)
 
 ### 옵션 B (개발 다음 작업): CLI stdout 청결 회귀 테스트
 
@@ -72,12 +76,13 @@ CI(Ubuntu)에서는 정상 작동. 로컬 개발 시 CI 결과로 검증.
 
 ### 버전 동기화 대상 파일 (5개 모두 동시 변경)
 ```
-Cargo.toml                           # 0.5.0
-cli/Cargo.toml                       # 0.5.0
-unhwp-wasm/Cargo.toml                # 0.5.0
-bindings/python/pyproject.toml       # 0.5.0
-bindings/csharp/Unhwp/Unhwp.csproj   # 0.5.0
+Cargo.toml                           # 0.5.1 (+ 내부 의존성 핀)
+cli/Cargo.toml                       # 0.5.1 (+ unhwp dep 핀)
+unhwp-wasm/Cargo.toml                # 0.5.1 (+ unhwp dep 핀)
+bindings/python/pyproject.toml       # 0.5.1
+bindings/csharp/Unhwp/Unhwp.csproj   # 0.5.1
 ```
+> cli/wasm의 `unhwp = { version = "..." }` 내부 핀도 동시 변경(총 7곳). Cargo.lock은 빌드로 갱신.
 
 ### 라이브 URL
 - 플레이그라운드: https://iyulab.github.io/unhwp/
