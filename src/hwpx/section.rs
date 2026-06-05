@@ -42,7 +42,15 @@ struct SectionParser<'a> {
 impl<'a> SectionParser<'a> {
     fn new(xml: &'a str, styles: &'a StyleRegistry) -> Self {
         let mut reader = Reader::from_str(xml);
-        reader.config_mut().trim_text(true);
+        // Keep text verbatim. `<hp:t>` content (the body text) is only captured
+        // inside the element's Start/End (the `in_text_element` guard in
+        // `parse_run`), so inter-element indentation whitespace is naturally
+        // ignored, while meaningful leading/trailing spaces inside `<hp:t>`
+        // (e.g. a TOC entry "1. ") are preserved. Trimming here would drop them
+        // and glue adjacent runs together (`**1.**바코드`). The two capture sites
+        // that are NOT `<hp:t>`-scoped (equation script, footnote text) trim
+        // explicitly below.
+        reader.config_mut().trim_text(false);
 
         Self { reader, styles }
     }
@@ -348,9 +356,13 @@ impl<'a> SectionParser<'a> {
                             pic_floating = false;
                         }
                         "eqEdit" | "equation" => {
-                            if !equation_script.is_empty() {
-                                let script = std::mem::take(&mut equation_script);
-                                let eq = Equation::new(script);
+                            // Equation text is captured for the whole `in_equation`
+                            // span, so with trim_text(false) it can pick up
+                            // inter-element indentation; trim the assembled script.
+                            let script = std::mem::take(&mut equation_script);
+                            let script = script.trim();
+                            if !script.is_empty() {
+                                let eq = Equation::new(script.to_string());
                                 paragraph.content.push(InlineContent::Equation(eq));
                             }
                             in_equation = false;
@@ -397,10 +409,17 @@ impl<'a> SectionParser<'a> {
                 }
                 Ok(Event::Text(t)) => {
                     if let Ok(s) = t.unescape() {
-                        if !text.is_empty() && !text.ends_with(' ') {
-                            text.push(' ');
+                        // This site is not `<hp:t>`-scoped, so with trim_text(false)
+                        // it also receives inter-element indentation. Skip
+                        // whitespace-only events; join real fragments with a single
+                        // space (footnote paragraphs flatten to one line).
+                        let trimmed = s.trim();
+                        if !trimmed.is_empty() {
+                            if !text.is_empty() && !text.ends_with(' ') {
+                                text.push(' ');
+                            }
+                            text.push_str(trimmed);
                         }
-                        text.push_str(s.trim());
                     }
                 }
                 Ok(Event::End(e)) => {
@@ -622,4 +641,129 @@ fn skip_element(reader: &mut Reader<&[u8]>) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::InlineContent;
+
+    /// Collects the text of every `InlineContent::Text` run in the first
+    /// paragraph of a parsed section, preserving order.
+    fn run_texts(xml: &str) -> Vec<String> {
+        let styles = StyleRegistry::new();
+        let section = parse_section(xml, 0, &styles).expect("section must parse");
+        let para = section
+            .content
+            .iter()
+            .find_map(|b| match b {
+                Block::Paragraph(p) => Some(p),
+                _ => None,
+            })
+            .expect("a paragraph");
+        para.content
+            .iter()
+            .filter_map(|c| match c {
+                InlineContent::Text(run) => Some(run.text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_hp_t_trailing_space_preserved() {
+        // `<hp:t>1. </hp:t>` followed by a plain run must keep the separating
+        // space so the renderer emits `**1.** 바코드`, not `**1.**바코드`.
+        // Regression for D8: trim_text(true) used to strip it.
+        let xml = r#"<hs:sec xmlns:hp="x"><hp:p><hp:run><hp:t>1. </hp:t></hp:run><hp:run><hp:t>바코드</hp:t></hp:run></hp:p></hs:sec>"#;
+        assert_eq!(run_texts(xml), vec!["1. ".to_string(), "바코드".to_string()]);
+    }
+
+    #[test]
+    fn test_hp_t_leading_space_preserved() {
+        // Leading whitespace inside <hp:t> is meaningful content and must
+        // survive parsing.
+        let xml = r#"<hs:sec xmlns:hp="x"><hp:p><hp:run><hp:t>가</hp:t></hp:run><hp:run><hp:t> 나</hp:t></hp:run></hp:p></hs:sec>"#;
+        assert_eq!(run_texts(xml), vec!["가".to_string(), " 나".to_string()]);
+    }
+
+    #[test]
+    fn test_interelement_indentation_not_captured() {
+        // Pretty-printed XML with newline+indent whitespace between elements
+        // must NOT leak into run text — only `<hp:t>` content is captured.
+        let xml = "<hs:sec xmlns:hp=\"x\">\n  <hp:p>\n    <hp:run>\n      <hp:t>foo</hp:t>\n    </hp:run>\n  </hp:p>\n</hs:sec>";
+        assert_eq!(run_texts(xml), vec!["foo".to_string()]);
+    }
+
+    /// Collects equation scripts from the first paragraph of a parsed section.
+    fn equation_scripts(xml: &str) -> Vec<String> {
+        let styles = StyleRegistry::new();
+        let section = parse_section(xml, 0, &styles).expect("section must parse");
+        let para = section
+            .content
+            .iter()
+            .find_map(|b| match b {
+                Block::Paragraph(p) => Some(p),
+                _ => None,
+            })
+            .expect("a paragraph");
+        para.content
+            .iter()
+            .filter_map(|c| match c {
+                InlineContent::Equation(e) => Some(e.script.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Collects footnote texts from the first paragraph of a parsed section.
+    fn footnote_texts(xml: &str) -> Vec<String> {
+        let styles = StyleRegistry::new();
+        let section = parse_section(xml, 0, &styles).expect("section must parse");
+        let para = section
+            .content
+            .iter()
+            .find_map(|b| match b {
+                Block::Paragraph(p) => Some(p),
+                _ => None,
+            })
+            .expect("a paragraph");
+        para.content
+            .iter()
+            .filter_map(|c| match c {
+                InlineContent::Footnote(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_equation_script_trimmed_under_no_trim_reader() {
+        // With trim_text(false) the equation capture spans the whole eqEdit and
+        // would otherwise swallow inter-element indentation ("\n  x + y\n").
+        // The explicit trim must strip the surrounding whitespace while keeping
+        // internal spacing.
+        let xml = "<hs:sec xmlns:hp=\"x\"><hp:p><hp:ctrl><hp:equation>\n      <hp:script>x + y</hp:script>\n    </hp:equation></hp:ctrl></hp:p></hs:sec>";
+        assert_eq!(equation_scripts(xml), vec!["x + y".to_string()]);
+    }
+
+    #[test]
+    fn test_footnote_text_clean_under_no_trim_reader() {
+        // Pretty-printed footnote subList: with trim_text(false) every newline+
+        // indent is now a Text event. The whitespace-only-skip guard must drop
+        // them, and real fragments across runs join with a single space.
+        let xml = "<hs:sec xmlns:hp=\"x\"><hp:p><hp:ctrl><hp:fn>\n  <hp:subList>\n    <hp:p>\n      <hp:run><hp:t>각주</hp:t></hp:run>\n      <hp:run><hp:t>내용</hp:t></hp:run>\n    </hp:p>\n  </hp:subList>\n</hp:fn></hp:ctrl></hp:p></hs:sec>";
+        assert_eq!(footnote_texts(xml), vec!["각주 내용".to_string()]);
+    }
+
+    #[test]
+    fn test_whitespace_only_run_preserved_between_words() {
+        // A run whose only content is a space (`<hp:t> </hp:t>`) is a real
+        // inter-word space; it must not be dropped.
+        let xml = r#"<hs:sec xmlns:hp="x"><hp:p><hp:run><hp:t>가</hp:t></hp:run><hp:run><hp:t> </hp:t></hp:run><hp:run><hp:t>나</hp:t></hp:run></hp:p></hs:sec>"#;
+        assert_eq!(
+            run_texts(xml),
+            vec!["가".to_string(), " ".to_string(), "나".to_string()]
+        );
+    }
 }

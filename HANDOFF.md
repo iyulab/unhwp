@@ -1,43 +1,37 @@
 # unhwp — 핸드오프 문서
 
-> **현재 상태:** v0.5.0 구현 완료(미태깅). HWPX 렌더링 충실도 결함 D1·D2 수정을 **미릴리즈 v0.5.0에 흡수**(2026-06-05 결정, 버전 파일 변경 없음).
+> **현재 상태:** v0.5.0 구현 완료(미태깅). HWPX 충실도 결함 D1·D2·D8 + CLI 출력 결함 D9 수정 완료. 버전 라벨(v0.5.0 흡수 vs v0.5.1 패치) **사용자 결정 대기**.
 
 ## 지금 하고 있는 것
 
-v0.5.0(Cycles 17–26) 위에 실측 결함 D1(tab/leader)·D2(floating 이미지) 수정 완료(Cycles 27–28).
-v0.5.0이 아직 태그되지 않아 D1/D2는 v0.5.0의 일부로 흡수(버전 범프 없음).
-D3/D4/D5는 evidence 부재로 defer, D8(`trim_text` 공백 손실) 신규 발견.
+v0.5.0(Cycles 17–26) 위에 실측 결함을 순차 수정:
+- D1(tab/leader)·D2(floating 이미지) ✅ Cycles 27–28
+- D8(`trim_text` `<hp:t>` 공백 손실) ✅ Cycle 31 — `section.rs`만 `trim_text(false)`, 실문서로 `**1.** 바코드` 보존 확인, 표/본문 회귀 0. equation/footnote 가드는 Cycle 33에서 discriminating 단위 테스트로 검증(+6 hwpx::section 테스트)
+- D9(CLI update 배너 stdout 오염) ✅ Cycle 31 — `println!`→`eprintln!`(stderr), JSON 출력 청결화
+- 스윕 검증(Cycle 32–33): HWP5 10문서 + 복잡 HWPX(kproject, `<hp:tab>` 20개) — 인코딩·glue·hard-break 0
+- D3/D4/D5는 evidence 부재로 defer
 
 ## 다음에 해야 할 것
 
-### 옵션 A: v0.5.0 릴리즈 (수동)
+### 옵션 A: 릴리즈 (수동) — **버전 라벨 결정 필요**
 
-v0.5.0 코드는 모두 커밋 완료(Cycles 17–26 + D1/D2 흡수, 최신 `ef0d256`). **태그·푸시만 남음**:
+D1/D2는 미릴리즈 v0.5.0에 흡수 결정됨. D8/D9는 그 위에 추가된 **사용자 가시 수정**(fidelity·출력 정확성).
+- 권고: (b) **v0.5.1 패치** 분리 — 버그 수정 단위라 정석. 5개 버전 파일 동시 범프(아래 § 버전 동기화) 후 태그.
+- 대안: (a) 아직 미태깅이므로 v0.5.0에 함께 흡수.
 
-```
-git tag v0.5.0
-git push && git push --tags
-```
-
-릴리즈 후 GitHub Actions가 자동으로: CI 빌드 검증 / npm 배포(`@iyulab/unhwp@0.5.0`) / GitHub Pages 업데이트.
+태그 후 GitHub Actions 자동: CI 빌드 / npm 배포 / GitHub Pages.
 최초 1회 설정: GitHub Pages "GitHub Actions" 소스 활성화, NPM_TOKEN 시크릿 등록.
 
-### 옵션 B (개발 다음 작업): D8 — `trim_text` 공백 손실 수정
+### 옵션 B (개발 다음 작업): CLI stdout 청결 회귀 테스트
 
-`src/hwpx/section.rs:45`(및 mod.rs:329, header.rs:12, styles.rs:18) `reader.config_mut().trim_text(true)`가
-`hp:t` 텍스트의 앞뒤 공백을 제거(목차 "1. "→"1." → `**1.**바코드` 직결). render는 무결(Cycle 30 진단 확정).
+D9 재발 방지용 통합 테스트(`assert_cmd` 등으로 `json` 출력이 유효 JSON임을 검증). 이후 다른 실문서(`test-files/*.hwp`)로 fidelity 스윕.
 
-- 방향: `trim_text(false)` + 요소 간 들여쓰기 whitespace 무시 로직 검토.
-- 리스크: 공백 처리 전반 회귀 → 단위 + 스냅샷 회귀 테스트 동반 필수.
-- 검증: 실문서 재추출로 `**1.** 바코드`(공백 보존) 확인 + 기존 표/본문 회귀 없음.
+### 결함 사이클 결과 (Cycles 27–33, 2026-06-05)
 
-### 결함 사이클 결과 (Cycles 27–30, 2026-06-05)
+상세: `claudedocs/cycle-logs/cycle-27~33.md`, 평가: `claudedocs/plans/quality-assessment-2026-06-05-hwpx-reqdoc.md`, 로드맵: ROADMAP.md § v0.6
 
-상세: `claudedocs/cycle-logs/cycle-27~30.md`, 평가: `claudedocs/plans/quality-assessment-2026-06-05-hwpx-reqdoc.md`, 로드맵: ROADMAP.md § v0.6
-
-- **완료**: D1(`hp:tab`/leader 렌더) ✅ C27, D2(floating 이미지 block 렌더) ✅ C28
+- **완료**: D1(`hp:tab`/leader 렌더) ✅ C27, D2(floating 이미지 block 렌더) ✅ C28, D8(`trim_text` `<hp:t>` 공백 보존) ✅ C31, D9(CLI 배너 stdout 오염) ✅ C31
 - **Defer (YAGNI — evidence 수요 없음)**: D3(EMF→v0.7+), D5(rowSpan 0이라 colspan 빈 셀이 정답), D4(byte-identical 중복은 invisible)
-- **신규**: D8(`trim_text` 공백 손실) → 위 옵션 B
 - **비-결함(검증 완료)**: D7(인접 bold `**A****B**`, 본 문서 미발생), D6(frontmatter 제목 불일치 = 원본 메타 부정확, 라이브러리 버그 아님)
 
 ## v0.5 완료 목록 (2026-06-01)
