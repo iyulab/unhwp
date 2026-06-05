@@ -606,12 +606,8 @@ mod tests {
     fn make_char_shape_record(properties: u32) -> Record {
         let mut data = vec![0u8; 56];
         // CharRatio and RelativeSize fields default to 100
-        for i in 14..21 {
-            data[i] = 100;
-        }
-        for i in 28..35 {
-            data[i] = 100;
-        }
+        data[14..21].fill(100);
+        data[28..35].fill(100);
         // BaseSize = 1000 (10pt)
         let base_size: i32 = 1000;
         data[42..46].copy_from_slice(&base_size.to_le_bytes());

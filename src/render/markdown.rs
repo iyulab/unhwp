@@ -4,8 +4,8 @@ use super::heading_analyzer::{HeadingAnalyzer, HeadingDecision};
 use super::RenderOptions;
 use crate::error::Result;
 use crate::model::{
-    Alignment, Block, Document, InlineContent, ListStyle, Paragraph, Section, StyleRegistry, Table,
-    TableCell, TextRun,
+    Alignment, Block, Document, ImageRef, InlineContent, ListStyle, Paragraph, Section,
+    StyleRegistry, Table, TableCell, TextRun,
 };
 
 use std::collections::HashMap;
@@ -368,9 +368,19 @@ impl MarkdownRenderer {
             }
         }
 
-        // Render inline content
+        // Render inline content. Floating images (stamps/signatures/watermarks
+        // layered over the text) are deferred and emitted as standalone blocks
+        // after the paragraph, so they neither glue to adjacent text nor corrupt
+        // heading lines — while still being preserved (zero data loss).
+        let mut floating_images: Vec<&ImageRef> = Vec::new();
         let mut need_strip = strip_bullet;
         for item in &para.content {
+            if let InlineContent::Image(img) = item {
+                if img.floating {
+                    floating_images.push(img);
+                    continue;
+                }
+            }
             if need_strip {
                 if let InlineContent::Text(run) = item {
                     let stripped = strip_leading_bullet_char(&run.text);
@@ -401,6 +411,15 @@ impl MarkdownRenderer {
             output.push('\n');
         } else if self.options.paragraph_spacing && !is_list_item {
             output.push('\n');
+        }
+
+        // Emit deferred floating images as standalone blocks.
+        for img in floating_images {
+            if !output.ends_with("\n\n") {
+                output.push('\n');
+            }
+            output.push_str(&self.image_markdown(img));
+            output.push_str("\n\n");
         }
     }
 
@@ -497,9 +516,37 @@ impl MarkdownRenderer {
             suffix.insert_str(0, "</sub>");
         }
 
+        // CommonMark requires emphasis markers to hug non-whitespace: `**  x  **`
+        // is NOT parsed as emphasis. When a run carries leading/trailing whitespace
+        // (e.g. text following a tab), keep that whitespace outside the markers.
+        if prefix.is_empty() {
+            output.push_str(&text);
+            return;
+        }
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            // Whitespace-only run: no content to emphasize.
+            output.push_str(&text);
+            return;
+        }
+        let lead = &text[..text.len() - text.trim_start().len()];
+        let trail = &text[text.trim_end().len()..];
+        output.push_str(lead);
         output.push_str(&prefix);
-        output.push_str(&text);
+        output.push_str(trimmed);
         output.push_str(&suffix);
+        output.push_str(trail);
+    }
+
+    /// Builds the `![alt](path)` markdown for an image reference.
+    fn image_markdown(&self, img: &ImageRef) -> String {
+        let alt = img.alt_text.as_deref().unwrap_or("image");
+        let filename = self
+            .image_id_to_filename
+            .get(&img.id)
+            .cloned()
+            .unwrap_or_else(|| img.id.clone());
+        format!("![{}]({}{})", alt, self.options.image_path_prefix, filename)
     }
 
     /// Renders a table.
@@ -739,14 +786,7 @@ impl MarkdownRenderer {
                 output.push(' ');
             }
             InlineContent::Image(img) => {
-                let alt = img.alt_text.as_deref().unwrap_or("image");
-                let filename = self
-                    .image_id_to_filename
-                    .get(&img.id)
-                    .cloned()
-                    .unwrap_or_else(|| img.id.clone());
-                let path = format!("{}{}", self.options.image_path_prefix, filename);
-                output.push_str(&format!("![{}]({})", alt, path));
+                output.push_str(&self.image_markdown(img));
             }
             InlineContent::Equation(eq) => {
                 if let Some(ref latex) = eq.latex {
@@ -993,6 +1033,106 @@ mod tests {
         let result = renderer.render(&doc).unwrap();
 
         assert!(result.contains("**bold text**"));
+    }
+
+    #[test]
+    fn test_bold_whitespace_outside_markers() {
+        // Leading/trailing whitespace must sit OUTSIDE the ** markers,
+        // otherwise CommonMark does not treat it as emphasis (`**  1  **` fails).
+        let mut doc = Document::new();
+        let mut section = Section::new(0);
+
+        let mut para = Paragraph::new();
+        para.content.push(InlineContent::Text(TextRun::with_style(
+            "title", // non-bold lead run
+            TextStyle::default(),
+        )));
+        para.content.push(InlineContent::Text(TextRun::with_style(
+            "  1", // bold run that begins with whitespace (e.g. after a tab)
+            TextStyle::bold(),
+        )));
+        section.push_paragraph(para);
+        doc.sections.push(section);
+
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        let result = renderer.render(&doc).unwrap();
+
+        // Whitespace is preserved but lives outside the markers.
+        assert!(result.contains("title  **1**"), "got: {result:?}");
+        assert!(!result.contains("**  1**"), "broken emphasis: {result:?}");
+    }
+
+    #[test]
+    fn test_floating_image_standalone_block() {
+        // A floating image (stamp/signature) following heading text must not
+        // glue to the text — it sits on its own line and is still preserved.
+        let mut doc = Document::new();
+        let mut section = Section::new(0);
+
+        let mut para = Paragraph::new();
+        para.content.push(InlineContent::Text(TextRun::with_style(
+            "heading text",
+            TextStyle::bold(),
+        )));
+        para.content
+            .push(InlineContent::Image(ImageRef::new("stamp").floating(true)));
+        section.push_paragraph(para);
+        doc.sections.push(section);
+
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        let result = renderer.render(&doc).unwrap();
+
+        assert!(result.contains("**heading text**"), "got: {result:?}");
+        // Image not fused onto the text line.
+        assert!(
+            !result.contains("**heading text**!["),
+            "image glued to text: {result:?}"
+        );
+        // Image preserved on its own line.
+        assert!(result.contains("\n![image]"), "not standalone: {result:?}");
+    }
+
+    #[test]
+    fn test_bold_trailing_space_preserved_before_next_run() {
+        // Diagnostic: "1. "(bold) followed by "바코드"(plain) must keep the
+        // separating space: "**1.** 바코드", not "**1.**바코드".
+        let mut doc = Document::new();
+        let mut section = Section::new(0);
+        let mut para = Paragraph::new();
+        para.content.push(InlineContent::Text(TextRun::with_style(
+            "1. ",
+            TextStyle::bold(),
+        )));
+        para.content
+            .push(InlineContent::Text(TextRun::new("바코드")));
+        section.push_paragraph(para);
+        doc.sections.push(section);
+
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        let result = renderer.render(&doc).unwrap();
+        assert!(
+            result.contains("**1.** 바코드"),
+            "space dropped: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_inline_image_stays_inline() {
+        // Non-floating (default) images keep inline rendering.
+        let mut doc = Document::new();
+        let mut section = Section::new(0);
+
+        let mut para = Paragraph::new();
+        para.content.push(InlineContent::Text(TextRun::new("see ")));
+        para.content
+            .push(InlineContent::Image(ImageRef::new("img")));
+        section.push_paragraph(para);
+        doc.sections.push(section);
+
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        let result = renderer.render(&doc).unwrap();
+
+        assert!(result.contains("see ![image]"), "not inline: {result:?}");
     }
 
     #[test]

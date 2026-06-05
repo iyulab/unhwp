@@ -214,17 +214,29 @@ pub struct ImageRef {
     pub width: Option<u32>,
     /// Height in pixels (optional)
     pub height: Option<u32>,
+    /// Whether the image floats over the text (not part of the text flow).
+    /// Floating images (e.g. stamps, signatures, watermarks anchored with
+    /// `IN_FRONT_OF_TEXT`/`BEHIND_TEXT` wrapping) are rendered as standalone
+    /// blocks instead of inline, so they do not glue to adjacent text.
+    pub floating: bool,
 }
 
 impl ImageRef {
-    /// Creates a new image reference.
+    /// Creates a new inline image reference.
     pub fn new(id: impl Into<String>) -> Self {
         Self {
             id: id.into(),
             alt_text: None,
             width: None,
             height: None,
+            floating: false,
         }
+    }
+
+    /// Marks this image as floating (rendered as a standalone block).
+    pub fn floating(mut self, floating: bool) -> Self {
+        self.floating = floating;
+        self
     }
 }
 

@@ -185,6 +185,7 @@ impl<'a> SectionParser<'a> {
         let mut text = String::new();
         let mut buf = Vec::new();
         let mut in_pic = false;
+        let mut pic_floating = false; // Whether the current <hp:pic> floats over text
         let mut in_ctrl = false; // Track if we're inside a control element (to skip formula fields etc.)
         let mut in_text_element = false; // Track if we're inside <hp:t> element
 
@@ -202,12 +203,13 @@ impl<'a> SectionParser<'a> {
                     } else if name == "pic" {
                         // Start of picture element
                         in_pic = true;
+                        pic_floating = is_floating_pic(&e);
                     } else if in_pic && name == "img" {
                         // Look for binaryItemIDRef in <hc:img> element
                         if let Some(id) = get_attr_string(&e, "binaryItemIDRef") {
-                            paragraph
-                                .content
-                                .push(InlineContent::Image(ImageRef::new(id)));
+                            paragraph.content.push(InlineContent::Image(
+                                ImageRef::new(id).floating(pic_floating),
+                            ));
                         }
                     } else if name == "tbl" {
                         // Table inside run - parse and collect
@@ -221,12 +223,18 @@ impl<'a> SectionParser<'a> {
 
                     if name == "t" {
                         // Empty text element - skip
+                    } else if name == "tab" && !in_ctrl {
+                        // <hp:tab/> is a layout tab (often a TOC leader between a title
+                        // and its page number). Markdown has no tab concept, so emit a
+                        // single space to preserve the word boundary instead of letting
+                        // the surrounding text collapse together (e.g. `재고관리1`).
+                        text.push(' ');
                     } else if in_pic && name == "img" {
                         // Look for binaryItemIDRef in <hc:img/> element
                         if let Some(id) = get_attr_string(&e, "binaryItemIDRef") {
-                            paragraph
-                                .content
-                                .push(InlineContent::Image(ImageRef::new(id)));
+                            paragraph.content.push(InlineContent::Image(
+                                ImageRef::new(id).floating(pic_floating),
+                            ));
                         }
                     }
                 }
@@ -244,6 +252,7 @@ impl<'a> SectionParser<'a> {
                         in_ctrl = false;
                     } else if name == "pic" {
                         in_pic = false;
+                        pic_floating = false;
                     } else if name == "run" {
                         break;
                     }
@@ -269,6 +278,7 @@ impl<'a> SectionParser<'a> {
     fn parse_control(&mut self, paragraph: &mut Paragraph, tables: &mut Vec<Table>) -> Result<()> {
         let mut buf = Vec::new();
         let mut in_pic = false;
+        let mut pic_floating = false;
         let mut in_equation = false;
         let mut in_footnote = false;
         let mut equation_script = String::new();
@@ -280,7 +290,10 @@ impl<'a> SectionParser<'a> {
                     let name = get_local_name(&e);
 
                     match name.as_str() {
-                        "pic" => in_pic = true,
+                        "pic" => {
+                            in_pic = true;
+                            pic_floating = is_floating_pic(&e);
+                        }
                         "eqEdit" | "equation" => in_equation = true,
                         "fn" | "footnote" => in_footnote = true,
                         "en" | "endnote" => in_footnote = true, // Treat endnotes like footnotes
@@ -293,9 +306,9 @@ impl<'a> SectionParser<'a> {
                         "img" if in_pic => {
                             // Look for binaryItemIDRef attribute in <hc:img> element
                             if let Some(id) = get_attr_string(&e, "binaryItemIDRef") {
-                                paragraph
-                                    .content
-                                    .push(InlineContent::Image(ImageRef::new(id)));
+                                paragraph.content.push(InlineContent::Image(
+                                    ImageRef::new(id).floating(pic_floating),
+                                ));
                             }
                         }
                         "script" if in_equation => {
@@ -315,9 +328,9 @@ impl<'a> SectionParser<'a> {
                     if in_pic && name == "img" {
                         // Look for binaryItemIDRef attribute in <hc:img/> element
                         if let Some(id) = get_attr_string(&e, "binaryItemIDRef") {
-                            paragraph
-                                .content
-                                .push(InlineContent::Image(ImageRef::new(id)));
+                            paragraph.content.push(InlineContent::Image(
+                                ImageRef::new(id).floating(pic_floating),
+                            ));
                         }
                     }
                 }
@@ -330,7 +343,10 @@ impl<'a> SectionParser<'a> {
                 Ok(Event::End(e)) => {
                     let name = get_local_name_end(&e);
                     match name.as_str() {
-                        "pic" => in_pic = false,
+                        "pic" => {
+                            in_pic = false;
+                            pic_floating = false;
+                        }
                         "eqEdit" | "equation" => {
                             if !equation_script.is_empty() {
                                 let script = std::mem::take(&mut equation_script);
@@ -569,6 +585,19 @@ fn get_attr_string(e: &quick_xml::events::BytesStart, name: &str) -> Option<Stri
         }
     }
     None
+}
+
+/// Returns true if a `<hp:pic>` `textWrap` value denotes a floating object that
+/// is layered over/under the text rather than embedded in the text flow.
+///
+/// `IN_FRONT_OF_TEXT`/`BEHIND_TEXT` are stamps, signatures, and watermarks that
+/// must not glue to adjacent text. Other wraps (e.g. `SQUARE`, default) keep the
+/// existing inline behaviour to avoid regressing embedded illustrations.
+fn is_floating_pic(e: &quick_xml::events::BytesStart) -> bool {
+    matches!(
+        get_attr_string(e, "textWrap").as_deref(),
+        Some("IN_FRONT_OF_TEXT") | Some("BEHIND_TEXT")
+    )
 }
 
 /// Skips an element and all its children.
