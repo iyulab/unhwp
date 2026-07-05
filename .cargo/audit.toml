@@ -11,6 +11,12 @@ ignore = [
     # requires quick-xml >= 0.41, so there is no upstream fix to pick up. The
     # library's own direct quick-xml dependency is pinned at ^0.41 (patched),
     # so the reachable XML parser is not affected.
+    #
+    # ⚠️ cargo-audit ignores are global per advisory ID, so this also masks the
+    # SAME advisory on the library's direct dependency. That is acceptable only
+    # because the direct dep is pinned at ^0.41 and cannot structurally regress
+    # into the vulnerable range. Remove these entries once self_update ships a
+    # release requiring quick-xml >= 0.41, restoring full coverage.
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
 ]
