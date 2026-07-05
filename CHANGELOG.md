@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-07-05
+
+### Security
+
+- Bump `quick-xml` from 0.37 to 0.41, remediating **RUSTSEC-2026-0194**
+  (quadratic runtime on duplicate attribute-name checks) and
+  **RUSTSEC-2026-0195** (unbounded namespace-declaration allocation), both DoS
+  advisories affecting consumers that parse untrusted HWPX documents.
+  ([#5](https://github.com/iyulab/unhwp/issues/5))
+- Bump transitive `bytes`, `tar`, and `time` to their patched releases.
+- Add a `cargo audit` job to CI so future advisories are caught automatically.
+
+### Fixed
+
+- Preserve XML entity references (`&amp;`, `&lt;`, `&#NN;`, `&#xNN;`) in HWPX
+  body text, equations, footnotes, and metadata. quick-xml 0.40+ emits entities
+  as separate `GeneralRef` events; the text-accumulation loops now fold them
+  back in, and metadata parsing accumulates per element (dispatching on the
+  closing tag) so values such as a title containing `&amp;` are no longer
+  truncated to their last fragment.
+
 ## [0.4.0] - 2026-05-31
 
 ### Added

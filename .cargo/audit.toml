@@ -1,0 +1,16 @@
+# cargo-audit configuration.
+#
+# Advisories listed here are known, reviewed, and accepted. Everything else
+# fails `cargo audit` (see the Security Audit job in .github/workflows/ci.yml).
+
+[advisories]
+ignore = [
+    # quick-xml 0.23 DoS (quadratic attribute scan / unbounded namespace alloc).
+    # Pulled ONLY transitively by self_update's S3 release backend, which this
+    # CLI does not use (it ships the GitHub backend). No self_update release
+    # requires quick-xml >= 0.41, so there is no upstream fix to pick up. The
+    # library's own direct quick-xml dependency is pinned at ^0.41 (patched),
+    # so the reachable XML parser is not affected.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]

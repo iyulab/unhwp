@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "unhwp"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2021"
 authors = ["iyulab"]
 description = "A high-performance library for extracting HWP/HWPX documents into structured Markdown"
@@ -31,7 +31,7 @@ cfb = "0.10"
 flate2 = "1.0"
 
 # XML parsing (HWPX)
-quick-xml = "0.37"
+quick-xml = "0.41"
 
 # Error handling
 thiserror = "2.0"
