@@ -62,3 +62,47 @@ pub(crate) fn resolve_general_ref(r: &BytesRef) -> String {
     // literal reference rather than dropping content.
     format!("&{name};")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use quick_xml::events::BytesRef;
+
+    fn resolve(name: &str) -> String {
+        resolve_general_ref(&BytesRef::new(name))
+    }
+
+    #[test]
+    fn resolves_predefined_entities() {
+        assert_eq!(resolve("amp"), "&");
+        assert_eq!(resolve("lt"), "<");
+        assert_eq!(resolve("gt"), ">");
+        assert_eq!(resolve("quot"), "\"");
+        assert_eq!(resolve("apos"), "'");
+    }
+
+    #[test]
+    fn resolves_numeric_character_references() {
+        assert_eq!(resolve("#48"), "0"); // decimal
+        assert_eq!(resolve("#x41"), "A"); // lower-case hex
+        assert_eq!(resolve("#X41"), "A"); // upper-case hex
+        assert_eq!(resolve("#44032"), "가"); // multi-byte codepoint (U+AC00)
+    }
+
+    #[test]
+    fn unknown_entity_is_preserved_literally() {
+        assert_eq!(resolve("nbsp"), "&nbsp;");
+        assert_eq!(resolve("custom"), "&custom;");
+    }
+
+    #[test]
+    fn malformed_references_degrade_without_panicking() {
+        // Adversarial inputs must never panic — the parser's robustness goal.
+        assert_eq!(resolve("#"), ""); // empty numeric ref
+        assert_eq!(resolve("#x"), ""); // empty hex ref
+        assert_eq!(resolve("#xZZ"), ""); // non-hex digits
+        assert_eq!(resolve("#x110000"), ""); // above the Unicode maximum
+        assert_eq!(resolve("#xD800"), ""); // lone surrogate (not a scalar value)
+        assert_eq!(resolve("#xFFFFFFFFFFFF"), ""); // overflows u32 parse
+    }
+}
