@@ -1,5 +1,6 @@
 //! Section parsing for HWPX documents.
 
+use super::xml::{decode_text, resolve_general_ref};
 use crate::error::Result;
 use crate::model::{
     Block, Equation, ImageRef, InlineContent, Paragraph, ParagraphStyle, Section, StyleRegistry,
@@ -248,9 +249,12 @@ impl<'a> SectionParser<'a> {
                 }
                 Ok(Event::Text(t)) if in_text_element && !in_ctrl => {
                     // Only capture text inside <hp:t> elements, not inside control elements
-                    if let Ok(s) = t.unescape() {
-                        text.push_str(&s);
-                    }
+                    text.push_str(&decode_text(&t));
+                }
+                // Entity references (`&amp;`, `&#NN;`) are separate events in
+                // quick-xml 0.40+; resolve them into the same text buffer.
+                Ok(Event::GeneralRef(r)) if in_text_element && !in_ctrl => {
+                    text.push_str(&resolve_general_ref(&r));
                 }
                 Ok(Event::End(e)) => {
                     let name = get_local_name_end(&e);
@@ -344,9 +348,10 @@ impl<'a> SectionParser<'a> {
                 }
                 Ok(Event::Text(t)) if in_equation => {
                     // Collect equation script text
-                    if let Ok(s) = t.unescape() {
-                        equation_script.push_str(&s);
-                    }
+                    equation_script.push_str(&decode_text(&t));
+                }
+                Ok(Event::GeneralRef(r)) if in_equation => {
+                    equation_script.push_str(&resolve_general_ref(&r));
                 }
                 Ok(Event::End(e)) => {
                     let name = get_local_name_end(&e);
@@ -408,19 +413,23 @@ impl<'a> SectionParser<'a> {
                     }
                 }
                 Ok(Event::Text(t)) => {
-                    if let Ok(s) = t.unescape() {
-                        // This site is not `<hp:t>`-scoped, so with trim_text(false)
-                        // it also receives inter-element indentation. Skip
-                        // whitespace-only events; join real fragments with a single
-                        // space (footnote paragraphs flatten to one line).
-                        let trimmed = s.trim();
-                        if !trimmed.is_empty() {
-                            if !text.is_empty() && !text.ends_with(' ') {
-                                text.push(' ');
-                            }
-                            text.push_str(trimmed);
+                    let s = decode_text(&t);
+                    // This site is not `<hp:t>`-scoped, so with trim_text(false)
+                    // it also receives inter-element indentation. Skip
+                    // whitespace-only events; join real fragments with a single
+                    // space (footnote paragraphs flatten to one line).
+                    let trimmed = s.trim();
+                    if !trimmed.is_empty() {
+                        if !text.is_empty() && !text.ends_with(' ') {
+                            text.push(' ');
                         }
+                        text.push_str(trimmed);
                     }
+                }
+                // An entity reference is real content, not inter-element
+                // whitespace, so append it directly (no trim/space-join).
+                Ok(Event::GeneralRef(r)) => {
+                    text.push_str(&resolve_general_ref(&r));
                 }
                 Ok(Event::End(e)) => {
                     let name = get_local_name_end(&e);
@@ -668,6 +677,16 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn test_entity_references_resolved_in_hp_t() {
+        // quick-xml 0.40+ splits `&amp;` / `&lt;` / `&#NN;` out of the text node
+        // into separate `GeneralRef` events. The `<hp:t>` loop must fold them
+        // back in, or extracted text silently loses every entity. A single run
+        // interleaves literal text with predefined, decimal, and hex refs.
+        let xml = r#"<hs:sec xmlns:hp="x"><hp:p><hp:run><hp:t>R&amp;D &lt;a&gt; &#48;&#x31;</hp:t></hp:run></hp:p></hs:sec>"#;
+        assert_eq!(run_texts(xml), vec!["R&D <a> 01".to_string()]);
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 use crate::error::{Error, Result};
 use quick_xml::events::Event;
-use quick_xml::Reader;
+use quick_xml::{Reader, XmlVersion};
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Seek};
 use std::path::Path;
@@ -172,8 +172,18 @@ fn parse_manifest_map(hpf_content: &str) -> (HashMap<String, String>, Vec<String
                             let key = attr.key.local_name();
                             let k = std::str::from_utf8(key.as_ref()).unwrap_or_default();
                             match k {
-                                "id" => id = attr.unescape_value().ok().map(|v| v.into_owned()),
-                                "href" => href = attr.unescape_value().ok().map(|v| v.into_owned()),
+                                "id" => {
+                                    id = attr
+                                        .normalized_value(XmlVersion::Implicit1_0)
+                                        .ok()
+                                        .map(|v| v.into_owned())
+                                }
+                                "href" => {
+                                    href = attr
+                                        .normalized_value(XmlVersion::Implicit1_0)
+                                        .ok()
+                                        .map(|v| v.into_owned())
+                                }
                                 _ => {}
                             }
                         }
@@ -187,7 +197,7 @@ fn parse_manifest_map(hpf_content: &str) -> (HashMap<String, String>, Vec<String
                             let key = attr.key.local_name();
                             let k = std::str::from_utf8(key.as_ref()).unwrap_or_default();
                             if k == "idref" {
-                                if let Ok(v) = attr.unescape_value() {
+                                if let Ok(v) = attr.normalized_value(XmlVersion::Implicit1_0) {
                                     spine.push(v.into_owned());
                                 }
                             }

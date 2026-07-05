@@ -7,6 +7,7 @@ mod container;
 mod header;
 mod section;
 mod styles;
+mod xml;
 
 pub use container::HwpxContainer;
 
@@ -14,7 +15,9 @@ use crate::error::Result;
 use crate::model::Document;
 use crate::streaming::{ParseEvent, SectionStreamOptions};
 use quick_xml::events::Event;
-use quick_xml::Reader;
+use quick_xml::{Reader, XmlVersion};
+
+use self::xml::{decode_text, resolve_general_ref};
 #[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
 use std::io::{Read, Seek};
@@ -326,11 +329,21 @@ struct MetadataResult {
 fn parse_metadata_xml(xml: &str) -> MetadataResult {
     let mut result = MetadataResult::default();
     let mut reader = Reader::from_str(xml);
-    reader.config_mut().trim_text(true);
+    // Text is accumulated per element and trimmed once at dispatch (see the
+    // `End` arm below). Per-event trimming must stay off: quick-xml 0.40+ splits
+    // entity references into their own events, so a value like "Q&amp;A B" is
+    // delivered as several fragments — trimming each would drop the internal
+    // space adjacent to an entity boundary.
+    reader.config_mut().trim_text(false);
 
     let mut buf = Vec::new();
     let mut current_element: Option<String> = None;
     let mut current_meta_name: Option<String> = None;
+    // Text and entity-reference events are accumulated here across the open
+    // element and dispatched on its `End`, so entity references (e.g. a title
+    // containing `&amp;`) split into separate events by quick-xml 0.40+ are not
+    // lost or truncated.
+    let mut current_text = String::new();
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -345,7 +358,7 @@ fn parse_metadata_xml(xml: &str) -> MetadataResult {
                         // Check for name attribute
                         for attr in e.attributes().flatten() {
                             if attr.key.local_name().as_ref() == b"name" {
-                                if let Ok(value) = attr.unescape_value() {
+                                if let Ok(value) = attr.normalized_value(XmlVersion::Implicit1_0) {
                                     current_meta_name = Some(value.to_string());
                                 }
                             }
@@ -357,60 +370,44 @@ fn parse_metadata_xml(xml: &str) -> MetadataResult {
                 }
             }
             Ok(Event::Text(e)) => {
-                if let Ok(text) = e.unescape() {
-                    let text = text.trim().to_string();
+                current_text.push_str(&decode_text(&e));
+            }
+            // Entity references (`&amp;` etc.) are separate events in quick-xml
+            // 0.40+; fold them into the buffer so metadata values survive.
+            Ok(Event::GeneralRef(r)) => {
+                current_text.push_str(&resolve_general_ref(&r));
+            }
+            Ok(Event::End(_)) => {
+                let text = current_text.trim();
+                // Element-based (`<title>…</title>`) and meta-name-based
+                // (`<meta name="title">…</meta>`) metadata share one field
+                // mapping; element context takes precedence when both are set.
+                if let Some(key) = current_element.as_deref().or(current_meta_name.as_deref()) {
                     if !text.is_empty() {
-                        // Handle element-based metadata
-                        if let Some(ref elem) = current_element {
-                            match elem.as_str() {
-                                "title" => result.title = Some(text.clone()),
-                                "creator" => result.creator = Some(text.clone()),
-                                "description" => result.description = Some(text.clone()),
-                                "date" => result.date = Some(text.clone()),
-                                "modified" => result.modified = Some(text.clone()),
-                                "generator" => result.generator = Some(text.clone()),
-                                "subject" | "keywords" => {
-                                    // Split by common delimiters
-                                    for kw in text.split([',', ';', '|']) {
-                                        let kw = kw.trim();
-                                        if !kw.is_empty()
-                                            && !result.keywords.contains(&kw.to_string())
-                                        {
-                                            result.keywords.push(kw.to_string());
-                                        }
+                        match key {
+                            "title" => result.title = Some(text.to_string()),
+                            "creator" => result.creator = Some(text.to_string()),
+                            "description" => result.description = Some(text.to_string()),
+                            "date" => result.date = Some(text.to_string()),
+                            "modified" => result.modified = Some(text.to_string()),
+                            "generator" => result.generator = Some(text.to_string()),
+                            "subject" | "keywords" => {
+                                // Split by common delimiters
+                                for kw in text.split([',', ';', '|']) {
+                                    let kw = kw.trim();
+                                    if !kw.is_empty() && !result.keywords.contains(&kw.to_string())
+                                    {
+                                        result.keywords.push(kw.to_string());
                                     }
                                 }
-                                _ => {}
                             }
-                        }
-                        // Handle meta name-based metadata
-                        else if let Some(ref meta_name) = current_meta_name {
-                            match meta_name.as_str() {
-                                "title" => result.title = Some(text.clone()),
-                                "creator" => result.creator = Some(text.clone()),
-                                "description" => result.description = Some(text.clone()),
-                                "date" => result.date = Some(text.clone()),
-                                "modified" => result.modified = Some(text.clone()),
-                                "generator" => result.generator = Some(text.clone()),
-                                "subject" | "keywords" => {
-                                    for kw in text.split([',', ';', '|']) {
-                                        let kw = kw.trim();
-                                        if !kw.is_empty()
-                                            && !result.keywords.contains(&kw.to_string())
-                                        {
-                                            result.keywords.push(kw.to_string());
-                                        }
-                                    }
-                                }
-                                _ => {}
-                            }
+                            _ => {}
                         }
                     }
                 }
-            }
-            Ok(Event::End(_)) => {
                 current_element = None;
                 current_meta_name = None;
+                current_text.clear();
             }
             Ok(Event::Eof) => break,
             Err(_) => break,
@@ -468,5 +465,23 @@ fn guess_mime_type(filename: &str) -> Option<String> {
         "wmf" => Some("image/x-wmf".to_string()),
         "emf" => Some("image/x-emf".to_string()),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_metadata_entity_references_resolved() {
+        // A title such as "Q&A" is delivered by quick-xml 0.40+ as
+        // Text("Q") / GeneralRef("amp") / Text("A"). The metadata loop must
+        // accumulate across the element and dispatch on `End`; the previous
+        // dispatch-per-Text-event logic would keep only the last fragment ("A").
+        let xml =
+            r#"<metadata><title>Q&amp;A &#48;</title><creator>a &lt;b&gt; c</creator></metadata>"#;
+        let meta = parse_metadata_xml(xml);
+        assert_eq!(meta.title.as_deref(), Some("Q&A 0"));
+        assert_eq!(meta.creator.as_deref(), Some("a <b> c"));
     }
 }

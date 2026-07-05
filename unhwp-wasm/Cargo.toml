@@ -1,6 +1,6 @@
 [package]
 name = "unhwp-wasm"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2021"
 description = "HWP/HWPX extraction to Markdown, text, and JSON (WebAssembly)"
 repository = "https://github.com/iyulab/unhwp"
