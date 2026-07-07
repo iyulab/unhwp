@@ -181,32 +181,56 @@ jobs:
     name: Publish npm (@iyulab/unhwp)
     needs: [check-version, create-release]
     if: needs.check-version.outputs.should_release == 'true'
-    continue-on-error: true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      # registry-url is required: it writes the .npmrc that maps
+      # NODE_AUTH_TOKEN to registry auth. Without it `npm publish`
+      # fails with ENEEDAUTH even when the token is set.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: "https://registry.npmjs.org"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
 
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+          key: ${{ runner.os }}-cargo-wasm-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-wasm-release-
+
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Build WASM package
-        run: wasm-pack build unhwp-wasm --target web --release
+        run: wasm-pack build unhwp-wasm --target bundler --out-dir pkg
 
-      - name: Copy LICENSE
+      # wasm-pack names the package after the crate (`unhwp-wasm`). The
+      # scoped name `@iyulab/unhwp` must be patched in explicitly — matches
+      # the sibling policy in unpdf/undoc. Without this the artifact lands on
+      # npm under the wrong unscoped name and `@iyulab/unhwp` stays 404.
+      - name: Set scoped npm package name
+        run: |
+          jq '.name = "@iyulab/unhwp"' unhwp-wasm/pkg/package.json > /tmp/pkg.json
+          mv /tmp/pkg.json unhwp-wasm/pkg/package.json
+
+      - name: Copy LICENSE into pkg
         run: cp LICENSE unhwp-wasm/pkg/
 
-      - name: Configure npm scope
-        run: |
-          echo "@iyulab:registry=https://registry.npmjs.org/" >> ~/.npmrc
-          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" >> ~/.npmrc
-
       - name: Publish to npm
-        run: cd unhwp-wasm/pkg && npm publish --access public
+        run: wasm-pack publish unhwp-wasm/pkg --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   cleanup-old-releases:
     name: Cleanup Old Releases
