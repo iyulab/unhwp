@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-22
+
+### Added
+
+- **HWP 5.0 equation extraction** — equations authored with the equation
+  editor (EQEdit) are now extracted from HWP 5.0 binary documents and
+  rendered as inline LaTeX (`$...$`), matching the existing HWPX behavior.
+  Previously they were **silently dropped**, producing markdown that looked
+  complete but was missing values (reported from legal/technical documents
+  where thresholds are typeset as equations). The inline `0x0B` "eqed"
+  control now reserves a position slot and the `HWPTAG_EQ_EDIT` record fills
+  in the script — in body paragraphs and table cells alike.
+- Equation scripts that cannot be extracted render a visible
+  `[unhwp:equation-unsupported]` placeholder instead of disappearing.
+- `Paragraph::plain_text()` now includes equation scripts, so the plain-text
+  surface (`unhwp text`) no longer loses equation content either.
+- **WASM `toImages()`** — `HwpDocument.toImages()` returns the document's
+  embedded images as an array of `HwpImage` objects (`id`, `filename`,
+  `mimeType`, `bytes` as `Uint8Array`, `base64` for `data:` URLs), sorted by
+  resource ID.
+
+### Fixed
+
+- Equation script → LaTeX converter fidelity, validated against a real
+  equation-heavy HWP file:
+  - `DIVIDE` → `\div`, `LEFT`/`RIGHT` → `\left`/`\right`, `+-`/`-+` →
+    `\pm`/`\mp`, backtick small-space → `\,`.
+  - `bar` is now the overline accent (`\bar{}`) per the Hancom equation
+    spec — previously mis-mapped to a vertical line (that is `vert`).
+  - `a-{1} over {2}` no longer pulls preceding operators into the fraction
+    numerator, and single-group numerators no longer double their braces
+    (`\frac{{4b}}{a}` → `\frac{4b}{a}`).
+  - `rm`/`it` font toggles are consumed (content kept) instead of leaking
+    into the output.
+- Lines starting with enclosed enumeration markers (①, ⓵, ⑴, ㉠, ❶ …) are
+  never promoted to headings, even when the source document assigns them an
+  outline style (multiple-choice/clause lines rendered as `## …`).
+
+### Removed
+
+- Orphan `src/hwp5/control.rs` stub module (dead code superseded by the
+  actual implementations in `bodytext.rs`).
+
+## [0.5.3] - 2026-07-07
+
+### Security
+
+- Bump `crossbeam-epoch` to 0.9.20 (**RUSTSEC-2026-0204**).
+
+### Fixed
+
+- Publish the npm package under its scoped name `@iyulab/unhwp`.
+
 ## [0.5.2] - 2026-07-05
 
 ### Security

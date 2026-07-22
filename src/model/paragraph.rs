@@ -101,6 +101,9 @@ impl Paragraph {
                 InlineContent::Text(run) => result.push_str(&run.text),
                 InlineContent::LineBreak => result.push('\n'),
                 InlineContent::Link { text, .. } => result.push_str(text),
+                // The script is the equation's textual content — dropping it
+                // would silently lose data on the plain-text surface.
+                InlineContent::Equation(eq) => result.push_str(&eq.script),
                 _ => {}
             }
         }
@@ -262,6 +265,17 @@ impl Equation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_plain_text_includes_equation_script() {
+        let mut para = Paragraph::new();
+        para.content
+            .push(InlineContent::Equation(Equation::new("a DIVIDE b")));
+        para.content
+            .push(InlineContent::Text(TextRun::new("를 계산하라")));
+
+        assert_eq!(para.plain_text(), "a DIVIDE b를 계산하라");
+    }
 
     #[test]
     fn test_dominant_font_size() {

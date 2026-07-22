@@ -12,6 +12,34 @@ pub fn to_latex(script: &str) -> String {
     converter.convert()
 }
 
+/// Strips outer braces when the string is exactly one balanced group
+/// (`"{x+y}"` → `"x+y"`), so `\frac{{x}}{y}` artifacts are avoided.
+/// Strings like `"{a}{b}"` or `"x{y}"` are returned unchanged.
+fn strip_redundant_braces(s: &str) -> &str {
+    if !(s.starts_with('{') && s.ends_with('}') && s.len() >= 2) {
+        return s;
+    }
+    let inner = &s[1..s.len() - 1];
+    let mut depth = 0i32;
+    for c in inner.chars() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return s; // outer braces are not a single group
+                }
+            }
+            _ => {}
+        }
+    }
+    if depth == 0 {
+        inner
+    } else {
+        s
+    }
+}
+
 /// Equation converter that parses HWP equation scripts.
 struct EquationConverter<'a> {
     chars: Peekable<Chars<'a>>,
@@ -75,8 +103,33 @@ impl<'a> EquationConverter<'a> {
                 self.next();
                 self.output.push('_');
             }
-            Some('+') | Some('-') | Some('=') | Some('(') | Some(')') | Some('[') | Some(']')
-            | Some(',') | Some('.') | Some('!') | Some('?') | Some(':') | Some(';') => {
+            Some('`') => {
+                // HWP small-space character — raw backtick breaks LaTeX.
+                self.next();
+                self.output.push_str("\\,");
+            }
+            Some('+') => {
+                self.next();
+                if self.peek() == Some('-') {
+                    // HWP digraph "+-" → ±
+                    self.next();
+                    self.output.push_str("\\pm ");
+                } else {
+                    self.output.push('+');
+                }
+            }
+            Some('-') => {
+                self.next();
+                if self.peek() == Some('+') {
+                    // HWP digraph "-+" → ∓
+                    self.next();
+                    self.output.push_str("\\mp ");
+                } else {
+                    self.output.push('-');
+                }
+            }
+            Some('=') | Some('(') | Some(')') | Some('[') | Some(']') | Some(',') | Some('.')
+            | Some('!') | Some('?') | Some(':') | Some(';') => {
                 let ch = self.next().unwrap();
                 self.output.push(ch);
             }
@@ -166,19 +219,22 @@ impl<'a> EquationConverter<'a> {
                     '{' => {
                         depth -= 1;
                         if depth == 0 {
-                            // Check if there's a command before the brace
-                            if i > 0 && chars[i - 1] != ' ' && chars[i - 1] != '\\' {
-                                // Find the command start
-                                let mut cmd_start = i - 1;
-                                while cmd_start > 0
-                                    && (chars[cmd_start - 1].is_ascii_alphabetic()
-                                        || chars[cmd_start - 1] == '\\')
-                                {
+                            // Include a preceding LaTeX command (e.g. \sqrt{x})
+                            // only when the brace is actually a command argument:
+                            // an alphabetic run introduced by a backslash.
+                            // Operators/digits before '{' (e.g. "5a-{1}") mean
+                            // the group stands alone.
+                            start = i;
+                            if i > 0 && chars[i - 1].is_ascii_alphabetic() {
+                                let mut cmd_start = i;
+                                while cmd_start > 0 && chars[cmd_start - 1].is_ascii_alphabetic() {
                                     cmd_start -= 1;
                                 }
-                                start = cmd_start;
-                            } else {
-                                start = i;
+                                if cmd_start > 0 && chars[cmd_start - 1] == '\\' {
+                                    start = cmd_start - 1;
+                                }
+                            } else if i > 0 && chars[i - 1] == '\\' {
+                                start = i - 1;
                             }
                             break;
                         }
@@ -188,7 +244,7 @@ impl<'a> EquationConverter<'a> {
             }
             let expr: String = chars[start..].iter().collect();
             self.output = chars[..start].iter().collect();
-            return expr.trim().to_string();
+            return strip_redundant_braces(expr.trim()).to_string();
         }
 
         // If output ends with a LaTeX command, extract it
@@ -389,7 +445,7 @@ impl<'a> EquationConverter<'a> {
 
             // Operators and relations (include trailing space for proper spacing)
             "TIMES" => self.output.push_str("\\times "),
-            "DIV" => self.output.push_str("\\div "),
+            "DIV" | "DIVIDE" => self.output.push_str("\\div "),
             "CDOT" => self.output.push_str("\\cdot "),
             "PM" | "PLUSMINUS" => self.output.push_str("\\pm "),
             "MP" | "MINUSPLUS" => self.output.push_str("\\mp "),
@@ -445,8 +501,13 @@ impl<'a> EquationConverter<'a> {
             "RFLOOR" => self.output.push_str("\\rfloor"),
             "LCEIL" => self.output.push_str("\\lceil"),
             "RCEIL" => self.output.push_str("\\rceil"),
-            "VERT" | "BAR" => self.output.push('|'),
+            "VERT" => self.output.push('|'),
             "DVERT" | "DBAR" => self.output.push_str("\\|"),
+
+            // Sizing delimiters: LEFT ( ... RIGHT ) → \left( ... \right)
+            // The delimiter character itself follows and passes through.
+            "LEFT" => self.output.push_str("\\left"),
+            "RIGHT" => self.output.push_str("\\right"),
 
             // Dots
             "LDOTS" | "CDOTS" | "DOTS" => self.output.push_str("\\cdots"),
@@ -527,6 +588,12 @@ impl<'a> EquationConverter<'a> {
             }
 
             // Accents and decorations
+            // Note: in HWP equation script "bar" is the overline accent
+            // (bar{AB}), not a vertical line — that is "vert".
+            "BAR" => {
+                let arg = self.read_group();
+                self.output.push_str(&format!("\\bar{{{}}}", arg));
+            }
             "HAT" => {
                 let arg = self.read_group();
                 self.output.push_str(&format!("\\hat{{{}}}", arg));
@@ -559,6 +626,9 @@ impl<'a> EquationConverter<'a> {
                 let arg = self.read_group();
                 self.output.push_str(&format!("\\widehat{{{}}}", arg));
             }
+
+            // Font style toggles — styling is dropped, content is kept.
+            "RM" | "IT" => {}
 
             // Superscript/subscript keywords
             "SUP" => {
@@ -681,5 +751,59 @@ mod tests {
     fn test_hat_vec() {
         assert_eq!(to_latex("HAT{x}"), "\\hat{x}");
         assert_eq!(to_latex("VEC{v}"), "\\vec{v}");
+    }
+
+    #[test]
+    fn test_divide_keyword() {
+        // Observed in real files: "a DIVIDE b" concatenated to "aDIVIDEb"
+        assert_eq!(to_latex("a DIVIDE b DIVIDE 4"), "a\\div b\\div 4");
+    }
+
+    #[test]
+    fn test_left_right_delimiters() {
+        assert_eq!(to_latex("LEFT ( x RIGHT )"), "\\left(x\\right)");
+    }
+
+    #[test]
+    fn test_bar_is_accent_not_vert() {
+        // HWP "bar" is the overline accent; "vert" is the vertical line.
+        assert_eq!(to_latex("BAR{AB}"), "\\bar{AB}");
+        assert_eq!(to_latex("VERT x VERT"), "|x|");
+    }
+
+    #[test]
+    fn test_font_toggles_dropped_content_kept() {
+        assert_eq!(to_latex("BAR{rm AB}"), "\\bar{AB}");
+    }
+
+    #[test]
+    fn test_backtick_small_space() {
+        assert_eq!(to_latex("A,`B"), "A,\\,B");
+    }
+
+    #[test]
+    fn test_over_after_operator_takes_group_only() {
+        // Regression: "5a-{1} over {2}" must not pull "a-{1}" in as the
+        // numerator — only the standalone brace group before OVER.
+        assert_eq!(to_latex("5a-{1} over {2} b^{2}"), "5a-\\frac{1}{2}b^{2}");
+    }
+
+    #[test]
+    fn test_over_numerator_braces_not_doubled() {
+        // Regression: "{4b} over a" produced \frac{{4b}}{a}
+        assert_eq!(to_latex("{4b} over a"), "\\frac{4b}{a}");
+    }
+
+    #[test]
+    fn test_over_preserves_latex_command_numerator() {
+        assert_eq!(to_latex("SQRT{x} over 2"), "\\frac{\\sqrt{x}}{2}");
+    }
+
+    #[test]
+    fn test_plus_minus_digraphs() {
+        assert_eq!(to_latex("A+-SQRT{B}"), "A\\pm \\sqrt{B}");
+        assert_eq!(to_latex("a-+b"), "a\\mp b");
+        // Plain operators unaffected
+        assert_eq!(to_latex("a+b-c"), "a+b-c");
     }
 }

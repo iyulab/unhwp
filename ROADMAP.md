@@ -34,13 +34,22 @@
 
 ## v0.5 — 품질 & 커버리지 향상 (잔여)
 
-- **HWP5 이미지 추출 완성**: 바이너리 스트림에서 PNG/JPG 실제 추출
-- **HWP 3.x 지원**: `hwp3` 피처 구현 완성 (현재 파서 스텁만 존재)
-- **WASM 이미지 API**: `toImages()` — base64 인코딩된 이미지 배열 반환
+- ~~HWP5 이미지 추출 완성~~ ✅ 완료 확인(2026-07-22 실사: 실문서 38 리소스 BMP/PNG 정상 추출·참조)
+- ~~WASM 이미지 API `toImages()`~~ ✅ 구현 완료(2026-07-22, v0.6.0)
+- **HWP 3.x 지원 실사**: `hwp3` 피처 — README는 지원 표기, 백로그는 스텁 표기로 상충. 3.x 픽스처 확보 후 실사 필요
 - **성능 벤치마크**: criterion 기반 100MB 문서 처리 기준 수립
+
+## v0.6 — 수식 추출 (2026-07-22, U-Platform 실측 이슈 기반)
+
+**완료 (Cycle 34):**
+- **HWP5 수식 추출** ✅: 0x0B "eqed" 인라인 슬롯 + `EqEdit` 레코드 배선 → `to_latex`.
+  silent data loss 해소(파서·렌더러 이중 방어 — 추출 실패 시 `[unhwp:equation-unsupported]` 가시화).
+
+**잔여:**
+- **`to_latex` 키워드 커버리지**: `DIVIDE`, `LEFT`/`RIGHT`, `over` 그루핑, 이중 중괄호 (한컴 수식 스펙 rev 1.3 기준)
 
 ## v0.7+ — 장기 방향
 
 - **Async API**: `tokio` 피처 구현 완성
 - **Python 바인딩**: PyO3 기반 네이티브 패키지
-- **수식(Equation) 변환**: EQEdit → LaTeX/MathML
+- **수식 MathML 출력**

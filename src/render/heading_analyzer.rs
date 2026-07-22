@@ -495,7 +495,7 @@ impl HeadingAnalyzer {
         ];
 
         let first_char = trimmed.chars().next().unwrap();
-        BULLET_MARKERS.contains(&first_char)
+        BULLET_MARKERS.contains(&first_char) || is_enclosed_enumeration(first_char)
     }
 
     /// Check if text looks like a figure/table caption (should not be a heading).
@@ -695,6 +695,21 @@ fn is_korean_sequence_char(c: char) -> bool {
         '가', '나', '다', '라', '마', '바', '사', '아', '자', '차', '카', '타', '파', '하',
     ];
     KOREAN_SEQ.contains(&c)
+}
+
+/// Check if a character is an enclosed enumeration marker (①, ⓵, ⑴, ⒈, ㉠, ㈀, ❶ …).
+///
+/// Lines starting with these are list/choice items (선택지, 항 나열), not
+/// headings — even when the document assigns them an outline style.
+fn is_enclosed_enumeration(c: char) -> bool {
+    matches!(c,
+        // Enclosed Alphanumerics: ①-⑳, ⑴-⒇, ⒈-⒛, ⓐ-ⓩ, Ⓐ-Ⓩ, ⓪, ⓫-⓾
+        '\u{2460}'..='\u{24FF}'
+        // Dingbats negative/sans-serif circled digits: ❶-➓
+        | '\u{2776}'..='\u{2793}'
+        // Enclosed CJK: parenthesized hangul ㈀-㈜, circled hangul ㉠-㉻ 등
+        | '\u{3200}'..='\u{32FF}'
+    )
 }
 
 // ============================================================================
@@ -908,6 +923,26 @@ mod tests {
         let decisions = analyzer.analyze_paragraphs(&paras);
 
         assert_eq!(decisions[0], HeadingDecision::Demoted);
+    }
+
+    #[test]
+    fn test_enclosed_enumeration_never_heading() {
+        // Real-file case: a multiple-choice line "⓹ 해가 없다." carried an
+        // outline style (heading_level 6) and was rendered as a heading.
+        let config = HeadingConfig::default();
+        let analyzer = HeadingAnalyzer::new(config);
+
+        for text in ["⓹ 해가 없다.", "① 첫 번째 항", "㉠ 항목", "❸ 선택지"] {
+            let para = make_paragraph(text, 6);
+            let paras = vec![&para];
+            let decisions = analyzer.analyze_paragraphs(&paras);
+            assert_eq!(
+                decisions[0],
+                HeadingDecision::Demoted,
+                "enumeration line must not be a heading: {}",
+                text
+            );
+        }
     }
 
     #[test]

@@ -798,6 +798,11 @@ impl MarkdownRenderer {
                     } else {
                         output.push_str(&format!("${}$", latex));
                     }
+                } else {
+                    // Equation object whose script could not be extracted.
+                    // Emit a visible placeholder — silent data loss is worse
+                    // than a marker the reader can act on.
+                    output.push_str("[unhwp:equation-unsupported]");
                 }
             }
             InlineContent::Footnote(text) => {
@@ -1918,6 +1923,32 @@ mod table_cell_content_tests {
         assert!(
             result.contains("$x^2$"),
             "Equation in cell should render as LaTeX, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_empty_equation_renders_placeholder() {
+        use crate::model::{Equation, InlineContent};
+
+        // An equation whose script could not be extracted must leave a
+        // visible marker — never disappear silently.
+        let cell = TableCell {
+            content: vec![Paragraph {
+                style: Default::default(),
+                content: vec![InlineContent::Equation(Equation::new(""))],
+            }],
+            rowspan: 1,
+            colspan: 1,
+            ..Default::default()
+        };
+
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        let result = renderer.render_cell_content(&cell);
+
+        assert!(
+            result.contains("[unhwp:equation-unsupported]"),
+            "Empty equation should render a visible placeholder, got: {}",
             result
         );
     }

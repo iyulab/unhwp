@@ -4,7 +4,6 @@
 
 mod bodytext;
 mod container;
-mod control;
 mod docinfo;
 mod header;
 mod record;

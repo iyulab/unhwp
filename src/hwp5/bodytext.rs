@@ -158,6 +158,19 @@ pub fn parse_section(
                 skip_until_idx = table_end;
             }
 
+            TagId::EqEdit => {
+                // Equation script record — fills the slot reserved by the
+                // inline 0x0B "eqed" control in this paragraph's text.
+                if let Some(script) = parse_eqedit_script(record.data()) {
+                    if !paragraph_context.in_paragraph {
+                        // No open paragraph to anchor to (unusual) — start one
+                        // rather than dropping the script.
+                        paragraph_context.start(ParagraphStyle::default());
+                    }
+                    paragraph_context.fill_equation(script);
+                }
+            }
+
             _ => {
                 // Skip other records (CtrlHeader, ShapeComponent, etc.)
             }
@@ -172,6 +185,28 @@ pub fn parse_section(
     }
 
     Ok(section)
+}
+
+/// Extracts the equation script from an EqEdit (HWPTAG_EQ_EDIT) record.
+///
+/// Record layout (HWP 5.0 spec 표 100, cross-checked against pyhwp and
+/// hwp-rs): `UINT32 property`, then a length-prefixed UTF-16LE string
+/// (`UINT16` char count + chars) holding the EQEdit script. Trailing fields
+/// (font size, color, baseline, version, font) are not needed.
+fn parse_eqedit_script(data: &[u8]) -> Option<String> {
+    if data.len() < 6 {
+        return None;
+    }
+
+    let char_count = u16::from_le_bytes([data[4], data[5]]) as usize;
+    let script_bytes = data.get(6..6 + char_count * 2)?;
+
+    let units: Vec<u16> = script_bytes
+        .chunks_exact(2)
+        .map(|b| u16::from_le_bytes([b[0], b[1]]))
+        .collect();
+
+    Some(String::from_utf16_lossy(&units).trim().to_string())
 }
 
 /// Finds the end index of a block (table, cell, etc.)
@@ -409,6 +444,17 @@ fn parse_cell_content(
                 let _ = parse_char_shape_positions(record, &mut para_context, styles);
             }
 
+            TagId::EqEdit => {
+                // Equation inside a table cell — same slot-fill mechanism
+                // as in parse_section.
+                if let Some(script) = parse_eqedit_script(record.data()) {
+                    if !para_context.in_paragraph {
+                        para_context.start(ParagraphStyle::default());
+                    }
+                    para_context.fill_equation(script);
+                }
+            }
+
             _ => {}
         }
     }
@@ -446,6 +492,13 @@ struct ParagraphContext {
     /// Parallel to `content`. TextRun entries have per-character positions;
     /// non-text entries (LineBreak, Image) have empty vecs.
     content_wchar_positions: Vec<Vec<usize>>,
+    /// Indices into `content` of equation slots awaiting their script.
+    ///
+    /// An inline equation control (0x0B "eqed") marks the text position;
+    /// the script arrives later in the EqEdit record. Slots are filled FIFO.
+    /// Unfilled slots keep an empty script, which the renderer surfaces as a
+    /// placeholder — an equation is never silently dropped.
+    pending_equations: std::collections::VecDeque<usize>,
 }
 
 impl ParagraphContext {
@@ -461,6 +514,7 @@ impl ParagraphContext {
             wchar_pos: 0,
             current_text_wchar_positions: Vec::new(),
             content_wchar_positions: Vec::new(),
+            pending_equations: std::collections::VecDeque::new(),
         }
     }
 
@@ -474,6 +528,7 @@ impl ParagraphContext {
         self.wchar_pos = 0;
         self.current_text_wchar_positions.clear();
         self.content_wchar_positions.clear();
+        self.pending_equations.clear();
     }
 
     fn push_char(&mut self, ch: char) {
@@ -491,6 +546,39 @@ impl ParagraphContext {
         self.flush_text();
         self.content
             .push(InlineContent::Image(ImageRef::new(filename)));
+        self.content_wchar_positions.push(Vec::new());
+    }
+
+    /// Reserves an equation slot at the current text position.
+    ///
+    /// The script is not yet known (it arrives in a later EqEdit record);
+    /// an empty-script Equation is pushed and its index queued for
+    /// [`fill_equation`](Self::fill_equation).
+    fn push_equation_slot(&mut self) {
+        self.flush_text();
+        self.pending_equations.push_back(self.content.len());
+        self.content
+            .push(InlineContent::Equation(crate::model::Equation::new("")));
+        self.content_wchar_positions.push(Vec::new());
+    }
+
+    /// Fills the oldest pending equation slot with the extracted script.
+    ///
+    /// If no slot is pending (e.g. the equation is nested inside a GSO
+    /// container whose inline control was consumed elsewhere), the equation
+    /// is appended at the current position instead — the script is never
+    /// discarded.
+    fn fill_equation(&mut self, script: String) {
+        if let Some(idx) = self.pending_equations.pop_front() {
+            if let Some(InlineContent::Equation(eq)) = self.content.get_mut(idx) {
+                eq.script = script;
+                return;
+            }
+        }
+        // Orphan script: no reserved slot — append so it is still extracted.
+        self.flush_text();
+        self.content
+            .push(InlineContent::Equation(crate::model::Equation::new(script)));
         self.content_wchar_positions.push(Vec::new());
     }
 
@@ -697,6 +785,8 @@ fn parse_para_text(
                 // GSO identifier: " osg" = [0x20, 0x6F, 0x73, 0x67] or "gso "
                 let ctrl_type = &data[i..i + 4];
                 let is_gso = ctrl_type == b" osg" || ctrl_type == b"gso ";
+                // Equation identifier: "eqed" (stored byte-reversed as "deqe")
+                let is_equation = ctrl_type == b"deqe" || ctrl_type == b"eqed";
 
                 if is_gso {
                     *picture_counter += 1;
@@ -704,7 +794,11 @@ fn parse_para_text(
                     if let Some(filename) = styles.get_bindata_filename(*picture_counter) {
                         context.push_image(filename);
                     }
-                    // Skip GSO controls without bindata (equations, OLE, etc.)
+                    // Skip GSO controls without bindata (OLE, etc.)
+                } else if is_equation {
+                    // Reserve an inline slot at this text position; the script
+                    // arrives later in the EqEdit record following this paragraph.
+                    context.push_equation_slot();
                 }
 
                 i += 14; // Skip remaining 7 WCHARs
@@ -981,5 +1075,174 @@ mod tests {
         assert_eq!(runs.len(), 1);
         assert_eq!(runs[0].text, "AB");
         assert!(runs[0].style.italic); // position 8+ uses shape 1
+    }
+
+    // === Equation extraction (HWP 5.0) ===
+
+    /// Builds a raw record: 4-byte header (tag | level<<10 | size<<20) + data.
+    fn make_record(tag: u16, level: u16, data: &[u8]) -> Vec<u8> {
+        let header: u32 = (tag as u32) | ((level as u32) << 10) | ((data.len() as u32) << 20);
+        let mut bytes = header.to_le_bytes().to_vec();
+        bytes.extend_from_slice(data);
+        bytes
+    }
+
+    /// UTF-16LE encodes a string.
+    fn utf16_bytes(s: &str) -> Vec<u8> {
+        s.encode_utf16().flat_map(|u| u.to_le_bytes()).collect()
+    }
+
+    /// Builds EqEdit record data: u32 property + BSTR script.
+    fn eqedit_data(script: &str) -> Vec<u8> {
+        let mut data = 0u32.to_le_bytes().to_vec();
+        let units: Vec<u16> = script.encode_utf16().collect();
+        data.extend_from_slice(&(units.len() as u16).to_le_bytes());
+        for u in units {
+            data.extend_from_slice(&u.to_le_bytes());
+        }
+        data
+    }
+
+    /// Builds ParaText data with an inline equation control ("eqed",
+    /// stored byte-reversed as "deqe") between two text fragments.
+    fn para_text_with_equation(before: &str, after: &str) -> Vec<u8> {
+        let mut data = utf16_bytes(before);
+        data.extend_from_slice(&0x000Bu16.to_le_bytes()); // extended control
+        data.extend_from_slice(b"deqe"); // ctrl id (reversed "eqed")
+        data.extend_from_slice(&[0u8; 10]); // instance id + reserved
+        data.extend_from_slice(&utf16_bytes(after));
+        data
+    }
+
+    #[test]
+    fn test_parse_eqedit_script() {
+        let data = eqedit_data("0.3 LEQ x < 0.5");
+        assert_eq!(
+            parse_eqedit_script(&data).as_deref(),
+            Some("0.3 LEQ x < 0.5")
+        );
+
+        // Script is trimmed
+        let data = eqedit_data("  x over y \n");
+        assert_eq!(parse_eqedit_script(&data).as_deref(), Some("x over y"));
+    }
+
+    #[test]
+    fn test_parse_eqedit_script_truncated() {
+        // Too short for header
+        assert_eq!(parse_eqedit_script(&[0u8; 5]), None);
+
+        // Length prefix claims more chars than available
+        let mut data = 0u32.to_le_bytes().to_vec();
+        data.extend_from_slice(&100u16.to_le_bytes());
+        data.extend_from_slice(&utf16_bytes("ab"));
+        assert_eq!(parse_eqedit_script(&data), None);
+    }
+
+    #[test]
+    fn test_section_paragraph_equation_extracted_in_position() {
+        // Scenario from the field report: "열화깊이 ≤ <equation>" where the
+        // equation held the threshold value and was silently dropped.
+        let mut stream = Vec::new();
+        stream.extend(make_record(TagId::ParaHeader as u16, 0, &[0u8; 8]));
+        stream.extend(make_record(
+            TagId::ParaText as u16,
+            1,
+            &para_text_with_equation("열화깊이 ≤ ", ""),
+        ));
+        stream.extend(make_record(TagId::EqEdit as u16, 2, &eqedit_data("0.3")));
+
+        let styles = StyleRegistry::new();
+        let mut picture_counter = 0u32;
+        let section = parse_section(&stream, 0, &styles, &mut picture_counter).unwrap();
+
+        let crate::model::Block::Paragraph(para) = &section.content[0] else {
+            panic!("expected paragraph, got: {:?}", section.content);
+        };
+
+        assert!(
+            matches!(&para.content[0], InlineContent::Text(run) if run.text == "열화깊이 ≤ "),
+            "text before equation should be preserved, got: {:?}",
+            para.content
+        );
+        assert!(
+            matches!(&para.content[1], InlineContent::Equation(eq) if eq.script == "0.3"),
+            "equation script should fill the inline slot, got: {:?}",
+            para.content
+        );
+    }
+
+    #[test]
+    fn test_section_orphan_eqedit_still_extracted() {
+        // EqEdit record without a reserved inline slot (e.g. nested in a GSO
+        // container) — the script must still be appended, never dropped.
+        let mut stream = Vec::new();
+        stream.extend(make_record(TagId::ParaHeader as u16, 0, &[0u8; 8]));
+        stream.extend(make_record(TagId::ParaText as u16, 1, &utf16_bytes("본문")));
+        stream.extend(make_record(
+            TagId::EqEdit as u16,
+            3,
+            &eqedit_data("x over y"),
+        ));
+
+        let styles = StyleRegistry::new();
+        let mut picture_counter = 0u32;
+        let section = parse_section(&stream, 0, &styles, &mut picture_counter).unwrap();
+
+        let crate::model::Block::Paragraph(para) = &section.content[0] else {
+            panic!("expected paragraph, got: {:?}", section.content);
+        };
+
+        assert!(
+            para.content
+                .iter()
+                .any(|c| matches!(c, InlineContent::Equation(eq) if eq.script == "x over y")),
+            "orphan equation script must be extracted, got: {:?}",
+            para.content
+        );
+    }
+
+    #[test]
+    fn test_table_cell_equation_extracted() {
+        // Equation inside a table cell — the exact silent-loss scenario from
+        // the field report (threshold values in grading tables).
+        let mut table_data = Vec::new();
+        table_data.extend_from_slice(b"tbl "); // ctrl id
+        table_data.extend_from_slice(&1u16.to_le_bytes()); // rows
+        table_data.extend_from_slice(&1u16.to_le_bytes()); // cols
+        table_data.extend_from_slice(&[0u8; 6]); // spacing/margins
+
+        let mut list_header = vec![0u8; 16];
+        list_header[12] = 1; // colspan = 1
+        list_header[14] = 1; // rowspan = 1
+
+        let mut stream = Vec::new();
+        stream.extend(make_record(TagId::Table as u16, 0, &table_data));
+        stream.extend(make_record(TagId::ListHeader as u16, 0, &list_header));
+        stream.extend(make_record(TagId::ParaHeader as u16, 1, &[0u8; 8]));
+        stream.extend(make_record(
+            TagId::ParaText as u16,
+            2,
+            &para_text_with_equation("열화깊이 ≤ ", ""),
+        ));
+        stream.extend(make_record(TagId::EqEdit as u16, 3, &eqedit_data("0.3")));
+
+        let styles = StyleRegistry::new();
+        let mut picture_counter = 0u32;
+        let section = parse_section(&stream, 0, &styles, &mut picture_counter).unwrap();
+
+        let crate::model::Block::Table(table) = &section.content[0] else {
+            panic!("expected table, got: {:?}", section.content);
+        };
+
+        let cell_paras = &table.rows[0].cells[0].content;
+        assert!(
+            cell_paras.iter().any(|p| p
+                .content
+                .iter()
+                .any(|c| matches!(c, InlineContent::Equation(eq) if eq.script == "0.3"))),
+            "equation in table cell must be extracted, got: {:?}",
+            cell_paras
+        );
     }
 }
