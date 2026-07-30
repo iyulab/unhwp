@@ -37,7 +37,7 @@ quick-xml = "0.41"
 thiserror = "2.0"
 
 # Shared error-kind numbering + C-ABI plumbing for the un* family
-uncore = "0.1"
+uncore = "0.2"
 
 # JSON serialization
 serde = { version = "1.0", features = ["derive"] }
