@@ -21,6 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sees no change. Existing discriminants are untouched.
 
 ### Fixed
+- **Nested lists were flattened by whitespace normalization.** The final cleanup stage
+  trimmed every line, and in Markdown leading whitespace is the only expression of list
+  nesting — so sub-items came back out at the top level. It also undid the stage that maps
+  HWP's hollow bullet to an *indented* marker: one stage of the pipeline expressed nesting
+  and the next removed it. Leading whitespace is now preserved; only trailing whitespace
+  and runs inside a line are normalized.
+
+  Like the bullet fix below, this affects output only where cleanup is enabled.
+
 - **HWP's own bullet glyphs were deleted instead of converted.** All seven of them live in
   the Private Use Area, and PUA removal ran before the bullet table was consulted — so
   under every shipped cleanup preset (`remove_pua` is set in all three) the glyph was
