@@ -17,8 +17,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// generic failure rather than as an error.
 ///
 /// Values are drawn from the `un*` family's shared numbering
-/// ([`uncore::kind`] docs): `1..=12` mirror [`undoc`](https://docs.rs/undoc)'s
-/// discriminants of the same name (the closest sibling — nine of them are shared),
+/// ([`uncore::kind`] docs): `1..=13` mirror [`undoc`](https://docs.rs/undoc)'s
+/// discriminants of the same name (the closest sibling — ten of them are shared),
 /// and `400..=403` are unhwp's own band. Values `100` and above are reserved for
 /// FFI-boundary reasons that have no core `Error` counterpart (null arguments, caught
 /// panics, output that cannot cross the ABI); see the `UNHWP_ERROR_*` constants in the
@@ -61,6 +61,12 @@ pub enum ErrorKind {
     ResourceNotFound = 11,
     /// [`Error::Encrypted`]
     Encrypted = 12,
+    /// Producing output failed — serialising a rendered result, for instance.
+    ///
+    /// [`Error::kind`] never returns this: no core variant maps to it, because rendering
+    /// happens past the point where a core `Error` is raised. It is reported at the ABI
+    /// boundary. `13` is the number the sibling libraries use for the same reason.
+    Render = 13,
     /// [`Error::Decompression`] — unhwp's own band ([`uncore::kind::library_band`]`(2)`).
     Decompression = 400,
     /// [`Error::OleContainer`] — HWP 5.0's CFB container is unique to this format.
@@ -283,6 +289,7 @@ mod kind_tests {
         StyleNotFound = 10,
         ResourceNotFound = 11,
         Encrypted = 12,
+        Render = 13,
         Decompression = 400,
         OleContainer = 401,
         RecordParse = 402,

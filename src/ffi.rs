@@ -70,11 +70,9 @@ fn ffi_err(e: crate::Error) -> FfiError {
     (e.kind() as c_int, e.to_string())
 }
 
-/// Classify a JSON serialization failure. unhwp has no dedicated rendering-failure
-/// [`ErrorKind`], so this is reported as [`ErrorKind::Other`] — a failure that did not
-/// come from a core `Error` variant.
+/// Classify a JSON serialization failure — producing output is rendering.
 fn json_err(e: serde_json::Error) -> FfiError {
-    (ErrorKind::Other as c_int, e.to_string())
+    (ErrorKind::Render as c_int, e.to_string())
 }
 
 uncore::export_handle! {
@@ -533,6 +531,19 @@ mod tests {
 
         let res_count = unsafe { unhwp_resource_count(ptr::null()) };
         assert_eq!(res_count, -1);
+    }
+
+    /// Serialising a rendered result is rendering, so its failure is a rendering failure
+    /// rather than an unclassified one. Pinned because the value crosses the ABI and
+    /// because `Other` is worth keeping to mean "this failure carries no classification".
+    #[test]
+    fn test_json_serialisation_failure_is_a_render_failure() {
+        assert_eq!(
+            ErrorKind::Render as c_int,
+            13,
+            "the sibling libraries use 13 for the same reason"
+        );
+        assert_ne!(ErrorKind::Render as c_int, ErrorKind::Other as c_int);
     }
 
     /// A null return does not always mean failure: an absent title is not an error.

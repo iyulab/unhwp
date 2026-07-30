@@ -134,6 +134,7 @@ class TestErrorKind:
         assert unhwp.ErrorKind.STYLE_NOT_FOUND == 10
         assert unhwp.ErrorKind.RESOURCE_NOT_FOUND == 11
         assert unhwp.ErrorKind.ENCRYPTED == 12
+        assert unhwp.ErrorKind.RENDER == 13
         assert unhwp.ErrorKind.DECOMPRESSION == 400
         assert unhwp.ErrorKind.OLE_CONTAINER == 401
         assert unhwp.ErrorKind.RECORD_PARSE == 402

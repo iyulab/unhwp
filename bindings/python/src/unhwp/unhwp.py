@@ -38,7 +38,7 @@ _FORMAT_NAMES = {
 class ErrorKind(IntEnum):
     """Why an unhwp call failed, so callers can branch on the reason.
 
-    Values 1-12 and 400-403 mirror the library's own failure reasons; values 100+
+    Values 1-13 and 400-403 mirror the library's own failure reasons; values 100+
     are raised at the interop boundary and have no library-side counterpart. The
     numbers are part of the native ABI (``UnhwpErrorKind`` in ``unhwp.h``): a new
     reason takes the next free number and existing ones are never renumbered, so an
@@ -58,6 +58,7 @@ class ErrorKind(IntEnum):
     STYLE_NOT_FOUND = 10
     RESOURCE_NOT_FOUND = 11
     ENCRYPTED = 12
+    RENDER = 13
     DECOMPRESSION = 400
     OLE_CONTAINER = 401
     RECORD_PARSE = 402

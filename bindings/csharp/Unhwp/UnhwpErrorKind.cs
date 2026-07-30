@@ -5,7 +5,7 @@ namespace Unhwp;
 /// on message text.
 /// </summary>
 /// <remarks>
-/// Values 1–12 and 400–403 mirror the library's own failure reasons; values 100+ are
+/// Values 1–13 and 400–403 mirror the library's own failure reasons; values 100+ are
 /// raised at the interop boundary and have no library-side counterpart. The numbers are
 /// part of the native ABI (<c>UnhwpErrorKind</c> in <c>unhwp.h</c>): a new reason takes
 /// the next free number and existing ones are never renumbered, so treat an unrecognised
@@ -52,6 +52,9 @@ public enum UnhwpErrorKind
 
     /// <summary>The document is encrypted and cannot be processed.</summary>
     Encrypted = 12,
+
+    /// <summary>Producing output failed, such as serialising a rendered result.</summary>
+    Render = 13,
 
     /// <summary>Decompressing a stream inside an HWP 5.0 document failed.</summary>
     Decompression = 400,

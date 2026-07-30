@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`ErrorKind::Render` (13)** — producing output can fail, and until now that was reported
+  as `Other`. `Other` means "this failure carries no classification", which is worth
+  keeping true, and the sibling libraries already use this number for the same reason.
+
+### Changed
+- **A JSON serialisation failure is now reported as `Render` (13) rather than `Other` (1).**
+  Serialising a rendered result is rendering, so it is attributed to rendering. A caller
+  branching on `Other` for this case sees a different number; a caller reading the message
+  sees no change. Existing discriminants are untouched.
+
 ## [0.7.0] - 2026-07-30
 
 ### Added
