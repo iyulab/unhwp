@@ -825,9 +825,9 @@ static RE_MULTIPLE_SPACES: LazyLock<Regex> =
 /// Stage 4: Final normalization
 ///
 /// - Reduce consecutive newlines (2+ -> 1)
-/// - Normalize multiple spaces
+/// - Normalize runs of spaces *inside* a line, preserving leading indentation
 /// - Remove orphan lines
-/// - Trim each line
+/// - Trim trailing whitespace from each line
 /// - Merge consecutive list items (no blank lines between)
 pub fn stage4_final_normalize(input: &str, _options: &CleanupOptions) -> String {
     // Reduce consecutive newlines (2+ -> 1)
@@ -838,17 +838,26 @@ pub fn stage4_final_normalize(input: &str, _options: &CleanupOptions) -> String 
     let mut cleaned_lines: Vec<String> = Vec::with_capacity(lines.len());
 
     for line in lines {
-        // Trim each line
-        let trimmed = line.trim();
+        // Leading whitespace is the only way CommonMark expresses list nesting, so it is
+        // preserved verbatim; only trailing whitespace and runs *inside* the line collapse.
+        let without_trailing = line.trim_end();
+        let content = without_trailing.trim_start();
 
-        // Skip orphan lines (< 3 chars, not markers, not sentence endings)
-        if is_orphan_line(trimmed) {
+        if content.is_empty() {
+            cleaned_lines.push(String::new());
             continue;
         }
 
+        // Skip orphan lines (< 3 chars, not markers, not sentence endings)
+        if is_orphan_line(content) {
+            continue;
+        }
+
+        let indent = &without_trailing[..without_trailing.len() - content.len()];
+
         // Normalize multiple spaces within line (use into_owned to avoid clone when no change)
-        let cleaned = RE_MULTIPLE_SPACES.replace_all(trimmed, " ");
-        cleaned_lines.push(cleaned.into_owned());
+        let cleaned = RE_MULTIPLE_SPACES.replace_all(content, " ");
+        cleaned_lines.push(format!("{indent}{cleaned}"));
     }
 
     let mut result = cleaned_lines.join("\n");
@@ -1259,6 +1268,39 @@ mod tests {
         assert!(!result.contains("\n\n")); // 2+ newlines -> 1
         assert!(result.contains("\n"));
         assert_eq!(result, "첫번째\n두번째");
+    }
+
+    /// Stage 1 maps the hollow bullet to an *indented* list marker to express nesting.
+    /// Stage 4 used to trim that indentation away again, so the two stages of one pipeline
+    /// disagreed. The whole point of the mapping is the indent it produces.
+    #[test]
+    fn test_sub_bullet_indent_survives_full_pipeline() {
+        // The bullet character itself is normalized by the markdown round-trip in stage 3
+        // (`-` becomes `*`); what this test pins is the indentation, not the marker glyph.
+        let input = "\u{F0A3}상위 항목\n\u{F09F}하위 항목";
+        let result = cleanup(input, &CleanupOptions::default());
+        let sub = result
+            .lines()
+            .find(|line| line.contains("하위 항목"))
+            .expect("sub item should survive cleanup");
+        assert!(
+            sub.starts_with("  "),
+            "sub-bullet must stay indented, got {sub:?}"
+        );
+    }
+
+    #[test]
+    fn test_nested_list_indent_preserved() {
+        let input = "- 상위 항목\n  - 하위 항목\n    - 더 하위 항목";
+        let result = stage4_final_normalize(input, &CleanupOptions::default());
+        assert_eq!(result, "- 상위 항목\n  - 하위 항목\n    - 더 하위 항목");
+    }
+
+    #[test]
+    fn test_interior_spaces_collapsed_but_indent_kept() {
+        let input = "  - 하위    항목입니다   ";
+        let result = stage4_final_normalize(input, &CleanupOptions::default());
+        assert_eq!(result, "  - 하위 항목입니다");
     }
 
     #[test]
