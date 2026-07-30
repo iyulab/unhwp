@@ -18,6 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   branching on `Other` for this case sees a different number; a caller reading the message
   sees no change. Existing discriminants are untouched.
 
+### Fixed
+- **HWP's own bullet glyphs were deleted instead of converted.** All seven of them live in
+  the Private Use Area, and PUA removal ran before the bullet table was consulted — so
+  under every shipped cleanup preset (`remove_pua` is set in all three) the glyph was
+  discarded and the list item lost its marker entirely. The table is now consulted first:
+  a PUA codepoint it names is a glyph whose meaning is known, and stripping PUA is the
+  fallback for the ones that carry none. Unmapped PUA is still removed.
+
+  This affects output only where cleanup is enabled (`RenderOptions.cleanup`, or the CLI's
+  `--cleanup`); it is not applied by default.
+
 ## [0.7.0] - 2026-07-30
 
 ### Added

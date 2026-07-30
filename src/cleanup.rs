@@ -156,14 +156,16 @@ pub fn stage1_normalize_string(input: &str, options: &CleanupOptions) -> String 
             continue;
         }
 
-        // Check PUA characters
-        if options.remove_pua && is_pua_char(c) {
+        // Map bullet characters. This precedes PUA removal on purpose: HWP's own bullets
+        // live in the Private Use Area, so a codepoint this table names is a glyph whose
+        // meaning is known. Removing PUA is the fallback for the ones that carry none.
+        if let Some(replacement) = get_bullet_replacement(c) {
+            result.push_str(replacement);
             continue;
         }
 
-        // Map bullet characters
-        if let Some(replacement) = get_bullet_replacement(c) {
-            result.push_str(replacement);
+        // Check PUA characters
+        if options.remove_pua && is_pua_char(c) {
             continue;
         }
 
@@ -1439,5 +1441,45 @@ mod tests {
             "Full pipeline should not escape table pipes: {}",
             result
         );
+    }
+
+    /// A PUA codepoint the bullet table names is a glyph whose meaning is known, so it is
+    /// translated rather than discarded. Stripping unassigned PUA noise is a *fallback*,
+    /// and a fallback that runs first would consume every mapping in this range — which is
+    /// where every HWP bullet lives.
+    #[test]
+    fn test_hwp_pua_bullets_survive_pua_removal() {
+        let options = CleanupOptions::default();
+        assert!(
+            options.remove_pua,
+            "the default strips PUA — that is the configuration these mappings must work under"
+        );
+
+        for (glyph, expected) in [
+            ('\u{F0A3}', "- "),
+            ('\u{F09F}', "  - "),
+            ('\u{F09E}', "- "),
+            ('\u{F020}', "- "),
+            ('\u{F076}', "- "),
+            ('\u{F0FC}', "- [x] "),
+            ('\u{F0A8}', "- "),
+        ] {
+            let result = stage1_normalize_string(&format!("{glyph}item"), &options);
+            assert_eq!(
+                result,
+                format!("{expected}item"),
+                "U+{:04X} is a mapped bullet, not PUA noise",
+                glyph as u32
+            );
+        }
+    }
+
+    /// The counterpart: an unmapped PUA codepoint is still noise and is still removed.
+    /// Without this, "fix the bullets" could be read as "stop removing PUA".
+    #[test]
+    fn test_unmapped_pua_is_still_removed() {
+        let options = CleanupOptions::default();
+        let result = stage1_normalize_string("a\u{E000}b", &options);
+        assert_eq!(result, "ab", "an unmapped PUA codepoint carries no meaning");
     }
 }
