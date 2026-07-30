@@ -63,7 +63,7 @@ pub use cleanup::{cleanup, CleanupOptions};
 #[cfg(not(target_arch = "wasm32"))]
 pub use detect::detect_format_from_path;
 pub use detect::{detect_format, detect_format_from_bytes, FormatType};
-pub use error::{Error, Result};
+pub use error::{Error, ErrorKind, Result};
 pub use model::Document;
 pub use parse_options::{ErrorMode, ExtractMode, ParseOptions};
 pub use render::{RenderOptions, SectionMarkerStyle, TableFallback};

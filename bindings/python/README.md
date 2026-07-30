@@ -31,6 +31,35 @@ with unhwp.parse("document.hwp") as result:
         img.save(f"output/{img.name}")
 ```
 
+## Handling Failures
+
+`UnhwpError.kind` says *why* a call failed, so you can react to the reason instead of
+matching on message text:
+
+```python
+from unhwp import ErrorKind, ParseError
+
+try:
+    with unhwp.parse(path) as result:
+        print(result.markdown)
+except ParseError as err:
+    if err.kind in (ErrorKind.OLE_CONTAINER, ErrorKind.ZIP_ARCHIVE):
+        print("The file is damaged.")
+    elif err.kind in (ErrorKind.UNKNOWN_FORMAT, ErrorKind.UNSUPPORTED_FORMAT):
+        print("Not a supported HWP/HWPX document.")
+    elif err.kind in (ErrorKind.ENCRYPTED, ErrorKind.DISTRIBUTION_RESTRICTED):
+        print("The document cannot be opened without authorization.")
+    else:
+        # Also the right branch for a reason this build has no name for.
+        print(f"Extraction failed ({err.kind}): {err}")
+```
+
+The numbers behind `ErrorKind` are a stable ABI contract: a new reason takes the next free
+number and existing ones are never renumbered. Always keep a final `else` — an
+unrecognised value arrives as a plain `int` rather than an `ErrorKind`, so that a newer
+native library stays usable. `kind` is `ErrorKind.OTHER` for failures raised by the wrapper
+itself, and never `ErrorKind.NONE` (which means success).
+
 ## Features
 
 - **Fast**: Native Rust library with zero-copy parsing

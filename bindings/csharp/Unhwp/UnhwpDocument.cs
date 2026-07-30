@@ -10,7 +10,45 @@ namespace Unhwp;
 /// </summary>
 public class UnhwpException : Exception
 {
-    public UnhwpException(string message) : base(message) { }
+    /// <summary>
+    /// Why the call failed — lets a caller branch on the reason (report a damaged file
+    /// on <see cref="UnhwpErrorKind.OleContainer"/>, an unsupported input on
+    /// <see cref="UnhwpErrorKind.UnsupportedFormat"/>) without matching on
+    /// <see cref="Exception.Message"/>.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="UnhwpErrorKind.Other"/> when the failure did not come from the native
+    /// library and so carries no classification. Never
+    /// <see cref="UnhwpErrorKind.None"/>, which means success — a thrown exception is
+    /// not a success.
+    /// </remarks>
+    public UnhwpErrorKind Kind { get; }
+
+    /// <summary>
+    /// Initialize an unhwp exception with a native or wrapper error message.
+    /// </summary>
+    /// <param name="message">The error message.</param>
+    public UnhwpException(string message) : this(message, UnhwpErrorKind.Other) { }
+
+    /// <summary>
+    /// Initialize an unhwp exception with a message and the reason the call failed.
+    /// </summary>
+    /// <param name="message">The error message.</param>
+    /// <param name="kind">Why the call failed.</param>
+    public UnhwpException(string message, UnhwpErrorKind kind) : base(message)
+    {
+        Kind = kind;
+    }
+
+    /// <summary>
+    /// Initialize an unhwp exception with a message and an inner exception.
+    /// </summary>
+    /// <param name="message">The error message.</param>
+    /// <param name="innerException">The underlying exception.</param>
+    public UnhwpException(string message, Exception innerException) : base(message, innerException)
+    {
+        Kind = UnhwpErrorKind.Other;
+    }
 }
 
 /// <summary>
@@ -68,7 +106,7 @@ public class UnhwpDocument : IDisposable
         get
         {
             var ptr = NativeMethods.unhwp_version();
-            return Marshal.PtrToStringAnsi(ptr) ?? "unknown";
+            return ptr == IntPtr.Zero ? "unknown" : PtrToStringUtf8(ptr);
         }
     }
 
@@ -86,7 +124,7 @@ public class UnhwpDocument : IDisposable
 
         var handle = NativeMethods.unhwp_parse_file(path);
         if (handle == IntPtr.Zero)
-            throw new UnhwpException($"Failed to parse {path}: {GetLastError()}");
+            throw NativeFailure($"Failed to parse {path}");
 
         return new UnhwpDocument(handle);
     }
@@ -105,7 +143,7 @@ public class UnhwpDocument : IDisposable
             Marshal.Copy(data, 0, dataPtr, data.Length);
             var handle = NativeMethods.unhwp_parse_bytes(dataPtr, (UIntPtr)data.Length);
             if (handle == IntPtr.Zero)
-                throw new UnhwpException($"Failed to parse bytes: {GetLastError()}");
+                throw NativeFailure("Failed to parse bytes");
 
             return new UnhwpDocument(handle);
         }
@@ -126,7 +164,7 @@ public class UnhwpDocument : IDisposable
         int flags = options?.ToFlags() ?? 0;
         var ptr = NativeMethods.unhwp_to_markdown(_handle, flags);
         if (ptr == IntPtr.Zero)
-            throw new UnhwpException($"Failed to convert to markdown: {GetLastError()}");
+            throw NativeFailure("Failed to convert to markdown");
 
         try
         {
@@ -147,7 +185,7 @@ public class UnhwpDocument : IDisposable
         ThrowIfDisposed();
         var ptr = NativeMethods.unhwp_to_text(_handle);
         if (ptr == IntPtr.Zero)
-            throw new UnhwpException($"Failed to convert to text: {GetLastError()}");
+            throw NativeFailure("Failed to convert to text");
 
         try
         {
@@ -170,7 +208,7 @@ public class UnhwpDocument : IDisposable
         int format = compact ? NativeMethods.UNHWP_JSON_COMPACT : NativeMethods.UNHWP_JSON_PRETTY;
         var ptr = NativeMethods.unhwp_to_json(_handle, format);
         if (ptr == IntPtr.Zero)
-            throw new UnhwpException($"Failed to convert to JSON: {GetLastError()}");
+            throw NativeFailure("Failed to convert to JSON");
 
         try
         {
@@ -191,7 +229,7 @@ public class UnhwpDocument : IDisposable
         ThrowIfDisposed();
         var ptr = NativeMethods.unhwp_plain_text(_handle);
         if (ptr == IntPtr.Zero)
-            throw new UnhwpException($"Failed to get plain text: {GetLastError()}");
+            throw NativeFailure("Failed to get plain text");
 
         try
         {
@@ -213,7 +251,7 @@ public class UnhwpDocument : IDisposable
             ThrowIfDisposed();
             var count = NativeMethods.unhwp_section_count(_handle);
             if (count < 0)
-                throw new UnhwpException($"Failed to get section count: {GetLastError()}");
+                throw NativeFailure("Failed to get section count");
             return count;
         }
     }
@@ -228,7 +266,7 @@ public class UnhwpDocument : IDisposable
             ThrowIfDisposed();
             var count = NativeMethods.unhwp_resource_count(_handle);
             if (count < 0)
-                throw new UnhwpException($"Failed to get resource count: {GetLastError()}");
+                throw NativeFailure("Failed to get resource count");
             return count;
         }
     }
@@ -353,8 +391,34 @@ public class UnhwpDocument : IDisposable
         var ptr = NativeMethods.unhwp_last_error();
         if (ptr == IntPtr.Zero)
             return "Unknown error";
-        return Marshal.PtrToStringAnsi(ptr) ?? "Unknown error";
+        return PtrToStringUtf8(ptr);
     }
+
+    /// <summary>
+    /// Read the native classification of the last failure.
+    /// </summary>
+    /// <remarks>
+    /// An unrecognised number is passed through unchanged rather than folded into
+    /// <see cref="UnhwpErrorKind.Other"/>, so a newer native library stays usable and
+    /// the raw value survives in logs. Zero is the one value that cannot stand: we are
+    /// building a failure, and zero means success.
+    /// </remarks>
+    private static UnhwpErrorKind GetLastErrorKind()
+    {
+        var kind = NativeMethods.unhwp_last_error_kind();
+        return kind == (int)UnhwpErrorKind.None ? UnhwpErrorKind.Other : (UnhwpErrorKind)kind;
+    }
+
+    /// <summary>
+    /// Build the exception for a failed native call, carrying both its message and its
+    /// classification.
+    /// </summary>
+    /// <remarks>
+    /// Every native failure goes through here so that no throw site can quietly drop
+    /// the classification and leave the caller with <see cref="UnhwpErrorKind.Other"/>.
+    /// </remarks>
+    private static UnhwpException NativeFailure(string operation) =>
+        new UnhwpException($"{operation}: {GetLastError()}", GetLastErrorKind());
 
     private static string PtrToStringUtf8(IntPtr ptr)
     {

@@ -100,6 +100,72 @@ class TestConstants:
         assert len(formats) == len(set(formats))
 
 
+class TestErrorKind:
+    """Test the failure classification carried by unhwp exceptions."""
+
+    def test_message_only_exception_is_other_not_none(self):
+        """An exception built without a kind did not come from the native
+        library, so it must default to OTHER — never NONE, which means
+        success."""
+        err = unhwp.UnhwpError("wrapper-side failure")
+        assert err.kind == unhwp.ErrorKind.OTHER
+        assert err.kind != unhwp.ErrorKind.NONE
+
+    def test_unknown_kind_value_passes_through_and_keeps_its_number(self):
+        """Forward compatibility: a newer native library may report a reason
+        this build has no name for. The number has to survive rather than
+        raise or collapse."""
+        err = unhwp.ParseError("from the future", 9999)
+        assert int(err.kind) == 9999
+
+    def test_discriminants_match_the_native_abi(self):
+        """The Python numbering is only useful if it agrees with the native
+        ABI, so pin it here too — these values are what cross the boundary."""
+        assert unhwp.ErrorKind.NONE == 0
+        assert unhwp.ErrorKind.OTHER == 1
+        assert unhwp.ErrorKind.IO == 2
+        assert unhwp.ErrorKind.UNKNOWN_FORMAT == 3
+        assert unhwp.ErrorKind.UNSUPPORTED_FORMAT == 4
+        assert unhwp.ErrorKind.ZIP_ARCHIVE == 5
+        assert unhwp.ErrorKind.XML_PARSE == 6
+        assert unhwp.ErrorKind.INVALID_DATA == 7
+        assert unhwp.ErrorKind.MISSING_COMPONENT == 8
+        assert unhwp.ErrorKind.ENCODING == 9
+        assert unhwp.ErrorKind.STYLE_NOT_FOUND == 10
+        assert unhwp.ErrorKind.RESOURCE_NOT_FOUND == 11
+        assert unhwp.ErrorKind.ENCRYPTED == 12
+        assert unhwp.ErrorKind.DECOMPRESSION == 400
+        assert unhwp.ErrorKind.OLE_CONTAINER == 401
+        assert unhwp.ErrorKind.RECORD_PARSE == 402
+        assert unhwp.ErrorKind.DISTRIBUTION_RESTRICTED == 403
+        assert unhwp.ErrorKind.INVALID_ARGUMENT == 100
+        assert unhwp.ErrorKind.PANIC == 101
+        assert unhwp.ErrorKind.INVALID_OUTPUT == 102
+
+
+class TestNativeErrorKind:
+    """End to end: a native failure must be recognisable from the exception
+    without reading its message."""
+
+    def test_parse_bytes_not_a_document_reports_unknown_format(self):
+        with pytest.raises(unhwp.ParseError) as excinfo:
+            unhwp.parse_bytes(b"not an hwp document at all")
+
+        assert excinfo.value.kind == unhwp.ErrorKind.UNKNOWN_FORMAT
+
+    def test_successful_call_leaves_no_recorded_kind(self, tmp_path):
+        test_files_dir = Path(__file__).parent.parent.parent.parent / "test-files"
+        sample = test_files_dir / "Sample.hwp"
+        if not sample.exists():
+            pytest.skip("Test file not available")
+
+        with unhwp.parse(str(sample)) as result:
+            _ = result.markdown
+
+        from unhwp import _native as native
+        assert native.lib.unhwp_last_error_kind() == unhwp.ErrorKind.NONE
+
+
 @pytest.mark.integration
 class TestIntegration:
     """Integration tests requiring actual HWP files."""

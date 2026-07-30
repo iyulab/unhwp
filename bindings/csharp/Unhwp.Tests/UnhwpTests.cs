@@ -73,6 +73,80 @@ public class ExceptionTests
         var ex = new UnhwpException("test error");
         Assert.Equal("test error", ex.Message);
     }
+
+    /// <summary>
+    /// A message-only exception did not come from the native library, so it carries no
+    /// classification — but it must not read as success either.
+    /// </summary>
+    [Fact]
+    public void MessageOnlyException_IsOther_NotNone()
+    {
+        var ex = new UnhwpException("wrapper-side failure");
+
+        Assert.Equal(UnhwpErrorKind.Other, ex.Kind);
+        Assert.NotEqual(UnhwpErrorKind.None, ex.Kind);
+    }
+
+    [Fact]
+    public void InnerExceptionConstructor_IsOther()
+    {
+        var ex = new UnhwpException("wrapped", new InvalidOperationException("inner"));
+
+        Assert.Equal(UnhwpErrorKind.Other, ex.Kind);
+    }
+
+    [Fact]
+    public void KindConstructor_StoresKind()
+    {
+        var ex = new UnhwpException("archive damaged", UnhwpErrorKind.OleContainer);
+
+        Assert.Equal(UnhwpErrorKind.OleContainer, ex.Kind);
+    }
+
+    /// <summary>
+    /// Forward compatibility: a newer native library may report a reason this build has
+    /// no name for. The number has to survive rather than throw or collapse.
+    /// </summary>
+    [Fact]
+    public void UnknownKindValue_PassesThroughAndKeepsItsNumber()
+    {
+        var ex = new UnhwpException("from the future", (UnhwpErrorKind)9999);
+
+        Assert.Equal(9999, (int)ex.Kind);
+        Assert.Equal("9999", ex.Kind.ToString());
+    }
+}
+
+/// <summary>
+/// The C# numbering is only useful if it agrees with the native ABI, so pin it here
+/// too — these values are what cross the boundary.
+/// </summary>
+public class ErrorKindTests
+{
+    [Fact]
+    public void Discriminants_MatchTheNativeAbi()
+    {
+        Assert.Equal(0, (int)UnhwpErrorKind.None);
+        Assert.Equal(1, (int)UnhwpErrorKind.Other);
+        Assert.Equal(2, (int)UnhwpErrorKind.Io);
+        Assert.Equal(3, (int)UnhwpErrorKind.UnknownFormat);
+        Assert.Equal(4, (int)UnhwpErrorKind.UnsupportedFormat);
+        Assert.Equal(5, (int)UnhwpErrorKind.ZipArchive);
+        Assert.Equal(6, (int)UnhwpErrorKind.XmlParse);
+        Assert.Equal(7, (int)UnhwpErrorKind.InvalidData);
+        Assert.Equal(8, (int)UnhwpErrorKind.MissingComponent);
+        Assert.Equal(9, (int)UnhwpErrorKind.Encoding);
+        Assert.Equal(10, (int)UnhwpErrorKind.StyleNotFound);
+        Assert.Equal(11, (int)UnhwpErrorKind.ResourceNotFound);
+        Assert.Equal(12, (int)UnhwpErrorKind.Encrypted);
+        Assert.Equal(400, (int)UnhwpErrorKind.Decompression);
+        Assert.Equal(401, (int)UnhwpErrorKind.OleContainer);
+        Assert.Equal(402, (int)UnhwpErrorKind.RecordParse);
+        Assert.Equal(403, (int)UnhwpErrorKind.DistributionRestricted);
+        Assert.Equal(100, (int)UnhwpErrorKind.InvalidArgument);
+        Assert.Equal(101, (int)UnhwpErrorKind.Panic);
+        Assert.Equal(102, (int)UnhwpErrorKind.InvalidOutput);
+    }
 }
 
 /// <summary>

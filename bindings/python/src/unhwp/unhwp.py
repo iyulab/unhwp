@@ -7,6 +7,7 @@ Provides a Pythonic interface to the unhwp native library.
 import ctypes
 import json
 from dataclasses import dataclass
+from enum import IntEnum
 from pathlib import Path
 from typing import List, Optional, Union, Iterator
 
@@ -34,9 +35,58 @@ _FORMAT_NAMES = {
 # Exceptions
 # =============================================================================
 
+class ErrorKind(IntEnum):
+    """Why an unhwp call failed, so callers can branch on the reason.
+
+    Values 1-12 and 400-403 mirror the library's own failure reasons; values 100+
+    are raised at the interop boundary and have no library-side counterpart. The
+    numbers are part of the native ABI (``UnhwpErrorKind`` in ``unhwp.h``): a new
+    reason takes the next free number and existing ones are never renumbered, so an
+    unrecognised value is kept as a plain :class:`int` rather than rejected.
+    """
+
+    NONE = 0
+    OTHER = 1
+    IO = 2
+    UNKNOWN_FORMAT = 3
+    UNSUPPORTED_FORMAT = 4
+    ZIP_ARCHIVE = 5
+    XML_PARSE = 6
+    INVALID_DATA = 7
+    MISSING_COMPONENT = 8
+    ENCODING = 9
+    STYLE_NOT_FOUND = 10
+    RESOURCE_NOT_FOUND = 11
+    ENCRYPTED = 12
+    DECOMPRESSION = 400
+    OLE_CONTAINER = 401
+    RECORD_PARSE = 402
+    DISTRIBUTION_RESTRICTED = 403
+    INVALID_ARGUMENT = 100
+    PANIC = 101
+    INVALID_OUTPUT = 102
+
+
 class UnhwpError(Exception):
-    """Base exception for unhwp errors."""
-    pass
+    """Base exception for unhwp errors.
+
+    Attributes:
+        kind: An :class:`ErrorKind`, or the raw integer if the native library
+            reported a reason this build does not know about. Never
+            :attr:`ErrorKind.NONE`, which means success. Defaults to
+            :attr:`ErrorKind.OTHER` for failures that did not come from the native
+            library.
+    """
+
+    def __init__(self, message: str, kind: int = ErrorKind.OTHER) -> None:
+        super().__init__(message)
+        try:
+            self.kind: int = ErrorKind(kind)
+        except ValueError:
+            # Forward compatibility: a newer native library may report a number
+            # this build has no name for. Keep it rather than losing the
+            # classification.
+            self.kind = kind
 
 
 class FileNotFoundError(UnhwpError):
@@ -65,6 +115,26 @@ def _get_last_error() -> str:
     if err:
         return err.decode("utf-8")
     return "Unknown error"
+
+
+def _get_last_error_kind() -> int:
+    """Get the classification of the last error from the native library.
+
+    An unrecognised number passes through unchanged so a newer native library
+    stays usable. Zero is the one value that cannot stand: it means success, and
+    we only ask while building a failure.
+    """
+    kind = native.lib.unhwp_last_error_kind()
+    return ErrorKind.OTHER if kind == ErrorKind.NONE else kind
+
+
+def _native_failure(exc_type, action: str) -> UnhwpError:
+    """Build the exception for a failed native call, with message + classification.
+
+    Every native failure goes through here so no raise site can quietly drop the
+    classification and leave the caller with ``OTHER``.
+    """
+    return exc_type(f"{action}: {_get_last_error()}", _get_last_error_kind())
 
 
 def _ptr_to_string(ptr: Optional[int]) -> Optional[str]:
@@ -189,7 +259,7 @@ class ParseResult:
         self._ensure_open()
         ptr = native.lib.unhwp_to_markdown(self._handle, self._flags)
         if not ptr:
-            raise RenderError(f"Failed to convert to markdown: {_get_last_error()}")
+            raise _native_failure(RenderError, "Failed to convert to markdown")
         try:
             return _ptr_to_string(ptr) or ""
         finally:
@@ -201,7 +271,7 @@ class ParseResult:
         self._ensure_open()
         ptr = native.lib.unhwp_to_text(self._handle)
         if not ptr:
-            raise RenderError(f"Failed to convert to text: {_get_last_error()}")
+            raise _native_failure(RenderError, "Failed to convert to text")
         try:
             return _ptr_to_string(ptr) or ""
         finally:
@@ -213,7 +283,7 @@ class ParseResult:
         self._ensure_open()
         ptr = native.lib.unhwp_plain_text(self._handle)
         if not ptr:
-            raise RenderError(f"Failed to get plain text: {_get_last_error()}")
+            raise _native_failure(RenderError, "Failed to get plain text")
         try:
             return _ptr_to_string(ptr) or ""
         finally:
@@ -225,7 +295,7 @@ class ParseResult:
         self._ensure_open()
         ptr = native.lib.unhwp_to_json(self._handle, native.UNHWP_JSON_PRETTY)
         if not ptr:
-            raise RenderError(f"Failed to convert to JSON: {_get_last_error()}")
+            raise _native_failure(RenderError, "Failed to convert to JSON")
         try:
             return _ptr_to_string(ptr) or ""
         finally:
@@ -237,7 +307,7 @@ class ParseResult:
         self._ensure_open()
         count = native.lib.unhwp_section_count(self._handle)
         if count < 0:
-            raise UnhwpError(f"Failed to get section count: {_get_last_error()}")
+            raise _native_failure(UnhwpError, "Failed to get section count")
         return count
 
     @property
@@ -264,7 +334,7 @@ class ParseResult:
         self._ensure_open()
         count = native.lib.unhwp_resource_count(self._handle)
         if count < 0:
-            raise UnhwpError(f"Failed to get resource count: {_get_last_error()}")
+            raise _native_failure(UnhwpError, "Failed to get resource count")
         return count
 
     @property
@@ -427,7 +497,7 @@ def parse(
 
     handle = native.lib.unhwp_parse_file(path_bytes)
     if not handle:
-        raise ParseError(f"Failed to parse {path}: {_get_last_error()}")
+        raise _native_failure(ParseError, f"Failed to parse {path}")
 
     return ParseResult(handle, flags)
 
@@ -457,7 +527,7 @@ def parse_bytes(
 
     handle = native.lib.unhwp_parse_bytes(data_ptr, len(data))
     if not handle:
-        raise ParseError(f"Failed to parse bytes: {_get_last_error()}")
+        raise _native_failure(ParseError, "Failed to parse bytes")
 
     return ParseResult(handle, flags)
 

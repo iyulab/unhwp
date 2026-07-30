@@ -32,6 +32,14 @@ from .unhwp import (
     RenderOptions,
     CleanupOptions,
 
+    # Errors
+    ErrorKind,
+    UnhwpError,
+    FileNotFoundError,
+    ParseError,
+    RenderError,
+    UnsupportedFormatError,
+
     # Constants
     FORMAT_UNKNOWN,
     FORMAT_HWP5,
@@ -43,7 +51,7 @@ from .unhwp import (
     supported_formats,
 )
 
-__version__ = "0.1.10"
+__version__ = "0.7.0"
 __all__ = [
     # Functions
     "parse",
@@ -59,6 +67,13 @@ __all__ = [
     "Image",
     "RenderOptions",
     "CleanupOptions",
+    # Errors
+    "ErrorKind",
+    "UnhwpError",
+    "FileNotFoundError",
+    "ParseError",
+    "RenderError",
+    "UnsupportedFormatError",
     # Constants
     "FORMAT_UNKNOWN",
     "FORMAT_HWP5",

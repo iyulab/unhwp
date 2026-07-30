@@ -38,31 +38,48 @@
 //! }
 //! ```
 
-use std::cell::RefCell;
 use std::ffi::{c_char, c_int, CStr, CString};
-use std::panic::catch_unwind;
 use std::ptr;
 
+use uncore::ffi::{self, invalid_argument, FfiError, LastErrorSlot};
+
+use crate::error::ErrorKind;
 use crate::model::Document;
 use crate::render::RenderOptions;
 
-// Thread-local storage for the last error message.
+// Thread-local storage for the last error message and its classification. Declared
+// here rather than in `uncore` — see that crate's `ffi` module docs for why the slot
+// must live in the consuming crate.
 thread_local! {
-    static LAST_ERROR: RefCell<Option<CString>> = const { RefCell::new(None) };
+    static LAST_ERROR: LastErrorSlot = const { LastErrorSlot::new() };
 }
 
-/// Set the last error message.
-fn set_last_error(msg: &str) {
-    LAST_ERROR.with(|e| {
-        *e.borrow_mut() = CString::new(msg).ok();
-    });
+uncore::export_last_error_abi!(LAST_ERROR, unhwp_last_error, unhwp_last_error_kind);
+
+/// `unhwp_last_error_kind` value when no error is recorded on this thread.
+pub const UNHWP_ERROR_NONE: c_int = uncore::kind::NONE;
+/// An argument was null or not valid UTF-8.
+pub const UNHWP_ERROR_INVALID_ARGUMENT: c_int = uncore::kind::INVALID_ARGUMENT;
+/// A panic was caught at the FFI boundary.
+pub const UNHWP_ERROR_PANIC: c_int = uncore::kind::PANIC;
+/// The produced output contains an interior NUL byte and cannot cross the C ABI.
+pub const UNHWP_ERROR_INVALID_OUTPUT: c_int = uncore::kind::INVALID_OUTPUT;
+
+/// Classify a core error and render its message, for return from a closure.
+fn ffi_err(e: crate::Error) -> FfiError {
+    (e.kind() as c_int, e.to_string())
 }
 
-/// Clear the last error message.
-fn clear_last_error() {
-    LAST_ERROR.with(|e| {
-        *e.borrow_mut() = None;
-    });
+/// Classify a JSON serialization failure. unhwp has no dedicated rendering-failure
+/// [`ErrorKind`], so this is reported as [`ErrorKind::Other`] — a failure that did not
+/// come from a core `Error` variant.
+fn json_err(e: serde_json::Error) -> FfiError {
+    (ErrorKind::Other as c_int, e.to_string())
+}
+
+/// Classify a non-UTF-8 string argument received across the ABI.
+fn utf8_err(e: std::str::Utf8Error) -> FfiError {
+    invalid_argument(e.to_string())
 }
 
 /// Opaque handle to a parsed document.
@@ -90,22 +107,6 @@ pub extern "C" fn unhwp_version() -> *const c_char {
     concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr() as *const c_char
 }
 
-/// Get the last error message.
-///
-/// # Safety
-///
-/// Returns a pointer to a thread-local error string. The pointer is valid until
-/// the next call to any unhwp function on the same thread.
-#[no_mangle]
-pub extern "C" fn unhwp_last_error() -> *const c_char {
-    LAST_ERROR.with(|e| {
-        e.borrow()
-            .as_ref()
-            .map(|s| s.as_ptr())
-            .unwrap_or(ptr::null())
-    })
-}
-
 /// Parse a document from a file path.
 ///
 /// # Safety
@@ -115,29 +116,25 @@ pub extern "C" fn unhwp_last_error() -> *const c_char {
 /// - The returned handle must be freed with `unhwp_free_document`.
 #[no_mangle]
 pub unsafe extern "C" fn unhwp_parse_file(path: *const c_char) -> *mut UnhwpDocument {
-    clear_last_error();
+    LAST_ERROR.with(|slot| slot.clear());
 
     if path.is_null() {
-        set_last_error("path is null");
+        LAST_ERROR.with(|slot| slot.set_error(&invalid_argument("path is null")));
         return ptr::null_mut();
     }
 
-    let result = catch_unwind(|| {
-        let path_str = CStr::from_ptr(path).to_str().map_err(|e| e.to_string())?;
+    let result: Result<*mut UnhwpDocument, FfiError> = ffi::catch(|| {
+        let path_str = CStr::from_ptr(path).to_str().map_err(utf8_err)?;
 
         crate::parse_file(path_str)
             .map(|doc| Box::into_raw(Box::new(UnhwpDocument { inner: doc })))
-            .map_err(|e| e.to_string())
+            .map_err(ffi_err)
     });
 
     match result {
-        Ok(Ok(doc)) => doc,
-        Ok(Err(e)) => {
-            set_last_error(&e);
-            ptr::null_mut()
-        }
-        Err(_) => {
-            set_last_error("panic occurred during parsing");
+        Ok(doc) => doc,
+        Err(error) => {
+            LAST_ERROR.with(|slot| slot.set_error(&error));
             ptr::null_mut()
         }
     }
@@ -152,29 +149,25 @@ pub unsafe extern "C" fn unhwp_parse_file(path: *const c_char) -> *mut UnhwpDocu
 /// - The returned handle must be freed with `unhwp_free_document`.
 #[no_mangle]
 pub unsafe extern "C" fn unhwp_parse_bytes(data: *const u8, len: usize) -> *mut UnhwpDocument {
-    clear_last_error();
+    LAST_ERROR.with(|slot| slot.clear());
 
     if data.is_null() {
-        set_last_error("data is null");
+        LAST_ERROR.with(|slot| slot.set_error(&invalid_argument("data is null")));
         return ptr::null_mut();
     }
 
-    let result = catch_unwind(|| {
+    let result: Result<*mut UnhwpDocument, FfiError> = ffi::catch(|| {
         let bytes = std::slice::from_raw_parts(data, len);
 
         crate::parse_bytes(bytes)
             .map(|doc| Box::into_raw(Box::new(UnhwpDocument { inner: doc })))
-            .map_err(|e| e.to_string())
+            .map_err(ffi_err)
     });
 
     match result {
-        Ok(Ok(doc)) => doc,
-        Ok(Err(e)) => {
-            set_last_error(&e);
-            ptr::null_mut()
-        }
-        Err(_) => {
-            set_last_error("panic occurred during parsing");
+        Ok(doc) => doc,
+        Err(error) => {
+            LAST_ERROR.with(|slot| slot.set_error(&error));
             ptr::null_mut()
         }
     }
@@ -203,14 +196,14 @@ pub unsafe extern "C" fn unhwp_free_document(doc: *mut UnhwpDocument) {
 /// - The returned string must be freed with `unhwp_free_string`.
 #[no_mangle]
 pub unsafe extern "C" fn unhwp_to_markdown(doc: *const UnhwpDocument, flags: u32) -> *mut c_char {
-    clear_last_error();
+    LAST_ERROR.with(|slot| slot.clear());
 
     if doc.is_null() {
-        set_last_error("document is null");
+        LAST_ERROR.with(|slot| slot.set_error(&invalid_argument("document is null")));
         return ptr::null_mut();
     }
 
-    let result = catch_unwind(|| {
+    let result: Result<String, FfiError> = ffi::catch(|| {
         let document = &(*doc).inner;
 
         let mut options = RenderOptions::default();
@@ -225,23 +218,19 @@ pub unsafe extern "C" fn unhwp_to_markdown(doc: *const UnhwpDocument, flags: u32
             options.preserve_line_breaks = true;
         }
 
-        crate::render::render_markdown(document, &options).map_err(|e| e.to_string())
+        crate::render::render_markdown(document, &options).map_err(ffi_err)
     });
 
     match result {
-        Ok(Ok(md)) => match CString::new(md) {
+        Ok(md) => match CString::new(md) {
             Ok(s) => s.into_raw(),
             Err(_) => {
-                set_last_error("output contains null byte");
+                LAST_ERROR.with(|slot| slot.set_error(&ffi::invalid_output()));
                 ptr::null_mut()
             }
         },
-        Ok(Err(e)) => {
-            set_last_error(&e);
-            ptr::null_mut()
-        }
-        Err(_) => {
-            set_last_error("panic occurred during rendering");
+        Err(error) => {
+            LAST_ERROR.with(|slot| slot.set_error(&error));
             ptr::null_mut()
         }
     }
@@ -256,28 +245,28 @@ pub unsafe extern "C" fn unhwp_to_markdown(doc: *const UnhwpDocument, flags: u32
 /// - The returned string must be freed with `unhwp_free_string`.
 #[no_mangle]
 pub unsafe extern "C" fn unhwp_to_text(doc: *const UnhwpDocument) -> *mut c_char {
-    clear_last_error();
+    LAST_ERROR.with(|slot| slot.clear());
 
     if doc.is_null() {
-        set_last_error("document is null");
+        LAST_ERROR.with(|slot| slot.set_error(&invalid_argument("document is null")));
         return ptr::null_mut();
     }
 
-    let result = catch_unwind(|| {
+    let result: Result<String, FfiError> = ffi::catch(|| {
         let document = &(*doc).inner;
-        document.plain_text()
+        Ok(document.plain_text())
     });
 
     match result {
         Ok(text) => match CString::new(text) {
             Ok(s) => s.into_raw(),
             Err(_) => {
-                set_last_error("output contains null byte");
+                LAST_ERROR.with(|slot| slot.set_error(&ffi::invalid_output()));
                 ptr::null_mut()
             }
         },
-        Err(_) => {
-            set_last_error("panic occurred during rendering");
+        Err(error) => {
+            LAST_ERROR.with(|slot| slot.set_error(&error));
             ptr::null_mut()
         }
     }
@@ -293,36 +282,32 @@ pub unsafe extern "C" fn unhwp_to_text(doc: *const UnhwpDocument) -> *mut c_char
 /// - The returned string must be freed with `unhwp_free_string`.
 #[no_mangle]
 pub unsafe extern "C" fn unhwp_to_json(doc: *const UnhwpDocument, format: c_int) -> *mut c_char {
-    clear_last_error();
+    LAST_ERROR.with(|slot| slot.clear());
 
     if doc.is_null() {
-        set_last_error("document is null");
+        LAST_ERROR.with(|slot| slot.set_error(&invalid_argument("document is null")));
         return ptr::null_mut();
     }
 
-    let result = catch_unwind(|| {
+    let result: Result<String, FfiError> = ffi::catch(|| {
         let document = &(*doc).inner;
         if format == UNHWP_JSON_COMPACT {
-            serde_json::to_string(document).map_err(|e| e.to_string())
+            serde_json::to_string(document).map_err(json_err)
         } else {
-            serde_json::to_string_pretty(document).map_err(|e| e.to_string())
+            serde_json::to_string_pretty(document).map_err(json_err)
         }
     });
 
     match result {
-        Ok(Ok(json)) => match CString::new(json) {
+        Ok(json) => match CString::new(json) {
             Ok(s) => s.into_raw(),
             Err(_) => {
-                set_last_error("output contains null byte");
+                LAST_ERROR.with(|slot| slot.set_error(&ffi::invalid_output()));
                 ptr::null_mut()
             }
         },
-        Ok(Err(e)) => {
-            set_last_error(&e);
-            ptr::null_mut()
-        }
-        Err(_) => {
-            set_last_error("panic occurred during rendering");
+        Err(error) => {
+            LAST_ERROR.with(|slot| slot.set_error(&error));
             ptr::null_mut()
         }
     }
@@ -337,28 +322,28 @@ pub unsafe extern "C" fn unhwp_to_json(doc: *const UnhwpDocument, format: c_int)
 /// - The returned string must be freed with `unhwp_free_string`.
 #[no_mangle]
 pub unsafe extern "C" fn unhwp_plain_text(doc: *const UnhwpDocument) -> *mut c_char {
-    clear_last_error();
+    LAST_ERROR.with(|slot| slot.clear());
 
     if doc.is_null() {
-        set_last_error("document is null");
+        LAST_ERROR.with(|slot| slot.set_error(&invalid_argument("document is null")));
         return ptr::null_mut();
     }
 
-    let result = catch_unwind(|| {
+    let result: Result<String, FfiError> = ffi::catch(|| {
         let document = &(*doc).inner;
-        document.plain_text()
+        Ok(document.plain_text())
     });
 
     match result {
         Ok(text) => match CString::new(text) {
             Ok(s) => s.into_raw(),
             Err(_) => {
-                set_last_error("output contains null byte");
+                LAST_ERROR.with(|slot| slot.set_error(&ffi::invalid_output()));
                 ptr::null_mut()
             }
         },
-        Err(_) => {
-            set_last_error("panic occurred");
+        Err(error) => {
+            LAST_ERROR.with(|slot| slot.set_error(&error));
             ptr::null_mut()
         }
     }
@@ -372,15 +357,17 @@ pub unsafe extern "C" fn unhwp_plain_text(doc: *const UnhwpDocument) -> *mut c_c
 /// - Returns -1 on error.
 #[no_mangle]
 pub unsafe extern "C" fn unhwp_section_count(doc: *const UnhwpDocument) -> c_int {
+    LAST_ERROR.with(|slot| slot.clear());
+
     if doc.is_null() {
-        set_last_error("document is null");
+        LAST_ERROR.with(|slot| slot.set_error(&invalid_argument("document is null")));
         return -1;
     }
 
-    match catch_unwind(|| (*doc).inner.sections.len() as c_int) {
+    match ffi::catch(|| Ok((*doc).inner.sections.len() as c_int)) {
         Ok(count) => count,
-        Err(_) => {
-            set_last_error("panic occurred");
+        Err(error) => {
+            LAST_ERROR.with(|slot| slot.set_error(&error));
             -1
         }
     }
@@ -394,15 +381,17 @@ pub unsafe extern "C" fn unhwp_section_count(doc: *const UnhwpDocument) -> c_int
 /// - Returns -1 on error.
 #[no_mangle]
 pub unsafe extern "C" fn unhwp_resource_count(doc: *const UnhwpDocument) -> c_int {
+    LAST_ERROR.with(|slot| slot.clear());
+
     if doc.is_null() {
-        set_last_error("document is null");
+        LAST_ERROR.with(|slot| slot.set_error(&invalid_argument("document is null")));
         return -1;
     }
 
-    match catch_unwind(|| (*doc).inner.resources.len() as c_int) {
+    match ffi::catch(|| Ok((*doc).inner.resources.len() as c_int)) {
         Ok(count) => count,
-        Err(_) => {
-            set_last_error("panic occurred");
+        Err(error) => {
+            LAST_ERROR.with(|slot| slot.set_error(&error));
             -1
         }
     }
@@ -413,31 +402,33 @@ pub unsafe extern "C" fn unhwp_resource_count(doc: *const UnhwpDocument) -> c_in
 /// # Safety
 ///
 /// - `doc` must be a valid document handle.
-/// - Returns null if no title is set.
+/// - Returns null if no title is set — with `unhwp_last_error_kind` left at
+///   `UNHWP_ERROR_NONE`, since an absent title is not a failure. A null return paired
+///   with a non-zero kind means the title could not be produced (for instance
+///   `UNHWP_ERROR_INVALID_OUTPUT` when it holds an interior NUL byte).
 /// - The returned string must be freed with `unhwp_free_string`.
 #[no_mangle]
 pub unsafe extern "C" fn unhwp_get_title(doc: *const UnhwpDocument) -> *mut c_char {
-    clear_last_error();
+    LAST_ERROR.with(|slot| slot.clear());
 
     if doc.is_null() {
-        set_last_error("document is null");
+        LAST_ERROR.with(|slot| slot.set_error(&invalid_argument("document is null")));
         return ptr::null_mut();
     }
 
-    let result = catch_unwind(|| {
-        (*doc)
-            .inner
-            .metadata
-            .title
-            .as_ref()
-            .and_then(|t| CString::new(t.as_str()).ok())
-    });
+    let result: Result<Option<CString>, FfiError> =
+        ffi::catch(|| match (*doc).inner.metadata.title.as_ref() {
+            Some(title) => CString::new(title.as_str())
+                .map(Some)
+                .map_err(|_| ffi::invalid_output()),
+            None => Ok(None),
+        });
 
     match result {
         Ok(Some(s)) => s.into_raw(),
         Ok(None) => ptr::null_mut(),
-        Err(_) => {
-            set_last_error("panic occurred");
+        Err(error) => {
+            LAST_ERROR.with(|slot| slot.set_error(&error));
             ptr::null_mut()
         }
     }
@@ -448,31 +439,33 @@ pub unsafe extern "C" fn unhwp_get_title(doc: *const UnhwpDocument) -> *mut c_ch
 /// # Safety
 ///
 /// - `doc` must be a valid document handle.
-/// - Returns null if no author is set.
+/// - Returns null if no author is set — with `unhwp_last_error_kind` left at
+///   `UNHWP_ERROR_NONE`, since an absent author is not a failure. A null return paired
+///   with a non-zero kind means the author could not be produced (for instance
+///   `UNHWP_ERROR_INVALID_OUTPUT` when it holds an interior NUL byte).
 /// - The returned string must be freed with `unhwp_free_string`.
 #[no_mangle]
 pub unsafe extern "C" fn unhwp_get_author(doc: *const UnhwpDocument) -> *mut c_char {
-    clear_last_error();
+    LAST_ERROR.with(|slot| slot.clear());
 
     if doc.is_null() {
-        set_last_error("document is null");
+        LAST_ERROR.with(|slot| slot.set_error(&invalid_argument("document is null")));
         return ptr::null_mut();
     }
 
-    let result = catch_unwind(|| {
-        (*doc)
-            .inner
-            .metadata
-            .author
-            .as_ref()
-            .and_then(|a| CString::new(a.as_str()).ok())
-    });
+    let result: Result<Option<CString>, FfiError> =
+        ffi::catch(|| match (*doc).inner.metadata.author.as_ref() {
+            Some(author) => CString::new(author.as_str())
+                .map(Some)
+                .map_err(|_| ffi::invalid_output()),
+            None => Ok(None),
+        });
 
     match result {
         Ok(Some(s)) => s.into_raw(),
         Ok(None) => ptr::null_mut(),
-        Err(_) => {
-            set_last_error("panic occurred");
+        Err(error) => {
+            LAST_ERROR.with(|slot| slot.set_error(&error));
             ptr::null_mut()
         }
     }
@@ -491,33 +484,29 @@ pub unsafe extern "C" fn unhwp_get_author(doc: *const UnhwpDocument) -> *mut c_c
 /// A JSON array of resource IDs, e.g., `["image1.png", "image2.jpg"]`
 #[no_mangle]
 pub unsafe extern "C" fn unhwp_get_resource_ids(doc: *const UnhwpDocument) -> *mut c_char {
-    clear_last_error();
+    LAST_ERROR.with(|slot| slot.clear());
 
     if doc.is_null() {
-        set_last_error("document is null");
+        LAST_ERROR.with(|slot| slot.set_error(&invalid_argument("document is null")));
         return ptr::null_mut();
     }
 
-    let result = catch_unwind(|| {
+    let result: Result<String, FfiError> = ffi::catch(|| {
         let document = &(*doc).inner;
         let ids: Vec<&String> = document.resources.keys().collect();
-        serde_json::to_string(&ids).map_err(|e| e.to_string())
+        serde_json::to_string(&ids).map_err(json_err)
     });
 
     match result {
-        Ok(Ok(json)) => match CString::new(json) {
+        Ok(json) => match CString::new(json) {
             Ok(s) => s.into_raw(),
             Err(_) => {
-                set_last_error("output contains null byte");
+                LAST_ERROR.with(|slot| slot.set_error(&ffi::invalid_output()));
                 ptr::null_mut()
             }
         },
-        Ok(Err(e)) => {
-            set_last_error(&e);
-            ptr::null_mut()
-        }
-        Err(_) => {
-            set_last_error("panic occurred");
+        Err(error) => {
+            LAST_ERROR.with(|slot| slot.set_error(&error));
             ptr::null_mut()
         }
     }
@@ -541,22 +530,20 @@ pub unsafe extern "C" fn unhwp_get_resource_info(
     doc: *const UnhwpDocument,
     resource_id: *const c_char,
 ) -> *mut c_char {
-    clear_last_error();
+    LAST_ERROR.with(|slot| slot.clear());
 
     if doc.is_null() {
-        set_last_error("document is null");
+        LAST_ERROR.with(|slot| slot.set_error(&invalid_argument("document is null")));
         return ptr::null_mut();
     }
 
     if resource_id.is_null() {
-        set_last_error("resource_id is null");
+        LAST_ERROR.with(|slot| slot.set_error(&invalid_argument("resource_id is null")));
         return ptr::null_mut();
     }
 
-    let result = catch_unwind(|| {
-        let id_str = CStr::from_ptr(resource_id)
-            .to_str()
-            .map_err(|e| e.to_string())?;
+    let result: Result<String, FfiError> = ffi::catch(|| {
+        let id_str = CStr::from_ptr(resource_id).to_str().map_err(utf8_err)?;
 
         let document = &(*doc).inner;
 
@@ -569,26 +556,22 @@ pub unsafe extern "C" fn unhwp_get_resource_info(
                     "mime_type": resource.mime_type,
                     "size": resource.size,
                 });
-                serde_json::to_string(&info).map_err(|e| e.to_string())
+                serde_json::to_string(&info).map_err(json_err)
             }
-            None => Err(format!("resource not found: {}", id_str)),
+            None => Err(ffi_err(crate::Error::ResourceNotFound(id_str.to_string()))),
         }
     });
 
     match result {
-        Ok(Ok(json)) => match CString::new(json) {
+        Ok(json) => match CString::new(json) {
             Ok(s) => s.into_raw(),
             Err(_) => {
-                set_last_error("output contains null byte");
+                LAST_ERROR.with(|slot| slot.set_error(&ffi::invalid_output()));
                 ptr::null_mut()
             }
         },
-        Ok(Err(e)) => {
-            set_last_error(&e);
-            ptr::null_mut()
-        }
-        Err(_) => {
-            set_last_error("panic occurred");
+        Err(error) => {
+            LAST_ERROR.with(|slot| slot.set_error(&error));
             ptr::null_mut()
         }
     }
@@ -609,27 +592,25 @@ pub unsafe extern "C" fn unhwp_get_resource_data(
     resource_id: *const c_char,
     out_len: *mut usize,
 ) -> *mut u8 {
-    clear_last_error();
+    LAST_ERROR.with(|slot| slot.clear());
 
     if doc.is_null() {
-        set_last_error("document is null");
+        LAST_ERROR.with(|slot| slot.set_error(&invalid_argument("document is null")));
         return ptr::null_mut();
     }
 
     if resource_id.is_null() {
-        set_last_error("resource_id is null");
+        LAST_ERROR.with(|slot| slot.set_error(&invalid_argument("resource_id is null")));
         return ptr::null_mut();
     }
 
     if out_len.is_null() {
-        set_last_error("out_len is null");
+        LAST_ERROR.with(|slot| slot.set_error(&invalid_argument("out_len is null")));
         return ptr::null_mut();
     }
 
-    let result = catch_unwind(|| {
-        let id_str = CStr::from_ptr(resource_id)
-            .to_str()
-            .map_err(|e| e.to_string())?;
+    let result: Result<(*mut u8, usize), FfiError> = ffi::catch(|| {
+        let id_str = CStr::from_ptr(resource_id).to_str().map_err(utf8_err)?;
 
         let document = &(*doc).inner;
 
@@ -641,22 +622,17 @@ pub unsafe extern "C" fn unhwp_get_resource_data(
                 let ptr = Box::into_raw(boxed) as *mut u8;
                 Ok((ptr, len))
             }
-            None => Err(format!("resource not found: {}", id_str)),
+            None => Err(ffi_err(crate::Error::ResourceNotFound(id_str.to_string()))),
         }
     });
 
     match result {
-        Ok(Ok((ptr, len))) => {
+        Ok((ptr, len)) => {
             *out_len = len;
             ptr
         }
-        Ok(Err(e)) => {
-            set_last_error(&e);
-            *out_len = 0;
-            ptr::null_mut()
-        }
-        Err(_) => {
-            set_last_error("panic occurred");
+        Err(error) => {
+            LAST_ERROR.with(|slot| slot.set_error(&error));
             *out_len = 0;
             ptr::null_mut()
         }
@@ -711,6 +687,7 @@ mod tests {
 
         let error = unhwp_last_error();
         assert!(!error.is_null());
+        assert_eq!(unhwp_last_error_kind(), UNHWP_ERROR_INVALID_ARGUMENT);
     }
 
     #[test]
@@ -721,6 +698,18 @@ mod tests {
 
         let error = unhwp_last_error();
         assert!(!error.is_null());
+        assert_eq!(
+            unhwp_last_error_kind(),
+            crate::ErrorKind::Io as c_int,
+            "a missing file is classified as an I/O failure"
+        );
+    }
+
+    #[test]
+    fn test_parse_bytes_null_data_sets_invalid_argument() {
+        let doc = unsafe { unhwp_parse_bytes(ptr::null(), 0) };
+        assert!(doc.is_null());
+        assert_eq!(unhwp_last_error_kind(), UNHWP_ERROR_INVALID_ARGUMENT);
     }
 
     #[test]
@@ -752,6 +741,19 @@ mod tests {
         // Test section count
         let count = unsafe { unhwp_section_count(doc) };
         assert!(count >= 0);
+
+        // A successful call resets the kind, or a caller polling
+        // `unhwp_last_error_kind` after success would see a stale failure.
+        assert_eq!(unhwp_last_error_kind(), UNHWP_ERROR_NONE);
+
+        // An unknown resource id is classified, not just reported by message.
+        let missing_id = CString::new("does-not-exist").unwrap();
+        let info = unsafe { unhwp_get_resource_info(doc, missing_id.as_ptr()) };
+        assert!(info.is_null());
+        assert_eq!(
+            unhwp_last_error_kind(),
+            crate::ErrorKind::ResourceNotFound as c_int
+        );
 
         // Free document
         unsafe { unhwp_free_document(doc) };

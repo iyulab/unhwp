@@ -471,6 +471,47 @@ foreach (var resourceId in doc.GetResourceIds())
 }
 ```
 
+### Classifying failures
+
+`UnhwpException.Kind` says *why* a call failed, so callers can react to the reason
+instead of matching on message text:
+
+```csharp
+try
+{
+    using var doc = UnhwpDocument.ParseFile(path);
+    Console.WriteLine(doc.ToMarkdown());
+}
+catch (UnhwpException ex)
+{
+    switch (ex.Kind)
+    {
+        case UnhwpErrorKind.OleContainer:
+        case UnhwpErrorKind.ZipArchive:
+            Console.Error.WriteLine("The file is damaged.");
+            break;
+        case UnhwpErrorKind.UnknownFormat:
+        case UnhwpErrorKind.UnsupportedFormat:
+            Console.Error.WriteLine("Not a supported HWP/HWPX document.");
+            break;
+        case UnhwpErrorKind.Encrypted:
+        case UnhwpErrorKind.DistributionRestricted:
+            Console.Error.WriteLine("The document cannot be opened without authorization.");
+            break;
+        default:
+            // Also the right branch for a reason this build has no name for.
+            Console.Error.WriteLine($"Extraction failed ({ex.Kind}): {ex.Message}");
+            break;
+    }
+}
+```
+
+The kind numbers are a stable ABI contract: a new failure reason takes the next free
+number and existing ones are never renumbered. Always keep a `default` branch — treat an
+unrecognised value as a generic failure so a newer library stays usable. `Kind` is
+`Other` for failures raised by the wrapper itself, and never `None` (which means
+success).
+
 ### ASP.NET Core Example
 
 ```csharp

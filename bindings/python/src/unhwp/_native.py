@@ -123,6 +123,9 @@ _lib.unhwp_version.restype = ctypes.c_char_p
 _lib.unhwp_last_error.argtypes = []
 _lib.unhwp_last_error.restype = ctypes.c_char_p
 
+_lib.unhwp_last_error_kind.argtypes = []
+_lib.unhwp_last_error_kind.restype = ctypes.c_int
+
 _lib.unhwp_parse_file.argtypes = [ctypes.c_char_p]
 _lib.unhwp_parse_file.restype = ctypes.c_void_p
 
