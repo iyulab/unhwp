@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-31
+
 ### Added
 - **`ErrorKind::Render` (13)** — producing output can fail, and until now that was reported
   as `Other`. `Other` means "this failure carries no classification", which is worth
@@ -333,7 +335,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `thiserror` for error types
 - `bytes` for buffer handling
 
-[Unreleased]: https://github.com/iyulab/unhwp/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/iyulab/unhwp/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/iyulab/unhwp/compare/v0.7.0...v0.8.0
 [0.3.0]: https://github.com/iyulab/unhwp/compare/v0.2.5...v0.3.0
 [0.2.5]: https://github.com/iyulab/unhwp/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/iyulab/unhwp/compare/v0.1.3...v0.2.4
