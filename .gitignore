@@ -17,6 +17,7 @@ unhwp-wasm/pkg/
 # C# build artifacts
 bindings/csharp/**/bin/
 bindings/csharp/**/obj/
+bindings/csharp/**/runtimes/
 
 # Python build artifacts
 bindings/python/dist/

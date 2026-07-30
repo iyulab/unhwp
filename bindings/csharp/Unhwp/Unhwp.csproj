@@ -32,18 +32,22 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
-  <!-- Native library includes -->
+  <!-- Native library includes.
+       The release pipeline builds each native library and places it under
+       runtimes/<rid>/native/ before packing, so these are absent in a plain
+       source checkout. Guarded with Exists() so a local build or pack does not
+       require them. -->
   <ItemGroup>
     <!-- Windows x64 -->
-    <None Include="runtimes\win-x64\native\unhwp.dll" Pack="true" PackagePath="runtimes\win-x64\native\" Visible="false" />
+    <None Include="runtimes\win-x64\native\unhwp.dll" Pack="true" PackagePath="runtimes\win-x64\native\" Visible="false" Condition="Exists('runtimes\win-x64\native\unhwp.dll')" />
     <!-- Linux x64 (glibc) -->
-    <None Include="runtimes\linux-x64\native\libunhwp.so" Pack="true" PackagePath="runtimes\linux-x64\native\" Visible="false" />
+    <None Include="runtimes\linux-x64\native\libunhwp.so" Pack="true" PackagePath="runtimes\linux-x64\native\" Visible="false" Condition="Exists('runtimes\linux-x64\native\libunhwp.so')" />
     <!-- Linux x64 (musl/Alpine) -->
-    <None Include="runtimes\linux-musl-x64\native\libunhwp.so" Pack="true" PackagePath="runtimes\linux-musl-x64\native\" Visible="false" />
+    <None Include="runtimes\linux-musl-x64\native\libunhwp.so" Pack="true" PackagePath="runtimes\linux-musl-x64\native\" Visible="false" Condition="Exists('runtimes\linux-musl-x64\native\libunhwp.so')" />
     <!-- macOS x64 -->
-    <None Include="runtimes\osx-x64\native\libunhwp.dylib" Pack="true" PackagePath="runtimes\osx-x64\native\" Visible="false" />
+    <None Include="runtimes\osx-x64\native\libunhwp.dylib" Pack="true" PackagePath="runtimes\osx-x64\native\" Visible="false" Condition="Exists('runtimes\osx-x64\native\libunhwp.dylib')" />
     <!-- macOS ARM64 -->
-    <None Include="runtimes\osx-arm64\native\libunhwp.dylib" Pack="true" PackagePath="runtimes\osx-arm64\native\" Visible="false" />
+    <None Include="runtimes\osx-arm64\native\libunhwp.dylib" Pack="true" PackagePath="runtimes\osx-arm64\native\" Visible="false" Condition="Exists('runtimes\osx-arm64\native\libunhwp.dylib')" />
 
     <!-- README -->
     <None Include="README.md" Pack="true" PackagePath="" />
