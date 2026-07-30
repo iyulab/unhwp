@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-30
+
+### Added
+- **Structured error classification.** Failures now carry a machine-readable reason
+  alongside their message, so consumers can branch on *why* a call failed instead of
+  matching on message text.
+  - Rust: `ErrorKind` (`#[repr(i32)]`) and `Error::kind()`.
+  - C ABI: `unhwp_last_error_kind()` and the `UnhwpErrorKind` numbering. Written and
+    cleared in lockstep with `unhwp_last_error()`, so a message is never paired with a
+    stale reason.
+  - C#: `UnhwpException.Kind` and `UnhwpErrorKind`.
+  - Python: `UnhwpError.kind` (and its subclasses `ParseError`, `RenderError`,
+    `UnsupportedFormatError`) plus `ErrorKind`, now exported from the package root.
+  - The numbers are a stable ABI contract shared with the sibling `un*` extraction
+    libraries: a new reason takes the next free number and existing ones are never
+    reused or renumbered, so an unrecognised value can safely be treated as a generic
+    failure. Unknown values pass through unchanged in every binding rather than being
+    collapsed or rejected. `ErrorKind` is `#[non_exhaustive]`, so Rust callers should
+    match it with a `_ =>` arm for the same reason.
+
+### Fixed
+- `unhwp_get_title`/`unhwp_get_author` no longer collapse "no title/author" and "the
+  value holds an interior NUL byte" into the same silent `null` — the latter now
+  reports `UNHWP_ERROR_INVALID_OUTPUT`.
+- A resource lookup by an unknown ID now reports a classified failure
+  (`ResourceNotFound`) instead of an unclassified message string.
+- `unhwp_section_count`/`unhwp_resource_count` did not clear the last-error slot on
+  entry, so a stale error `kind` from an earlier failed call could still be read
+  after a later, successful call to these two functions.
+- The C# bindings' `GetLastError()`/`Version` decoded the native string as ASCII;
+  non-ASCII error messages and version strings are now decoded as UTF-8.
+
 ## [0.6.0] - 2026-07-22
 
 ### Added
