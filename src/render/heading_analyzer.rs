@@ -7,9 +7,14 @@
 //!
 //! # Priority Order
 //!
-//! 1. **Explicit styles** (`outline_level`) - always trusted when enabled
-//! 2. **Exclusion conditions** - bullet markers, excessive length
-//! 3. **Sequence analysis** - consecutive numbered items demoted to lists
+//! 1. **Exclusions** - a bullet marker or an over-long line is never a heading, whatever
+//!    the document says
+//! 2. **Explicit styles** (`outline_level`) - trusted when enabled
+//! 3. **Korean chapter markers** - 제N장 / 제N절 / Ⅰ. state their own level, which font size
+//!    can only suggest, so they rank above statistical inference and below explicit markup
+//! 4. **Statistical inference** - font size and weight against the document's own baseline
+//!
+//! Afterwards a **sequence pass** demotes runs of consecutive numbered items to lists.
 //!
 //! # Key Insight
 //!
@@ -46,6 +51,15 @@ pub struct HeadingConfig {
     /// Default: 1.2 (120% of base font size).
     pub size_threshold_ratio: f32,
 
+    /// Recognize Korean chapter and section markers (제N장 / 제N절 / 제N조 / Ⅰ. …) as headings.
+    ///
+    /// Legal and regulatory documents in Korean state their structure in the text itself,
+    /// frequently with no heading style and no font change to go with it — those documents
+    /// are otherwise seen as flat prose. Turn this off for documents where such a line is
+    /// ordinary body text.
+    /// Default: true
+    pub detect_korean_chapters: bool,
+
     /// Normalize heading levels so the minimum is H1 or H2.
     /// If true and document starts with H4, levels are shifted up (H4→H1, H5→H2, etc.).
     /// Default: true
@@ -66,6 +80,7 @@ impl Default for HeadingConfig {
             min_sequence_count: 2,
             enable_statistical_inference: true, // Enabled by default for font-size based detection
             size_threshold_ratio: 1.15,         // 115% of base font size = heading candidate
+            detect_korean_chapters: true,       // 제N장 / Ⅰ. state their own level
             normalize_levels: true,             // Normalize so min heading is H1/H2
             normalize_min_level: 2,             // Target H2 (leaves room for title)
         }
@@ -381,6 +396,17 @@ impl HeadingAnalyzer {
         if style.heading_level > 0 && self.config.trust_explicit_styles {
             let level = self.cap_heading_level(style.heading_level);
             return HeadingDecision::Explicit(level);
+        }
+
+        // P2.5: Korean chapter and section markers. A line reading "제1장 총칙" or "Ⅱ. 본론"
+        // announces what it is in its own words, and legal or regulatory documents in Korean
+        // routinely carry no heading style and no font change to go with it. This ranks below
+        // the document's explicit markup, which the caller asked us to trust, and above
+        // font-size inference: a marker states its level, a font size only suggests one.
+        if self.config.detect_korean_chapters {
+            if let Some(level) = korean_chapter_heading_level(trimmed) {
+                return HeadingDecision::Inferred(self.cap_heading_level(level));
+            }
         }
 
         // P3: Statistical inference (font size based)
@@ -719,6 +745,18 @@ fn is_enclosed_enumeration(c: char) -> bool {
 /// Roman numeral characters (uppercase).
 const ROMAN_NUMERALS: &[char] = &['Ⅰ', 'Ⅱ', 'Ⅲ', 'Ⅳ', 'Ⅴ', 'Ⅵ', 'Ⅶ', 'Ⅷ', 'Ⅸ', 'Ⅹ'];
 
+/// The heading level a Korean chapter marker implies, if this line carries one.
+///
+/// `looks_like_korean_heading` decides *whether* the line is a heading — it rejects a long
+/// line, which is a list item with a description rather than a chapter title — and the
+/// marker's own type decides *which level* it sits at.
+fn korean_chapter_heading_level(text: &str) -> Option<u8> {
+    if !looks_like_korean_heading(text) {
+        return None;
+    }
+    is_korean_chapter_pattern(text).map(|info| info.chapter_type.suggested_heading_level())
+}
+
 /// Check if text starts with a Korean chapter/section pattern.
 ///
 /// Patterns recognized:
@@ -899,6 +937,113 @@ mod tests {
         para.content
             .push(InlineContent::Text(TextRun::with_style(text, style)));
         para
+    }
+
+    /// A Korean legal or regulatory document states its structure in the text and often
+    /// gives it no heading style at all — the paragraphs below carry style level 0.
+    #[test]
+    fn test_korean_chapter_markers_become_headings_without_any_style() {
+        let analyzer = HeadingAnalyzer::new(HeadingConfig::default());
+        let paras: Vec<Paragraph> = ["제1편 총칙", "제1장 목적", "제1절 적용범위", "제3조 정의"]
+            .iter()
+            .map(|text| make_paragraph(text, 0))
+            .collect();
+        let refs: Vec<&Paragraph> = paras.iter().collect();
+
+        let decisions = analyzer.analyze_paragraphs(&refs);
+
+        // 편 outranks 장 outranks 절 outranks 조, and normalization shifts the run so the
+        // shallowest marker lands on the configured minimum level.
+        let levels: Vec<u8> = decisions.iter().map(|d| d.level().unwrap_or(0)).collect();
+        assert!(
+            levels.iter().all(|level| *level > 0),
+            "every chapter marker is a heading, got {levels:?}"
+        );
+        assert!(
+            levels[0] < levels[1] && levels[1] < levels[2] && levels[2] < levels[3],
+            "the marker hierarchy has to survive as a level ordering, got {levels:?}"
+        );
+    }
+
+    #[test]
+    fn test_roman_numeral_sections_become_headings() {
+        let analyzer = HeadingAnalyzer::new(HeadingConfig::default());
+        let para = make_paragraph("Ⅱ. 본론", 0);
+        let paras = vec![&para];
+
+        let decisions = analyzer.analyze_paragraphs(&paras);
+
+        assert!(decisions[0].is_heading(), "got {:?}", decisions[0]);
+    }
+
+    /// A consecutive run of chapter markers must not be mistaken for a numbered list by the
+    /// sequence pass — that pass demotes runs like "1." / "2." / "3.", and demoting 제1장 …
+    /// 제3장 would remove exactly the structure this detection exists to find.
+    #[test]
+    fn test_consecutive_chapters_are_not_demoted_as_a_sequence() {
+        let analyzer = HeadingAnalyzer::new(HeadingConfig::default());
+        let paras: Vec<Paragraph> = ["제1장 총칙", "제2장 권리", "제3장 의무"]
+            .iter()
+            .map(|text| make_paragraph(text, 0))
+            .collect();
+        let refs: Vec<&Paragraph> = paras.iter().collect();
+
+        let decisions = analyzer.analyze_paragraphs(&refs);
+
+        assert!(
+            decisions.iter().all(|d| d.is_heading()),
+            "got {decisions:?}"
+        );
+    }
+
+    /// The document's own markup outranks the marker: `trust_explicit_styles` is the caller
+    /// saying the styles are reliable, and a marker must not overrule that.
+    #[test]
+    fn test_explicit_style_outranks_the_chapter_marker() {
+        let analyzer = HeadingAnalyzer::new(HeadingConfig {
+            normalize_levels: false,
+            ..HeadingConfig::default()
+        });
+        // 제N조 implies level 4; the document says level 1.
+        let para = make_paragraph("제3조 정의", 1);
+        let paras = vec![&para];
+
+        let decisions = analyzer.analyze_paragraphs(&paras);
+
+        assert!(matches!(decisions[0], HeadingDecision::Explicit(1)));
+    }
+
+    #[test]
+    fn test_chapter_detection_can_be_turned_off() {
+        let analyzer = HeadingAnalyzer::new(HeadingConfig {
+            detect_korean_chapters: false,
+            enable_statistical_inference: false,
+            ..HeadingConfig::default()
+        });
+        let para = make_paragraph("제1장 총칙", 0);
+        let paras = vec![&para];
+
+        let decisions = analyzer.analyze_paragraphs(&paras);
+
+        assert!(!decisions[0].is_heading());
+    }
+
+    /// A chapter marker followed by a paragraph of prose is a numbered clause being quoted,
+    /// not a chapter title.
+    #[test]
+    fn test_long_line_with_a_chapter_marker_is_not_a_heading() {
+        let analyzer = HeadingAnalyzer::new(HeadingConfig {
+            detect_korean_chapters: true,
+            enable_statistical_inference: false,
+            ..HeadingConfig::default()
+        });
+        let long = format!("제3조 {}", "이 조항은 다음과 같이 적용된다 ".repeat(6));
+        let para = make_paragraph(&long, 0);
+        let paras = vec![&para];
+
+        let decisions = analyzer.analyze_paragraphs(&paras);
+
+        assert!(!decisions[0].is_heading(), "input was {long:?}");
     }
 
     #[test]
