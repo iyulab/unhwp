@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.8.0] - 2026-07-31
 
 ### Added
+- **Korean chapter and section markers are recognized as headings** — 제N편 / 제N부 / 제N장 /
+  제N절 / 제N조 / 제N항, and Roman-numeral sections (Ⅰ. Ⅱ. Ⅲ. …). Legal and regulatory
+  documents state their structure in the text itself, frequently with no heading style and no
+  font change to go with it, so such a document previously came out as flat prose however
+  clearly it was organised. The marker's type sets the level — 편 outranks 장 outranks 절
+  outranks 조 — which is an ordering the document states in words rather than in typography.
+
+  This ranks below the document's own heading styles, so `trust_explicit_styles` still wins
+  where both are present, and above font-size inference. A consecutive run of chapters is not
+  treated as a numbered list to demote. Set `HeadingConfig::detect_korean_chapters` to `false`
+  for documents where such a line is ordinary body text.
+
 - **`ErrorKind::Render` (13)** — producing output can fail, and until now that was reported
   as `Other`. `Other` means "this failure carries no classification", which is worth
   keeping true, and the sibling libraries already use this number for the same reason.
