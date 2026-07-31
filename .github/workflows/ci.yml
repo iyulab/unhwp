@@ -91,7 +91,9 @@ jobs:
         run: cargo build --release
 
       - name: Run tests
-        run: cargo test
+        # --workspace: without it only the root package is tested, so the cli and
+        # wasm crates' own tests never run.
+        run: cargo test --workspace
 
   build-wasm:
     name: Build WASM
