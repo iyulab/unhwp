@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-20
+
+### Added
+
+- **Markdown shape-refinement pass** (`RenderOptions.refine`, CLI `--refine`, C-ABI
+  `UNHWP_FLAG_REFINE`, C# `MarkdownOptions.Refine`, Python `RenderOptions.refine`) — a
+  lossless, idempotent post-processing pass ([`unrefine`](https://crates.io/crates/unrefine))
+  that normalizes table shape (missing separator-row recovery, ragged-row widening),
+  ordered-list numbering, link/image path separators, frontmatter formatting, and assigns
+  a GitHub-compatible slug to every heading. Never deletes visible text. Off by default —
+  existing output is unaffected. The streaming CLI path applies it as a whole-file pass
+  after the last section is written, since its passes need whole-document scope that a
+  single streamed section doesn't have.
+
 ## [0.8.1] - 2026-08-20
 
 ### Fixed
