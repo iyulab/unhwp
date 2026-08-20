@@ -50,6 +50,13 @@ pub struct RenderOptions {
     /// If None, no cleanup is performed.
     pub cleanup: Option<CleanupOptions>,
 
+    /// Shape-refinement pass ([`unrefine::refine`]) applied after cleanup.
+    /// Lossless and idempotent — normalizes table shape, ordered-list
+    /// numbering, link/image paths, frontmatter, and section anchors without
+    /// deleting any visible text. If `None` (the default), no refinement is
+    /// performed and output is unchanged from pre-`refine` behavior.
+    pub refine: Option<unrefine::RefineOptions>,
+
     /// Heading analysis configuration.
     /// When set, enables sophisticated heading detection with sequence analysis.
     /// If None, uses legacy inline heading detection.
@@ -80,6 +87,7 @@ impl Default for RenderOptions {
             paragraph_spacing: true,
             escape_special_chars: false,
             cleanup: None,
+            refine: None,
             // Enable statistical heading analysis by default (font-size based)
             heading_config: Some(super::heading_analyzer::HeadingConfig::default()),
             section_markers: SectionMarkerStyle::None,
@@ -151,6 +159,12 @@ impl RenderOptions {
     /// Enables aggressive cleanup (maximum purification).
     pub fn with_aggressive_cleanup(mut self) -> Self {
         self.cleanup = Some(CleanupOptions::aggressive());
+        self
+    }
+
+    /// Enables the shape-refinement pass with default options.
+    pub fn with_refine(mut self) -> Self {
+        self.refine = Some(unrefine::RefineOptions::default());
         self
     }
 

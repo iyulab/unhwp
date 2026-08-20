@@ -47,6 +47,11 @@ struct Cli {
     /// Apply text cleanup preset
     #[arg(long, global = true)]
     cleanup: Option<CleanupMode>,
+
+    /// Apply the markdown shape-refinement pass (table shape, list numbering,
+    /// link/image paths, frontmatter, section anchors)
+    #[arg(long, global = true)]
+    refine: bool,
 }
 
 /// Arguments for the `convert` subcommand.
@@ -62,6 +67,11 @@ struct ConvertArgs {
     /// Apply text cleanup preset
     #[arg(long)]
     cleanup: Option<CleanupMode>,
+
+    /// Apply the markdown shape-refinement pass (table shape, list numbering,
+    /// link/image paths, frontmatter, section anchors)
+    #[arg(long)]
+    refine: bool,
 
     /// Output formats to produce (comma-separated: md,txt,json)
     #[arg(long, value_delimiter = ',', default_value = "md")]
@@ -111,6 +121,11 @@ enum Commands {
         #[arg(long)]
         cleanup: Option<CleanupMode>,
 
+        /// Apply the markdown shape-refinement pass (table shape, list
+        /// numbering, link/image paths, frontmatter, section anchors)
+        #[arg(long)]
+        refine: bool,
+
         /// Maximum heading level (1-6, default: 4)
         #[arg(long, default_value = "4")]
         max_heading: u8,
@@ -128,6 +143,11 @@ enum Commands {
         /// Apply text cleanup
         #[arg(long)]
         cleanup: Option<CleanupMode>,
+
+        /// Accepted for API consistency with other subcommands; has no
+        /// effect since plain text output is not markdown.
+        #[arg(long)]
+        refine: bool,
     },
 
     /// Convert a document to JSON
@@ -254,6 +274,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 input,
                 output: cli.output,
                 cleanup: cli.cleanup,
+                refine: cli.refine,
                 formats: vec!["md".to_string()],
                 all: false,
                 no_images: false,
@@ -280,6 +301,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             frontmatter,
             table_mode,
             cleanup,
+            refine,
             max_heading,
         } => {
             let pb = create_spinner("Parsing document...");
@@ -296,6 +318,10 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             }
 
             apply_cleanup(&mut options, cleanup);
+
+            if refine {
+                options = options.with_refine();
+            }
 
             let markdown = render::render_markdown(&doc, &options)?;
 
@@ -315,6 +341,7 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             input,
             output,
             cleanup,
+            refine,
         } => {
             let pb = create_spinner("Parsing document...");
 
@@ -334,8 +361,9 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 );
             }
 
-            // Suppress unused variable warning - cleanup is accepted for API consistency
+            // Suppress unused variable warning - cleanup/refine are accepted for API consistency
             let _ = cleanup;
+            let _ = refine;
         }
 
         Commands::Json {
@@ -507,6 +535,9 @@ fn cmd_convert(args: ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
         render_opts = render_opts.with_section_markers(SectionMarkerStyle::Comment);
     }
     apply_cleanup(&mut render_opts, args.cleanup);
+    if args.refine {
+        render_opts = render_opts.with_refine();
+    }
 
     // Images directory (None = skip)
     let images_dir: Option<PathBuf> = if args.no_images {

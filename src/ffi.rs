@@ -92,6 +92,7 @@ uncore::export_handle! {
 pub const UNHWP_FLAG_FRONTMATTER: u32 = 1;
 pub const UNHWP_FLAG_ESCAPE_SPECIAL: u32 = 2;
 pub const UNHWP_FLAG_PARAGRAPH_SPACING: u32 = 4;
+pub const UNHWP_FLAG_REFINE: u32 = 8;
 
 /// JSON format options.
 pub const UNHWP_JSON_PRETTY: c_int = 0;
@@ -192,6 +193,9 @@ uncore::export_string_getter!(
         }
         if flags & UNHWP_FLAG_PARAGRAPH_SPACING != 0 {
             options.preserve_line_breaks = true;
+        }
+        if flags & UNHWP_FLAG_REFINE != 0 {
+            options = options.with_refine();
         }
 
         crate::render::render_markdown(document, &options).map_err(ffi_err)

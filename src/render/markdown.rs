@@ -64,12 +64,26 @@ impl MarkdownRenderer {
         };
 
         // If heading analysis is enabled, use the analyzer
-        if let Some(ref config) = renderer.options.heading_config {
-            return renderer.render_with_analyzer(document, config);
+        let mut output = if let Some(ref config) = renderer.options.heading_config {
+            renderer.render_with_analyzer(document, config)?
+        } else {
+            // Standard rendering without sophisticated heading analysis
+            renderer.render_standard(document)?
+        };
+
+        // Shape-refinement runs last, after cleanup: it never deletes visible
+        // text, so it composes safely with cleanup's noise removal in either
+        // order, but normalizing the shape of what cleanup left standing
+        // reads more naturally than the reverse. This is the whole-document
+        // batch path; the streaming path applies refine as a separate
+        // file-level post-flush pass instead (see the CLI writer) because
+        // refine's passes (table shape, section anchors, frontmatter) need
+        // whole-document scope that a single streamed section doesn't have.
+        if let Some(ref refine_options) = renderer.options.refine {
+            output = unrefine::refine(&output, refine_options);
         }
 
-        // Standard rendering without sophisticated heading analysis
-        renderer.render_standard(document)
+        Ok(output)
     }
 
     /// Renders a single section to a Markdown string.
@@ -1041,6 +1055,69 @@ mod tests {
         let result = renderer.render(&doc).unwrap();
 
         assert!(result.contains("## Section Title"));
+    }
+
+    /// `RenderOptions::default()` leaves `refine` off — the last line of
+    /// defense protecting deployed consumers (design doc's "기본 경로 불변
+    /// 회귀 테스트"). A Windows-style `image_path_prefix` is exactly the
+    /// kind of value `unrefine`'s link/image path pass would normalize, so
+    /// its survival here proves refine did not run.
+    #[test]
+    fn test_refine_off_by_default_leaves_backslash_image_paths_untouched() {
+        let mut doc = Document::new();
+        let mut section = Section::new(0);
+        let mut para = Paragraph::new();
+        para.content
+            .push(InlineContent::Image(ImageRef::new("image1.png")));
+        section.push_paragraph(para);
+        doc.sections.push(section);
+
+        let options = RenderOptions {
+            image_path_prefix: "assets\\sub\\".to_string(),
+            ..Default::default()
+        };
+        assert!(options.refine.is_none());
+
+        let renderer = MarkdownRenderer::new(options);
+        let result = renderer.render(&doc).unwrap();
+
+        assert!(
+            result.contains("assets\\sub\\image1.png"),
+            "refine must not run when RenderOptions::default() leaves it off: {result:?}"
+        );
+    }
+
+    /// The batch path wires `RenderOptions.refine` into `unrefine::refine`
+    /// after rendering (`render()`'s outer wrapper) — this exercises the
+    /// wiring end to end, not `unrefine`'s own pass logic (that's
+    /// `unrefine`'s test suite).
+    #[test]
+    fn test_refine_on_normalizes_backslash_image_paths() {
+        let mut doc = Document::new();
+        let mut section = Section::new(0);
+        let mut para = Paragraph::new();
+        para.content
+            .push(InlineContent::Image(ImageRef::new("image1.png")));
+        section.push_paragraph(para);
+        doc.sections.push(section);
+
+        let options = RenderOptions {
+            image_path_prefix: "assets\\sub\\".to_string(),
+            ..Default::default()
+        }
+        .with_refine();
+
+        let renderer = MarkdownRenderer::new(options);
+        let result = renderer.render(&doc).unwrap();
+
+        assert!(
+            result.contains("assets/sub/image1.png"),
+            "refine should normalize backslashes to forward slashes: {result:?}"
+        );
+        assert!(
+            !result.contains('\\'),
+            "no backslash should remain: {result:?}"
+        );
     }
 
     #[test]

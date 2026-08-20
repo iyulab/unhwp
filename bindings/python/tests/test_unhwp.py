@@ -62,6 +62,15 @@ class TestOptions:
         assert opts.include_frontmatter == False
         assert opts.image_path_prefix == ""
         assert opts.escape_special_chars == True
+        assert opts.refine == False
+
+    def test_render_options_to_flags_includes_refine(self):
+        """RenderOptions._to_flags should OR in UNHWP_FLAG_REFINE when set."""
+        opts = unhwp.RenderOptions(refine=True)
+        assert opts._to_flags() & unhwp._native.UNHWP_FLAG_REFINE != 0
+
+        opts_off = unhwp.RenderOptions(refine=False)
+        assert opts_off._to_flags() & unhwp._native.UNHWP_FLAG_REFINE == 0
 
     def test_cleanup_options_presets(self):
         """CleanupOptions should have working presets."""

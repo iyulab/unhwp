@@ -53,6 +53,12 @@ unicode-normalization = "0.1"
 pulldown-cmark = { version = "0.12", default-features = false }
 pulldown-cmark-to-cmark = "18"
 
+# Lossless, idempotent markdown shape-refinement pass (RenderOptions.refine).
+# Depends on the same pulldown-cmark/pulldown-cmark-to-cmark pins already
+# pulled in above for the cleanup pipeline, so this adds no new crates to the
+# dependency tree.
+unrefine = "0.1"
+
 # Optional: Legacy encoding (HWP 3.x)
 encoding_rs = { version = "0.8", optional = true }
 

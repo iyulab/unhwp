@@ -70,6 +70,7 @@ pub use render::{RenderOptions, SectionMarkerStyle, TableFallback};
 #[cfg(not(target_arch = "wasm32"))]
 pub use streaming::parse_file_streaming;
 pub use streaming::{ParseEvent, SectionStreamOptions};
+pub use unrefine::{refine, RefineOptions};
 
 use std::io::{Read, Seek};
 #[cfg(not(target_arch = "wasm32"))]

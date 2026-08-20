@@ -49,6 +49,7 @@ internal static class NativeMethods
     public const int UNHWP_FLAG_FRONTMATTER = 1;
     public const int UNHWP_FLAG_ESCAPE_SPECIAL = 2;
     public const int UNHWP_FLAG_PARAGRAPH_SPACING = 4;
+    public const int UNHWP_FLAG_REFINE = 8;
 
     // JSON format options
     public const int UNHWP_JSON_PRETTY = 0;

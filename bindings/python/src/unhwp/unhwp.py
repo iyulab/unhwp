@@ -172,6 +172,10 @@ class RenderOptions:
     table_fallback: int = 0  # 0=markdown, 1=html, 2=text
     preserve_line_breaks: bool = False
     escape_special_chars: bool = True
+    refine: bool = False
+    """Apply the lossless, idempotent markdown shape-refinement pass (table
+    shape, ordered-list numbering, link/image paths, frontmatter, section
+    anchors) after rendering."""
 
     def _to_flags(self) -> int:
         """Convert to native flags bitmask."""
@@ -182,6 +186,8 @@ class RenderOptions:
             flags |= native.UNHWP_FLAG_ESCAPE_SPECIAL
         if self.preserve_line_breaks:
             flags |= native.UNHWP_FLAG_PARAGRAPH_SPACING
+        if self.refine:
+            flags |= native.UNHWP_FLAG_REFINE
         return flags
 
 

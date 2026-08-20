@@ -36,6 +36,7 @@ public class MarkdownOptionsTests
         Assert.False(opts.IncludeFrontmatter);
         Assert.False(opts.EscapeSpecialChars);
         Assert.False(opts.ParagraphSpacing);
+        Assert.False(opts.Refine);
     }
 
     [Fact]
@@ -46,10 +47,12 @@ public class MarkdownOptionsTests
             IncludeFrontmatter = true,
             EscapeSpecialChars = true,
             ParagraphSpacing = true,
+            Refine = true,
         };
         Assert.True(opts.IncludeFrontmatter);
         Assert.True(opts.EscapeSpecialChars);
         Assert.True(opts.ParagraphSpacing);
+        Assert.True(opts.Refine);
     }
 
     [Fact]
@@ -59,6 +62,7 @@ public class MarkdownOptionsTests
         Assert.True(opts.IncludeFrontmatter);
         Assert.False(opts.EscapeSpecialChars);
         Assert.False(opts.ParagraphSpacing);
+        Assert.False(opts.Refine);
     }
 }
 

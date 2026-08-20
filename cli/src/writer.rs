@@ -244,6 +244,22 @@ impl MultiFormatWriter {
         // --- Markdown: flush ---
         if let (Some(mut md), Some(md_path)) = (self.md.take(), self.md_path.take()) {
             md.flush()?;
+            drop(md);
+            // The streaming renderer applies refine per-section in
+            // render_section_standalone -- but refine's passes (table shape,
+            // section anchors, frontmatter) need whole-document scope, which
+            // a single section doesn't have. Apply it now as a read-modify-
+            // write pass on the completed file, mirroring the same post-
+            // flush pattern unpdf's CLI uses for cleanup.
+            if let Some(ref refine_options) = self
+                .md_renderer
+                .as_ref()
+                .and_then(|r| r.options().refine.as_ref())
+            {
+                let raw = std::fs::read_to_string(&md_path)?;
+                let refined = unhwp::refine(&raw, refine_options);
+                std::fs::write(&md_path, refined)?;
+            }
             summary.md_path = Some(md_path);
         }
 
