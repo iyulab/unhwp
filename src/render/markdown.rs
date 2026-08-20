@@ -940,7 +940,14 @@ fn escape_yaml(text: &str) -> String {
 /// target, or an `image_path_prefix`-built path, can legitimately contain a space.
 fn format_link_destination(url: &str) -> String {
     if url.contains(' ') || url.contains(['<', '>']) {
-        format!("<{}>", url.replace('<', "%3C").replace('>', "%3E"))
+        // Backslash-escape, not percent-encode: a link destination is data, and
+        // percent-encoding `<`/`>` would silently change the target (e.g. a real
+        // file path) instead of just escaping it for Markdown syntax.
+        let escaped = url
+            .replace('\\', "\\\\")
+            .replace('<', "\\<")
+            .replace('>', "\\>");
+        format!("<{}>", escaped)
     } else {
         url.to_string()
     }
@@ -2022,6 +2029,32 @@ mod table_cell_content_tests {
         assert!(
             result.contains("[문서](<my folder/file.hwp>)"),
             "destination not angle-wrapped: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_link_destination_with_angle_brackets_is_backslash_escaped() {
+        use crate::model::InlineContent;
+
+        let cell = TableCell {
+            content: vec![Paragraph {
+                style: Default::default(),
+                content: vec![InlineContent::Link {
+                    text: "문서".to_string(),
+                    url: "a<b>c d".to_string(),
+                }],
+            }],
+            rowspan: 1,
+            colspan: 1,
+            ..Default::default()
+        };
+
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        let result = renderer.render_cell_content(&cell);
+
+        assert!(
+            result.contains("[문서](<a\\<b\\>c d>)"),
+            "angle brackets not backslash-escaped: {result:?}"
         );
     }
 
