@@ -4,7 +4,18 @@ test-files/
 test-output/
 CLAUDE.md
 .serena/
-examples/
+
+# Personal debug tools -- not consumer-facing examples, kept out of git so a
+# new *.rs dropped in examples/ is tracked (and CI-compiled) without -f.
+examples/debug_bindata.rs
+examples/debug_picture.rs
+examples/debug_table_structure.rs
+examples/ffi_api_comparison.rs
+examples/test_bindata.rs
+examples/vdd_batch_extract.rs
+examples/vdd_cleanup_test.rs
+examples/vdd_pua_analysis.rs
+examples/vdd_pua_verify.rs
 nul
 claudedocs/
 
