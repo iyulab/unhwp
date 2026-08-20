@@ -546,7 +546,8 @@ impl MarkdownRenderer {
             .get(&img.id)
             .cloned()
             .unwrap_or_else(|| img.id.clone());
-        format!("![{}]({}{})", alt, self.options.image_path_prefix, filename)
+        let path = format!("{}{}", self.options.image_path_prefix, filename);
+        format!("![{}]({})", alt, format_link_destination(&path))
     }
 
     /// Renders a table.
@@ -809,7 +810,7 @@ impl MarkdownRenderer {
                 output.push_str(&format!("[^{}]", text));
             }
             InlineContent::Link { text, url } => {
-                output.push_str(&format!("[{}]({})", text, url));
+                output.push_str(&format!("[{}]({})", text, format_link_destination(url)));
             }
         }
     }
@@ -929,6 +930,20 @@ fn escape_yaml(text: &str) -> String {
     text.replace('\\', "\\\\")
         .replace('"', "\\\"")
         .replace('\n', "\\n")
+}
+
+/// Format a link/image destination for `[text](destination)` syntax, wrapping it in
+/// `<...>` when it contains a character CommonMark's bare-parenthesis destination form
+/// forbids. A destination with a raw space is not valid CommonMark outside `<...>` at
+/// all -- `pulldown-cmark` does not even produce a `Link`/`Image` event for it, so a
+/// consumer sees the brackets as literal text instead of a link. A hyperlink field
+/// target, or an `image_path_prefix`-built path, can legitimately contain a space.
+fn format_link_destination(url: &str) -> String {
+    if url.contains(' ') || url.contains(['<', '>']) {
+        format!("<{}>", url.replace('<', "%3C").replace('>', "%3E"))
+    } else {
+        url.to_string()
+    }
 }
 
 #[cfg(test)]
@@ -1978,6 +1993,35 @@ mod table_cell_content_tests {
             result.contains("[홈페이지](https://example.com)"),
             "Link in cell should render as markdown link, got: {}",
             result
+        );
+    }
+
+    #[test]
+    fn test_link_destination_with_a_space_is_angle_wrapped() {
+        use crate::model::InlineContent;
+
+        // A bare `(dest with space)` is not valid CommonMark syntax at all --
+        // pulldown-cmark never produces a Link event for it, so a consumer sees the
+        // brackets as literal text instead of a link.
+        let cell = TableCell {
+            content: vec![Paragraph {
+                style: Default::default(),
+                content: vec![InlineContent::Link {
+                    text: "문서".to_string(),
+                    url: "my folder/file.hwp".to_string(),
+                }],
+            }],
+            rowspan: 1,
+            colspan: 1,
+            ..Default::default()
+        };
+
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        let result = renderer.render_cell_content(&cell);
+
+        assert!(
+            result.contains("[문서](<my folder/file.hwp>)"),
+            "destination not angle-wrapped: {result:?}"
         );
     }
 
