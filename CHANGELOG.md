@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A figure/table caption paragraph (e.g. `[표 1]`, `[Figure 2]`) carrying an explicit heading
+  style is no longer promoted to a heading. Previously, under the default
+  `trust_explicit_styles`, an explicit style always won even for a caption, so a caption with
+  any heading style attached fragmented the document's heading structure.
+
 ## [0.9.0] - 2026-08-20
 
 ### Added

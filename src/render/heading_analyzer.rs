@@ -7,8 +7,8 @@
 //!
 //! # Priority Order
 //!
-//! 1. **Exclusions** - a bullet marker or an over-long line is never a heading, whatever
-//!    the document says
+//! 1. **Exclusions** - a bullet marker, a figure/table caption, or an over-long line is
+//!    never a heading, whatever the document says
 //! 2. **Explicit styles** (`outline_level`) - trusted when enabled
 //! 3. **Korean chapter markers** - 제N장 / 제N절 / Ⅰ. state their own level, which font size
 //!    can only suggest, so they rank above statistical inference and below explicit markup
@@ -392,6 +392,17 @@ impl HeadingAnalyzer {
             };
         }
 
+        // Figure/table captions are never headings, even with an explicit heading
+        // style — a caption paragraph describes the figure/table next to it, it
+        // does not start a new section.
+        if self.looks_like_caption(trimmed) {
+            return if style.heading_level > 0 {
+                HeadingDecision::Demoted
+            } else {
+                HeadingDecision::None
+            };
+        }
+
         // P2: Explicit style - trust document's heading markers (after exclusions)
         if style.heading_level > 0 && self.config.trust_explicit_styles {
             let level = self.cap_heading_level(style.heading_level);
@@ -419,12 +430,9 @@ impl HeadingAnalyzer {
         // Fallback: Use explicit style if present (even when trust=false)
         // This handles numbered headings like "1. 서론" with explicit H1 style
         // Sequence analysis may still demote them if they form a consecutive pattern
-        // Re-apply exclusions: bullets and over-length text are never headings
-        if style.heading_level > 0
-            && !self.looks_like_bullet_item(trimmed)
-            && !self.looks_like_caption(trimmed)
-            && trimmed.chars().count() <= self.config.max_text_length
-        {
+        // Bullets, captions, and over-length text already returned at P1 above,
+        // so reaching here means none of those exclusions apply.
+        if style.heading_level > 0 {
             let level = self.cap_heading_level(style.heading_level);
             return HeadingDecision::Explicit(level);
         }
@@ -1088,6 +1096,43 @@ mod tests {
                 text
             );
         }
+    }
+
+    #[test]
+    fn test_caption_never_heading_even_with_explicit_style() {
+        // A figure/table caption with an explicit heading style (e.g. an author
+        // applied "Heading 2" to a "[표 1]" label) must not become a heading,
+        // even under the default trust_explicit_styles=true.
+        let config = HeadingConfig::default();
+        let analyzer = HeadingAnalyzer::new(config);
+
+        for text in [
+            "[표 1] 연도별 매출",
+            "[그림 3] 구조도",
+            "[Figure 2] Overview",
+        ] {
+            let para = make_paragraph(text, 2);
+            let paras = vec![&para];
+            let decisions = analyzer.analyze_paragraphs(&paras);
+            assert_eq!(
+                decisions[0],
+                HeadingDecision::Demoted,
+                "caption must not be a heading: {}",
+                text
+            );
+        }
+    }
+
+    #[test]
+    fn test_caption_without_explicit_style_stays_none() {
+        let config = HeadingConfig::default();
+        let analyzer = HeadingAnalyzer::new(config);
+        let para = make_paragraph("[표 1] 연도별 매출", 0);
+
+        let paras = vec![&para];
+        let decisions = analyzer.analyze_paragraphs(&paras);
+
+        assert_eq!(decisions[0], HeadingDecision::None);
     }
 
     #[test]
