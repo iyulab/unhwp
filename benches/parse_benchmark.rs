@@ -156,6 +156,43 @@ fn bench_text_extraction(c: &mut Criterion) {
     group.finish();
 }
 
+/// Estimates the paragraph count needed to reach roughly `target_bytes` of
+/// generated HWPX content, by calibrating against a small sample. The
+/// generator's per-paragraph size is effectively constant, so a single
+/// linear extrapolation is accurate enough for a benchmark input size.
+fn count_for_target_size(target_bytes: usize) -> usize {
+    let sample = 1_000;
+    let sample_size = create_test_hwpx(sample).len();
+    let per_para = (sample_size / sample).max(1);
+    (target_bytes / per_para).max(sample)
+}
+
+/// Benchmark parsing at a ~100MB document scale — the large-document
+/// performance baseline this project's roadmap calls for, distinct from the
+/// small-to-medium sweeps above. Runs a reduced sample count since each
+/// iteration parses a full 100MB document.
+fn bench_large_document(c: &mut Criterion) {
+    let target_bytes = 100 * 1024 * 1024;
+    let para_count = count_for_target_size(target_bytes);
+    let data = create_test_hwpx(para_count);
+    let actual_bytes = data.len() as u64;
+
+    let mut group = c.benchmark_group("large_document_baseline");
+    group.sample_size(10);
+    group.throughput(Throughput::Bytes(actual_bytes));
+    group.bench_with_input(
+        BenchmarkId::new("parse_100mb_hwpx", para_count),
+        &data,
+        |b, data| {
+            b.iter(|| {
+                let cursor = Cursor::new(black_box(data.as_slice()));
+                let _ = unhwp::parse_reader(cursor);
+            });
+        },
+    );
+    group.finish();
+}
+
 /// Benchmark format detection.
 fn bench_format_detection(c: &mut Criterion) {
     let hwpx_data = create_test_hwpx(10);
@@ -181,5 +218,6 @@ criterion_group!(
     bench_hwpx_parsing,
     bench_markdown_rendering,
     bench_text_extraction,
+    bench_large_document,
 );
 criterion_main!(benches);
