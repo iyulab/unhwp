@@ -60,3 +60,6 @@ unhwp = [
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
+markers = [
+    "integration: exercises the native library end to end against a sample document",
+]

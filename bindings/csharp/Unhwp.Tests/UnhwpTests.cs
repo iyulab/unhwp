@@ -154,68 +154,75 @@ public class ErrorKindTests
 }
 
 /// <summary>
-/// Integration tests requiring actual HWP files and native library.
+/// End-to-end tests over the native library, run against the repository's own sample
+/// document. They mirror what the Rust suite asserts about that same file, so a
+/// regression that only shows up once content has crossed the interop boundary — a
+/// section dropped, text lost in marshalling — fails here rather than in a consumer.
 /// </summary>
 public class IntegrationTests
 {
-    private static string? GetTestFile()
+    /// <summary>
+    /// The repository's own committed sample document. It ships with the source, so a
+    /// missing file is a broken checkout rather than an expected condition — these tests
+    /// fail loudly instead of quietly passing over an absent fixture.
+    /// </summary>
+    private static string GetTestFile()
     {
-        var testFilesDir = Path.Combine(
+        // bin/Debug/<tfm> -> Unhwp.Tests -> csharp -> bindings -> repository root.
+        var repoRoot = Path.Combine(
             Path.GetDirectoryName(typeof(IntegrationTests).Assembly.Location) ?? "",
-            "..", "..", "..", "..", "..", "..", "test-files"
+            "..", "..", "..", "..", "..", ".."
         );
 
-        var sample = Path.Combine(testFilesDir, "Sample.hwp");
-        if (File.Exists(sample))
-            return sample;
+        var sample = Path.GetFullPath(
+            Path.Combine(repoRoot, "tests", "fixtures", "two_sections.hwpx")
+        );
 
-        var altPath = Path.Combine(Environment.CurrentDirectory, "..", "..", "..", "..", "test-files", "Sample.hwp");
-        if (File.Exists(altPath))
-            return altPath;
-
-        return null;
+        Assert.True(File.Exists(sample), $"Sample document not found at {sample}");
+        return sample;
     }
 
-    [Fact(Skip = "Requires native library and test files")]
+    [Fact]
     public void ParseFile_ReturnsValidDocument()
     {
         var testFile = GetTestFile();
-        if (testFile == null) return;
 
         using var doc = UnhwpDocument.ParseFile(testFile);
-        Assert.True(doc.SectionCount >= 0);
-        Assert.True(doc.ResourceCount >= 0);
+
+        // The sample has two sections in its spine. A count of 1 is the signature of a
+        // section-order parser that stopped after section0.
+        Assert.Equal(2, doc.SectionCount);
     }
 
-    [Fact(Skip = "Requires native library and test files")]
+    [Fact]
     public void ToMarkdown_ReturnsNonEmptyString()
     {
         var testFile = GetTestFile();
-        if (testFile == null) return;
 
         using var doc = UnhwpDocument.ParseFile(testFile);
         var markdown = doc.ToMarkdown();
-        Assert.NotNull(markdown);
-        Assert.NotEmpty(markdown);
+
+        // Both sections must survive the round trip, not just the first one.
+        Assert.Contains("Section zero content", markdown);
+        Assert.Contains("Section one content", markdown);
     }
 
-    [Fact(Skip = "Requires native library and test files")]
+    [Fact]
     public void ToText_ReturnsNonEmptyString()
     {
         var testFile = GetTestFile();
-        if (testFile == null) return;
 
         using var doc = UnhwpDocument.ParseFile(testFile);
         var text = doc.ToText();
-        Assert.NotNull(text);
-        Assert.NotEmpty(text);
+
+        Assert.Contains("Section zero content", text);
+        Assert.Contains("Section one content", text);
     }
 
-    [Fact(Skip = "Requires native library and test files")]
+    [Fact]
     public void ToJson_ReturnsValidJson()
     {
         var testFile = GetTestFile();
-        if (testFile == null) return;
 
         using var doc = UnhwpDocument.ParseFile(testFile);
         var json = doc.ToJson();
@@ -223,7 +230,7 @@ public class IntegrationTests
         Assert.StartsWith("{", json);
     }
 
-    [Fact(Skip = "Requires native library and test files")]
+    [Fact]
     public void ParseFile_NonexistentFile_ThrowsFileNotFoundException()
     {
         Assert.Throws<FileNotFoundException>(() =>

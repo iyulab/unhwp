@@ -13,6 +13,13 @@ except OSError:
 
 pytestmark = pytest.mark.skipif(not HAS_NATIVE, reason="Native library not available")
 
+# The repository's own committed sample, also used by the Rust suite. It ships with the
+# source, so its absence is a broken checkout rather than an expected condition — tests
+# that need it fail loudly instead of quietly passing over a missing fixture.
+SAMPLE_DOCUMENT = (
+    Path(__file__).parent.parent.parent.parent / "tests" / "fixtures" / "two_sections.hwpx"
+)
+
 
 class TestVersion:
     """Test version and info functions."""
@@ -164,12 +171,7 @@ class TestNativeErrorKind:
         assert excinfo.value.kind == unhwp.ErrorKind.UNKNOWN_FORMAT
 
     def test_successful_call_leaves_no_recorded_kind(self, tmp_path):
-        test_files_dir = Path(__file__).parent.parent.parent.parent / "test-files"
-        sample = test_files_dir / "Sample.hwp"
-        if not sample.exists():
-            pytest.skip("Test file not available")
-
-        with unhwp.parse(str(sample)) as result:
+        with unhwp.parse(str(SAMPLE_DOCUMENT)) as result:
             _ = result.markdown
 
         from unhwp import _native as native
@@ -178,35 +180,34 @@ class TestNativeErrorKind:
 
 @pytest.mark.integration
 class TestIntegration:
-    """Integration tests requiring actual HWP files."""
+    """End-to-end tests over the native library, run against the repository's own
+    sample document. They mirror what the Rust suite asserts about that same file, so
+    content lost on its way through the binding fails here rather than in a consumer."""
 
     @pytest.fixture
     def test_file(self):
-        """Get path to test file if available."""
-        test_files_dir = Path(__file__).parent.parent.parent.parent / "test-files"
-        sample = test_files_dir / "Sample.hwp"
-        if sample.exists():
-            return sample
-        pytest.skip("Test file not available")
+        return SAMPLE_DOCUMENT
 
     def test_to_markdown(self, test_file):
-        """Should convert HWP to markdown."""
+        """Both sections must survive the round trip, not just the first one."""
         markdown = unhwp.to_markdown(str(test_file))
-        assert isinstance(markdown, str)
-        assert len(markdown) > 0
+        assert "Section zero content" in markdown
+        assert "Section one content" in markdown
 
     def test_extract_text(self, test_file):
-        """Should extract plain text."""
+        """Should extract plain text from every section."""
         text = unhwp.extract_text(str(test_file))
-        assert isinstance(text, str)
-        assert len(text) > 0
+        assert "Section zero content" in text
+        assert "Section one content" in text
 
     def test_parse_result(self, test_file):
         """Should parse and return result object."""
         with unhwp.parse(str(test_file)) as result:
             assert isinstance(result.markdown, str)
             assert isinstance(result.text, str)
-            assert result.section_count >= 0
+            # A count of 1 is the signature of a section-order parser that stopped
+            # after section0.
+            assert result.section_count == 2
             assert result.paragraph_count >= 0
             assert result.image_count >= 0
 
