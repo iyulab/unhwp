@@ -33,11 +33,18 @@ jobs:
           py=$(grep -m1 '^version = ' bindings/python/pyproject.toml | sed 's/.*"\(.*\)".*/\1/')
           cs=$(grep -oE '<Version>[^<]+</Version>' bindings/csharp/Unhwp/Unhwp.csproj | head -1 | sed 's/<[^>]*>//g')
 
+          # The Python package reports its own version at runtime through
+          # unhwp.__version__, so it has to agree too — it is what consumers
+          # see. This file is the one that historically drifted (it sat at an
+          # old version across several releases because nothing checked it).
+          pyinit=$(grep -m1 '^__version__ = ' bindings/python/src/unhwp/__init__.py | sed 's/.*"\(.*\)".*/\1/')
+
           echo "Root Cargo.toml:                      $root"
           echo "cli/Cargo.toml:                       $cli"
           echo "unhwp-wasm/Cargo.toml:                $wasm"
           echo "bindings/python/pyproject.toml:       $py"
           echo "bindings/csharp/Unhwp/Unhwp.csproj:   $cs"
+          echo "bindings/python/src/unhwp/__init__.py: $pyinit"
 
           # Also verify the workspace's CLI dep on unhwp points at the same
           # version so consumers of the published crate aren't broken.
@@ -45,14 +52,14 @@ jobs:
           echo "cli -> unhwp dep version:             $dep"
 
           fail=0
-          for v in "$cli" "$wasm" "$py" "$cs" "$dep"; do
+          for v in "$cli" "$wasm" "$py" "$cs" "$pyinit" "$dep"; do
             if [ "$v" != "$root" ]; then
               fail=1
             fi
           done
 
           if [ $fail -eq 1 ]; then
-            echo "::error::Version mismatch — update all five canonical files AND cli's unhwp dep together per CLAUDE.md Version Bump Checklist."
+            echo "::error::Version mismatch — update all six canonical files (including bindings/python/src/unhwp/__init__.py) AND cli's unhwp dep together per CLAUDE.md Version Bump Checklist."
             exit 1
           fi
           echo "All versions match: $root"
@@ -93,7 +100,15 @@ jobs:
       - name: Run tests
         # --workspace: without it only the root package is tested, so the cli and
         # wasm crates' own tests never run.
-        run: cargo test --workspace
+        # --all-features: the hwp3, async and ffi features carry tests of their
+        # own. Without this flag they are never executed anywhere, which is how a
+        # feature-gated regression reaches a published crate while CI stays green.
+        run: cargo test --workspace --all-features
+
+      - name: Build with FFI
+        # The ffi feature is what the bindings and the released native libraries
+        # are built from; nothing else in this workflow compiles it.
+        run: cargo build --release --features ffi
 
   build-wasm:
     name: Build WASM
@@ -144,7 +159,10 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy -- -D warnings
+        # --all-targets covers tests, benches and examples; --all-features covers
+        # the feature-gated code. Bare `cargo clippy` lints only the default
+        # target of the default feature set.
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
   security-audit:
     name: Security Audit
