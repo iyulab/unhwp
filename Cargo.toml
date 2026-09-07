@@ -25,7 +25,7 @@ ffi = []            # C-ABI FFI bindings
 
 [dependencies]
 # OLE container parsing (HWP 5.0)
-cfb = "0.10"
+cfb = "0.14"
 
 # Compression
 flate2 = "1.0"
@@ -62,9 +62,23 @@ unrefine = "0.1"
 # Optional: Legacy encoding (HWP 3.x)
 encoding_rs = { version = "0.8", optional = true }
 
-# ZIP archive (HWPX) — native: full features with bzip2/lzma/xz/zstd support
+# ZIP archive (HWPX) — native: full features with bzip2/lzma/xz/zstd support.
+# This is zip's default set minus aes-crypto. Nothing here reads an encrypted archive entry —
+# HWPX carries no entry-level encryption, and HWP 5 encryption is handled at the compound-file
+# layer in hwp5/ — so the AES decryptor is compiled in for no reader. It is also the only
+# dependency in this graph that demands a newer rustc than everything else, which would raise the
+# crate's minimum supported version on a capability no code path uses.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-zip = "2.2"
+zip = { version = "8.6", default-features = false, features = [
+    "deflate",
+    "deflate64",
+    "bzip2",
+    "lzma",
+    "xz",
+    "zstd",
+    "ppmd",
+    "time",
+] }
 # Parallel processing (native only — rayon requires threading not available under wasm32)
 rayon = "1.10"
 # Optional: Async support
@@ -72,7 +86,7 @@ tokio = { version = "1.42", features = ["fs", "io-util", "rt", "macros"], option
 
 # ZIP archive (HWPX) — wasm32: deflate-only (bzip2/lzma/xz/zstd require C libraries)
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-zip = { version = "2.2", default-features = false, features = ["deflate"] }
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 criterion = "0.5"

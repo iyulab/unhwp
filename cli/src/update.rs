@@ -156,12 +156,8 @@ fn check_latest_version() -> Option<UpdateCheckResult> {
         .fetch()
         .ok()?;
 
-    if releases.is_empty() {
-        return None;
-    }
-
-    let latest = &releases[0];
-    let latest_version = latest.version.trim_start_matches('v');
+    let latest = releases.latest()?;
+    let latest_version = latest.version().trim_start_matches('v');
 
     let current = Version::parse(current_version).ok()?;
     let latest_ver = Version::parse(latest_version).ok()?;
@@ -220,8 +216,8 @@ pub fn run_update(check_only: bool, force: bool) -> Result<(), Box<dyn std::erro
     }
 
     // Get latest release version
-    let latest = &releases[0];
-    let latest_version = latest.version.trim_start_matches('v');
+    let latest = releases.latest().ok_or("No releases found on GitHub.")?;
+    let latest_version = latest.version().trim_start_matches('v');
 
     println!("{} {}", "Latest version:".cyan().bold(), latest_version);
 
@@ -285,7 +281,11 @@ pub fn run_update(check_only: bool, force: bool) -> Result<(), Box<dyn std::erro
     let patterns = get_asset_patterns(&platform, latest_version);
 
     // Extract asset names from release
-    let asset_names: Vec<String> = latest.assets.iter().map(|a| a.name.clone()).collect();
+    let asset_names: Vec<String> = latest
+        .assets()
+        .iter()
+        .map(|a| a.name().to_string())
+        .collect();
 
     // Find matching asset from release
     let asset_name = find_matching_asset(&asset_names, &patterns);
@@ -302,9 +302,9 @@ pub fn run_update(check_only: bool, force: bool) -> Result<(), Box<dyn std::erro
             "{} {}",
             "Available assets:".dimmed(),
             latest
-                .assets
+                .assets()
                 .iter()
-                .map(|a| a.name.as_str())
+                .map(|a| a.name())
                 .collect::<Vec<_>>()
                 .join(", ")
         );
@@ -316,22 +316,22 @@ pub fn run_update(check_only: bool, force: bool) -> Result<(), Box<dyn std::erro
 
     // Find the matching asset's download URL
     let target_asset = latest
-        .assets
+        .assets()
         .iter()
-        .find(|a| a.name == asset_name)
+        .find(|a| a.name() == asset_name)
         .ok_or("Matched asset not found in release")?;
 
     // Download the archive to a temp directory
-    let tmp_dir = self_update::TempDir::new()?;
+    let tmp_dir = tempfile::TempDir::new()?;
     let tmp_archive_path = tmp_dir.path().join(&asset_name);
     let mut tmp_archive = std::fs::File::create(&tmp_archive_path)?;
 
-    let mut download = self_update::Download::from_url(&target_asset.download_url);
-    download.set_header(
-        reqwest::header::ACCEPT,
-        "application/octet-stream".parse().unwrap(),
+    let mut download = self_update::Download::from_url(target_asset.download_url());
+    download.request_header(
+        self_update::http::header::ACCEPT,
+        "application/octet-stream",
     );
-    download.show_progress(true);
+    download.show_download_progress(true);
     download.download_to(&mut tmp_archive)?;
 
     // Extract the binary from the archive
@@ -342,7 +342,7 @@ pub fn run_update(check_only: bool, force: bool) -> Result<(), Box<dyn std::erro
 
     // Replace the current binary
     let new_exe = tmp_dir.path().join(&bin_name_with_ext);
-    self_update::self_replace::self_replace(&new_exe)?;
+    self_replace::self_replace(&new_exe)?;
 
     println!();
     println!(

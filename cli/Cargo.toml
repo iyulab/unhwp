@@ -24,13 +24,12 @@ clap = { version = "4.5", features = ["derive"] }
 serde_json = "1.0"
 
 # Self-update from GitHub releases
-self_update = { version = "0.41", features = ["archive-zip", "archive-tar", "compression-flate2", "compression-zip-deflate"] }
+self_update = { version = "1.3", features = ["archive-zip", "archive-tar", "compression-tar-gz", "compression-zip-deflate"] }
 
-# HTTP client (used for self_update header types)
-reqwest = { version = "0.12", default-features = false }
-
-# Async runtime for self-update
-tokio = { version = "1.42", features = ["rt-multi-thread", "macros"] }
+# Staging directory and in-place binary replacement for the update flow. self_update stopped
+# re-exporting these in 1.0; its own docs direct callers to depend on them directly.
+tempfile = "3"
+self-replace = "1.5"
 
 # Version comparison
 semver = "1.0"
