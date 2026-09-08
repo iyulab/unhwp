@@ -57,15 +57,26 @@ impl HwpxContainer {
     }
 
     /// Reads a file from the archive as UTF-8 string.
+    ///
+    /// Bytes that are not valid UTF-8 are reported as [`Error::Encoding`], not as an I/O
+    /// failure. Reading straight into a `String` would classify them by where they were
+    /// noticed rather than by what went wrong: the reader raises `InvalidData`, `?` maps
+    /// any [`std::io::Error`] to [`Error::Io`], and a caller branching on the kind then
+    /// sees a disk problem where the real cause is a malformed part. Decoding as its own
+    /// step keeps the reason attached at the point that knows it — the same contract
+    /// [`From<std::str::Utf8Error>`] already states for this crate.
+    ///
+    /// [`From<std::str::Utf8Error>`]: crate::error::Error
     pub fn read_file(&mut self, path: &str) -> Result<String> {
         let mut file = self
             .archive
             .by_name(path)
             .map_err(|_| Error::MissingComponent(path.to_string()))?;
 
-        let mut content = String::new();
-        file.read_to_string(&mut content)?;
-        Ok(content)
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)?;
+        String::from_utf8(bytes)
+            .map_err(|err| Error::Encoding(format!("{path} is not valid UTF-8: {err}")))
     }
 
     /// Reads a binary file from the archive.
@@ -164,13 +175,13 @@ fn parse_manifest_map(hpf_content: &str) -> (HashMap<String, String>, Vec<String
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(ref e)) | Ok(Event::Empty(ref e)) => {
                 let local = e.local_name();
-                let name = std::str::from_utf8(local.as_ref()).unwrap_or_default();
+                let name = local.as_ref();
                 match name {
                     "item" => {
                         let (mut id, mut href) = (None::<String>, None::<String>);
                         for attr in e.attributes().flatten() {
                             let key = attr.key.local_name();
-                            let k = std::str::from_utf8(key.as_ref()).unwrap_or_default();
+                            let k = key.as_ref();
                             match k {
                                 "id" => {
                                     id = attr
@@ -195,7 +206,7 @@ fn parse_manifest_map(hpf_content: &str) -> (HashMap<String, String>, Vec<String
                     "itemref" if in_spine => {
                         for attr in e.attributes().flatten() {
                             let key = attr.key.local_name();
-                            let k = std::str::from_utf8(key.as_ref()).unwrap_or_default();
+                            let k = key.as_ref();
                             if k == "idref" {
                                 if let Ok(v) = attr.normalized_value(XmlVersion::Implicit1_0) {
                                     spine.push(v.into_owned());
@@ -208,7 +219,7 @@ fn parse_manifest_map(hpf_content: &str) -> (HashMap<String, String>, Vec<String
             }
             Ok(Event::End(ref e)) => {
                 let local = e.local_name();
-                if std::str::from_utf8(local.as_ref()).unwrap_or_default() == "spine" {
+                if local.as_ref() == "spine" {
                     in_spine = false;
                 }
             }

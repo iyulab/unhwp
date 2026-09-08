@@ -11,7 +11,7 @@ mod xml;
 
 pub use container::HwpxContainer;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::model::Document;
 use crate::streaming::{ParseEvent, SectionStreamOptions};
 use quick_xml::events::Event;
@@ -76,7 +76,7 @@ impl HwpxParser {
         self.parse_styles(&mut document)?;
 
         // Parse sections
-        self.parse_sections(&mut document)?;
+        self.parse_sections(&mut document, opts)?;
 
         // Extract resources (skip if not requested)
         if opts.extract_resources {
@@ -218,37 +218,71 @@ impl HwpxParser {
     }
 
     /// Parses styles from header.xml or section header.
+    ///
+    /// `header.xml` is optional, so its absence is not an error — but only its absence.
+    /// Matching on [`Error::MissingComponent`] rather than discarding every error keeps a
+    /// present-but-unreadable header from being indistinguishable from a missing one.
     fn parse_styles(&mut self, document: &mut Document) -> Result<()> {
-        if let Ok(styles_xml) = self.container.read_file("Contents/header.xml") {
-            styles::parse_styles(&styles_xml, &mut document.styles)?;
+        match self.container.read_file("Contents/header.xml") {
+            Ok(styles_xml) => styles::parse_styles(&styles_xml, &mut document.styles),
+            Err(Error::MissingComponent(_)) => Ok(()),
+            Err(e) => Err(e),
         }
-        Ok(())
     }
 
     /// Parses header options from header.xml.
+    ///
+    /// Optional in the same way, and narrowed for the same reason, as [`Self::parse_styles`].
     fn parse_header_options(&mut self, document: &mut Document) -> Result<()> {
-        if let Ok(header_xml) = self.container.read_file("Contents/header.xml") {
-            let is_distribution = header::parse_header(&header_xml)?;
-            document.metadata.is_distribution = is_distribution;
+        match self.container.read_file("Contents/header.xml") {
+            Ok(header_xml) => {
+                document.metadata.is_distribution = header::parse_header(&header_xml)?;
+                Ok(())
+            }
+            Err(Error::MissingComponent(_)) => Ok(()),
+            Err(e) => Err(e),
         }
-        Ok(())
     }
 
     /// Parses all sections.
     ///
     /// Uses parallel processing when there are multiple sections.
-    fn parse_sections(&mut self, document: &mut Document) -> Result<()> {
+    ///
+    /// Honours [`ErrorMode`]. Under the default [`Strict`] the first unreadable or
+    /// unparsable section fails the document; under [`Lenient`] such a section is skipped
+    /// and the rest are returned. This path used to skip unconditionally, which made a
+    /// damaged section indistinguishable from one that was never there — the caller got a
+    /// successful `Document` with content silently missing, while the streaming path
+    /// ([`Self::for_each_section`]) honoured the same option correctly.
+    ///
+    /// [`ErrorMode`]: crate::parse_options::ErrorMode
+    /// [`Strict`]: crate::parse_options::ErrorMode::Strict
+    /// [`Lenient`]: crate::parse_options::ErrorMode::Lenient
+    fn parse_sections(
+        &mut self,
+        document: &mut Document,
+        opts: &crate::ParseOptions,
+    ) -> Result<()> {
+        use crate::parse_options::ErrorMode;
+
+        let lenient = opts.error_mode == ErrorMode::Lenient;
         let section_files = self.container.list_sections()?;
 
         // Read all section XML content first (requires mutable borrow)
-        let section_data: Vec<(usize, String)> = section_files
-            .iter()
-            .enumerate()
-            .filter_map(|(index, path)| self.container.read_file(path).ok().map(|xml| (index, xml)))
-            .collect();
+        let mut section_data: Vec<(usize, String)> = Vec::with_capacity(section_files.len());
+        for (index, path) in section_files.iter().enumerate() {
+            match self.container.read_file(path) {
+                Ok(xml) => section_data.push((index, xml)),
+                Err(_) if lenient => {}
+                Err(e) => return Err(e),
+            }
+        }
 
         // Clone styles for parallel access
         let styles = document.styles.clone();
+
+        let parse_one =
+            |(index, xml): &(usize, String)| section::parse_section(xml, *index, &styles);
 
         // Use parallel processing only when there are enough sections to benefit
         // Threshold of 3 sections avoids parallel overhead for small documents
@@ -257,22 +291,41 @@ impl HwpxParser {
 
         #[cfg(not(target_arch = "wasm32"))]
         let mut sections: Vec<_> = if section_data.len() >= PARALLEL_THRESHOLD {
+            if lenient {
+                section_data
+                    .par_iter()
+                    .filter_map(|d| parse_one(d).ok())
+                    .collect()
+            } else {
+                section_data
+                    .par_iter()
+                    .map(parse_one)
+                    .collect::<Result<Vec<_>>>()?
+            }
+        } else if lenient {
             section_data
-                .par_iter()
-                .filter_map(|(index, xml)| section::parse_section(xml, *index, &styles).ok())
+                .iter()
+                .filter_map(|d| parse_one(d).ok())
                 .collect()
         } else {
             section_data
                 .iter()
-                .filter_map(|(index, xml)| section::parse_section(xml, *index, &styles).ok())
-                .collect()
+                .map(parse_one)
+                .collect::<Result<Vec<_>>>()?
         };
 
         #[cfg(target_arch = "wasm32")]
-        let mut sections: Vec<_> = section_data
-            .iter()
-            .filter_map(|(index, xml)| section::parse_section(xml, *index, &styles).ok())
-            .collect();
+        let mut sections: Vec<_> = if lenient {
+            section_data
+                .iter()
+                .filter_map(|d| parse_one(d).ok())
+                .collect()
+        } else {
+            section_data
+                .iter()
+                .map(parse_one)
+                .collect::<Result<Vec<_>>>()?
+        };
 
         // Sort by index to maintain order
         sections.sort_by_key(|s| s.index);
@@ -357,7 +410,7 @@ fn parse_metadata_xml(xml: &str) -> MetadataResult {
                     "meta" => {
                         // Check for name attribute
                         for attr in e.attributes().flatten() {
-                            if attr.key.local_name().as_ref() == b"name" {
+                            if attr.key.local_name().as_ref() == "name" {
                                 if let Ok(value) = attr.normalized_value(XmlVersion::Implicit1_0) {
                                     current_meta_name = Some(value.to_string());
                                 }
@@ -449,7 +502,7 @@ fn extract_keywords(xml: &str) -> Vec<String> {
 fn get_local_name(e: &quick_xml::events::BytesStart) -> String {
     let name = e.name();
     let local = name.local_name();
-    String::from_utf8_lossy(local.as_ref()).to_string()
+    local.as_ref().to_string()
 }
 
 /// Guesses MIME type from filename extension.
