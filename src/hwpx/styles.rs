@@ -27,7 +27,7 @@ pub fn parse_styles(xml: &str, registry: &mut StyleRegistry) -> Result<()> {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
                 let local_name = e.local_name();
-                let name = std::str::from_utf8(local_name.as_ref()).unwrap_or("");
+                let name = local_name.as_ref();
 
                 match name {
                     // Character shape/properties - HWPML uses "charShape" or "charPr"
@@ -218,7 +218,7 @@ pub fn parse_styles(xml: &str, registry: &mut StyleRegistry) -> Result<()> {
             }
             Ok(Event::End(e)) => {
                 let local_name = e.local_name();
-                let name = std::str::from_utf8(local_name.as_ref()).unwrap_or("");
+                let name = local_name.as_ref();
 
                 match name {
                     "charShape" | "charPr" | "charProperties" => {
@@ -260,10 +260,8 @@ fn parse_alignment(align: &str) -> Alignment {
 /// Gets the 'id' attribute as u32.
 fn get_id_attr(e: &quick_xml::events::BytesStart) -> u32 {
     for attr in e.attributes().flatten() {
-        if attr.key.as_ref() == b"id" {
-            if let Ok(val) = std::str::from_utf8(&attr.value) {
-                return val.parse().unwrap_or(0);
-            }
+        if attr.key.as_ref() == "id" {
+            return attr.value.parse().unwrap_or(0);
         }
     }
     0
@@ -272,10 +270,9 @@ fn get_id_attr(e: &quick_xml::events::BytesStart) -> u32 {
 /// Gets a boolean attribute value.
 fn get_bool_attr(e: &quick_xml::events::BytesStart, name: &str) -> Option<bool> {
     for attr in e.attributes().flatten() {
-        if attr.key.as_ref() == name.as_bytes() {
-            if let Ok(val) = std::str::from_utf8(&attr.value) {
-                return Some(val == "1" || val.to_lowercase() == "true");
-            }
+        if attr.key.as_ref() == name {
+            let val = attr.value.as_ref();
+            return Some(val == "1" || val.to_lowercase() == "true");
         }
     }
     None
@@ -284,10 +281,8 @@ fn get_bool_attr(e: &quick_xml::events::BytesStart, name: &str) -> Option<bool> 
 /// Gets a string attribute value.
 fn get_string_attr(e: &quick_xml::events::BytesStart, name: &str) -> Option<String> {
     for attr in e.attributes().flatten() {
-        if attr.key.as_ref() == name.as_bytes() {
-            if let Ok(val) = std::str::from_utf8(&attr.value) {
-                return Some(val.to_string());
-            }
+        if attr.key.as_ref() == name {
+            return Some(attr.value.to_string());
         }
     }
     None
@@ -296,10 +291,8 @@ fn get_string_attr(e: &quick_xml::events::BytesStart, name: &str) -> Option<Stri
 /// Gets a float attribute value.
 fn get_float_attr(e: &quick_xml::events::BytesStart, name: &str) -> Option<f32> {
     for attr in e.attributes().flatten() {
-        if attr.key.as_ref() == name.as_bytes() {
-            if let Ok(val) = std::str::from_utf8(&attr.value) {
-                return val.parse().ok();
-            }
+        if attr.key.as_ref() == name {
+            return attr.value.parse().ok();
         }
     }
     None
@@ -308,10 +301,8 @@ fn get_float_attr(e: &quick_xml::events::BytesStart, name: &str) -> Option<f32> 
 /// Gets an integer attribute value.
 fn get_int_attr(e: &quick_xml::events::BytesStart, name: &str) -> Option<i32> {
     for attr in e.attributes().flatten() {
-        if attr.key.as_ref() == name.as_bytes() {
-            if let Ok(val) = std::str::from_utf8(&attr.value) {
-                return val.parse().ok();
-            }
+        if attr.key.as_ref() == name {
+            return attr.value.parse().ok();
         }
     }
     None

@@ -10,10 +10,12 @@ npm install @iyulab/unhwp
 
 ## Usage (ES Module / browser)
 
-```js
-import init, { parse } from '@iyulab/unhwp';
+> 이 패키지는 `wasm-pack --target bundler` 로 빌드된 ES 모듈입니다. WebAssembly 바이너리가
+> 자동으로 초기화되므로 `await init()` 이 필요 없습니다 — 함수를 그대로 import 해 호출하세요.
+> 번들러(webpack, Vite, Rollup, esbuild)를 통해 사용합니다.
 
-await init();
+```js
+import { parse } from '@iyulab/unhwp';
 
 const response = await fetch('document.hwp');
 const data = new Uint8Array(await response.arrayBuffer());
@@ -43,7 +45,7 @@ HWP 또는 HWPX 파일 바이트를 파싱합니다. 파싱 실패 시 오류를
 ### `ParseOptions`
 
 ```js
-import { parse, ParseOptions } from '@iyulab/unhwp';
+import { parseWithOptions, ParseOptions } from '@iyulab/unhwp';
 
 const opts = new ParseOptions().lenient().textOnly();
 const doc = parseWithOptions(data, opts);

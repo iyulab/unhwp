@@ -18,16 +18,18 @@ use quick_xml::XmlVersion;
 ///
 /// In quick-xml 0.40+ text events no longer carry entity references (those are
 /// emitted as separate [`Event::GeneralRef`] events — see [`resolve_general_ref`]),
-/// so this only decodes the raw bytes and normalizes end-of-line sequences per
-/// the XML 1.0 rules. Decoding failures yield an empty string rather than
-/// aborting extraction, matching the library's graceful-degradation goal.
+/// so this only normalizes end-of-line sequences per the XML 1.0 rules.
+///
+/// There is no decoding failure to handle: since 0.42 the reader validates UTF-8
+/// when it builds the event, so `xml_content` yields a `Cow<str>` directly rather
+/// than a `Result`. The fallback this function used to carry was unreachable even
+/// before that — every reader in this crate is built with `Reader::from_str`, so
+/// the input is already valid UTF-8 by construction.
 ///
 /// [`Event::Text`]: quick_xml::events::Event::Text
 /// [`Event::GeneralRef`]: quick_xml::events::Event::GeneralRef
 pub(crate) fn decode_text(t: &BytesText) -> String {
-    t.xml_content(XmlVersion::Implicit1_0)
-        .map(|c| c.into_owned())
-        .unwrap_or_default()
+    t.xml_content(XmlVersion::Implicit1_0).into_owned()
 }
 
 /// Resolves an [`Event::GeneralRef`] entity reference to its string value.
@@ -38,10 +40,7 @@ pub(crate) fn decode_text(t: &BytesText) -> String {
 ///
 /// [`Event::GeneralRef`]: quick_xml::events::Event::GeneralRef
 pub(crate) fn resolve_general_ref(r: &BytesRef) -> String {
-    let name = match r.decode() {
-        Ok(n) => n,
-        Err(_) => return String::new(),
-    };
+    let name = r.as_ref();
 
     if let Some(num) = name.strip_prefix('#') {
         let codepoint = match num.strip_prefix(['x', 'X']) {
@@ -54,7 +53,7 @@ pub(crate) fn resolve_general_ref(r: &BytesRef) -> String {
             .unwrap_or_default();
     }
 
-    if let Some(value) = resolve_predefined_entity(&name) {
+    if let Some(value) = resolve_predefined_entity(name) {
         return value.to_string();
     }
 

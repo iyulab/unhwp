@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The WebAssembly usage examples no longer open with `import init` and `await init()`. The npm
+  package is built for bundlers, where the module initialises itself and no `init` export exists,
+  so anyone following the first example stopped on its first line. The `ParseOptions` example also
+  called `parseWithOptions` without importing it.
+
+### Changed
+
+- Refreshed the declared minimum for `colored` (2 → 3), `indicatif` (0.17 → 0.18),
+  `criterion` (0.5 → 0.8), `base64` (0.22 → 0.23), `pulldown-cmark` (0.12 → 0.13) and
+  `pulldown-cmark-to-cmark` (18 → 22). The `indicatif` bump is the one that matters: 0.17
+  pulled in `number_prefix`, which is unmaintained (RUSTSEC-2025-0119), and 0.18 does not
+  depend on it. `criterion` 0.8 deprecates its `black_box` re-export in favour of
+  `std::hint::black_box`, which the benchmark now uses.
+
+- Updated `quick-xml` to 0.42, which replaces its byte-oriented event API with a string-oriented
+  one (`QName`, `LocalName` and `Attribute::value` now carry `str`/`Cow<str>` instead of bytes).
+  Parsing behaviour is unchanged: every reader in this crate is constructed from a `&str`, so the
+  UTF-8 validation the new API performs sits on input that is already valid by construction. The
+  decode-and-fall-back code the old API required around each element name and attribute was
+  therefore unreachable, and has been removed rather than translated — it suggested a tolerance for
+  malformed bytes that the parser has never actually had. Where invalid UTF-8 does enter, it is
+  still rejected at the point it is read, as `ErrorKind::Encoding`.
+
+### Fixed
+
+- ⚠️ **A damaged section in an HWPX package no longer disappears silently.** `ErrorMode`
+  documents `Strict` — "fail immediately on any error" — as its default, and the streaming
+  parser honoured it, but the batch parser (`parse_file`, `parse_bytes`, and their
+  `_with_options` forms) skipped any section it could not read or parse regardless of the
+  setting. A package with an unreadable section therefore parsed "successfully" into a
+  document with that section's content missing, indistinguishable from a package that never
+  had it. Both paths now honour the option: under the default `Strict` such a package fails,
+  and under `Lenient` the readable sections are returned as before. Callers that relied on
+  the previous behaviour should pass `ErrorMode::Lenient` explicitly.
+- `header.xml` being *unreadable* is no longer treated as it being *absent*. The part is
+  optional, so a missing one is still not an error, but every other failure — a malformed
+  part included — used to be discarded along with it.
+- Bytes in an XML part that are not valid UTF-8 are now reported as `ErrorKind::Encoding`
+  instead of `ErrorKind::Io`. The condition was classified by where it was noticed (the
+  reader raising `InvalidData`) rather than by what went wrong, so a consumer branching on
+  the kind saw an I/O problem where the cause was a malformed document. This matches what
+  the crate already did for the UTF-16 paths, and what `From<std::str::Utf8Error>` states.
+
 ## [0.9.1] - 2026-08-21
 
 ### Fixed

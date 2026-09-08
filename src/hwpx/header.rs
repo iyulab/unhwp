@@ -18,15 +18,14 @@ pub fn parse_header(xml: &str) -> Result<bool> {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
                 let local_name = e.local_name();
-                let name = std::str::from_utf8(local_name.as_ref()).unwrap_or("");
+                let name = local_name.as_ref();
 
                 // Check for hh:docOption or docOption
                 if name == "docOption" || name.ends_with(":docOption") {
                     for attr in e.attributes().flatten() {
-                        if attr.key.local_name().as_ref() == b"distribute" {
-                            if let Ok(val) = std::str::from_utf8(&attr.value) {
-                                is_distribution = val == "true" || val == "1";
-                            }
+                        if attr.key.local_name().as_ref() == "distribute" {
+                            let val = attr.value.as_ref();
+                            is_distribution = val == "true" || val == "1";
                         }
                     }
                     return Ok(is_distribution);

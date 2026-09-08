@@ -580,24 +580,18 @@ impl<'a> SectionParser<'a> {
 
 /// Gets the local name of an element (without namespace prefix).
 fn get_local_name(e: &quick_xml::events::BytesStart) -> String {
-    std::str::from_utf8(e.local_name().as_ref())
-        .unwrap_or("")
-        .to_string()
+    e.local_name().as_ref().to_string()
 }
 
 fn get_local_name_end(e: &quick_xml::events::BytesEnd) -> String {
-    std::str::from_utf8(e.local_name().as_ref())
-        .unwrap_or("")
-        .to_string()
+    e.local_name().as_ref().to_string()
 }
 
 /// Gets a u32 attribute value.
 fn get_attr_u32(e: &quick_xml::events::BytesStart, name: &str) -> Option<u32> {
     for attr in e.attributes().flatten() {
-        if attr.key.as_ref() == name.as_bytes() {
-            if let Ok(val) = std::str::from_utf8(&attr.value) {
-                return val.parse().ok();
-            }
+        if attr.key.as_ref() == name {
+            return attr.value.parse().ok();
         }
     }
     None
@@ -606,10 +600,8 @@ fn get_attr_u32(e: &quick_xml::events::BytesStart, name: &str) -> Option<u32> {
 /// Gets a string attribute value.
 fn get_attr_string(e: &quick_xml::events::BytesStart, name: &str) -> Option<String> {
     for attr in e.attributes().flatten() {
-        if attr.key.as_ref() == name.as_bytes() {
-            if let Ok(val) = std::str::from_utf8(&attr.value) {
-                return Some(val.to_string());
-            }
+        if attr.key.as_ref() == name {
+            return Some(attr.value.to_string());
         }
     }
     None

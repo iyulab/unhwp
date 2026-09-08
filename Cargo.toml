@@ -31,7 +31,7 @@ cfb = "0.14"
 flate2 = "1.0"
 
 # XML parsing (HWPX)
-quick-xml = "0.41"
+quick-xml = "0.42"
 
 # Error handling
 thiserror = "2.0"
@@ -50,8 +50,8 @@ regex = "1.11"
 unicode-normalization = "0.1"
 
 # Markdown parsing (cleanup pipeline Stage 3)
-pulldown-cmark = { version = "0.12", default-features = false }
-pulldown-cmark-to-cmark = "18"
+pulldown-cmark = { version = "0.13", default-features = false }
+pulldown-cmark-to-cmark = "22"
 
 # Lossless, idempotent markdown shape-refinement pass (RenderOptions.refine).
 # Depends on the same pulldown-cmark/pulldown-cmark-to-cmark pins already
@@ -89,7 +89,7 @@ tokio = { version = "1.42", features = ["fs", "io-util", "rt", "macros"], option
 zip = { version = "8.6", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = "0.8"
 tempfile = "3.14"
 rand = "0.8"
 
