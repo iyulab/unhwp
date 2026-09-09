@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "unhwp"
-version = "0.9.1"
+version = "0.10.0"
 edition = "2021"
 authors = ["iyulab"]
 description = "A high-performance library for extracting HWP/HWPX documents into structured Markdown"
@@ -12,7 +12,7 @@ license = "MIT"
 repository = "https://github.com/iyulab/unhwp"
 keywords = ["hwp", "hwpx", "korean", "document", "markdown"]
 categories = ["parser-implementations", "text-processing"]
-rust-version = "1.87"
+rust-version = "1.88"
 documentation = "https://docs.rs/unhwp"
 
 [features]
