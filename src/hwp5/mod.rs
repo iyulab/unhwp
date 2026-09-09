@@ -416,8 +416,11 @@ fn read_ole_string(section_data: &[u8], prop_off: usize, vt_type: u16) -> Option
                 return None;
             }
             let u16_vals: Vec<u16> = section_data[start..end]
-                .chunks_exact(2)
-                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .copied()
+                .map(u16::from_le_bytes)
                 .collect();
             Some(String::from_utf16_lossy(&u16_vals))
         }

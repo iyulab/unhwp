@@ -532,8 +532,8 @@ fn parse_style(record: &Record) -> Result<StyleData> {
 fn decode_utf16le_string(data: &[u8]) -> Result<String> {
     let mut u16_values = Vec::new();
 
-    for chunk in data.chunks_exact(2) {
-        let value = u16::from_le_bytes([chunk[0], chunk[1]]);
+    for &chunk in data.as_chunks::<2>().0 {
+        let value = u16::from_le_bytes(chunk);
         if value == 0 {
             break;
         }
@@ -574,8 +574,11 @@ fn parse_bindata_record(record: &Record) -> Option<(u16, String)> {
     let ext = if ext_len > 0 && 6 + ext_len * 2 <= data.len() {
         let ext_data = &data[6..6 + ext_len * 2];
         let u16_values: Vec<u16> = ext_data
-            .chunks_exact(2)
-            .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .copied()
+            .map(u16::from_le_bytes)
             .take_while(|&v| v != 0)
             .collect();
         String::from_utf16_lossy(&u16_values)
