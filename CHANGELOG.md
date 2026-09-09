@@ -5,14 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Fixed
-
-- The WebAssembly usage examples no longer open with `import init` and `await init()`. The npm
-  package is built for bundlers, where the module initialises itself and no `init` export exists,
-  so anyone following the first example stopped on its first line. The `ParseOptions` example also
-  called `parseWithOptions` without importing it.
+## [0.10.0] - 2026-09-09
 
 ### Changed
 
@@ -32,8 +25,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   malformed bytes that the parser has never actually had. Where invalid UTF-8 does enter, it is
   still rejected at the point it is read, as `ErrorKind::Encoding`.
 
+- The declared minimum supported Rust version is now 1.88. It had said 1.87, which the crate
+  has not actually built on for some time — a dependency in the tree raised its own floor —
+  so anyone taking the manifest at its word got a compile error rather than a clear refusal.
+  CI now builds the workspace on exactly the declared version, so the two cannot drift apart
+  again.
+  The CLI crate, published alongside the library, now declares it as well — it named no
+  minimum at all, which reads as "any version" to anyone checking.
+
 ### Fixed
 
+- The WebAssembly usage examples no longer open with `import init` and `await init()`. The npm
+  package is built for bundlers, where the module initialises itself and no `init` export exists,
+  so anyone following the first example stopped on its first line. The `ParseOptions` example also
+  called `parseWithOptions` without importing it.
 - ⚠️ **A damaged section in an HWPX package no longer disappears silently.** `ErrorMode`
   documents `Strict` — "fail immediately on any error" — as its default, and the streaming
   parser honoured it, but the batch parser (`parse_file`, `parse_bytes`, and their
@@ -435,8 +440,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `thiserror` for error types
 - `bytes` for buffer handling
 
-[Unreleased]: https://github.com/iyulab/unhwp/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/iyulab/unhwp/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/iyulab/unhwp/compare/v0.9.1...v0.10.0
+[0.9.1]: https://github.com/iyulab/unhwp/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/iyulab/unhwp/compare/v0.8.1...v0.9.0
+[0.8.1]: https://github.com/iyulab/unhwp/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/iyulab/unhwp/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/iyulab/unhwp/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/iyulab/unhwp/compare/v0.5.3...v0.6.0
+[0.5.3]: https://github.com/iyulab/unhwp/compare/v0.5.2...v0.5.3
+[0.5.2]: https://github.com/iyulab/unhwp/compare/v0.5.1...v0.5.2
+[0.4.0]: https://github.com/iyulab/unhwp/compare/v0.1.4...v0.4.0
 [0.3.0]: https://github.com/iyulab/unhwp/compare/v0.2.5...v0.3.0
 [0.2.5]: https://github.com/iyulab/unhwp/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/iyulab/unhwp/compare/v0.1.3...v0.2.4
