@@ -430,7 +430,6 @@ unparser_shared::export_free_bytes!(
 mod tests {
     use super::*;
     use std::ffi::{CStr, CString};
-    use std::path::Path;
 
     #[test]
     fn test_version() {
@@ -472,35 +471,36 @@ mod tests {
         assert_eq!(unhwp_last_error_kind(), UNHWP_ERROR_INVALID_ARGUMENT);
     }
 
+    /// Takes an owned copy of a returned string and frees the original.
+    fn take_string(ptr: *mut c_char) -> String {
+        assert!(!ptr.is_null());
+        let owned = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().to_owned();
+        unsafe { unhwp_free_string(ptr) };
+        owned
+    }
+
     #[test]
     fn test_parse_and_convert() {
-        let path = "test-files/sample.hwp";
-        if !Path::new(path).exists() {
-            return;
-        }
-
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/two_sections.hwpx"
+        );
         let path_cstr = CString::new(path).unwrap();
         let doc = unsafe { unhwp_parse_file(path_cstr.as_ptr()) };
-        assert!(!doc.is_null());
+        assert!(!doc.is_null(), "the committed fixture must parse");
 
-        // Test markdown conversion
-        let md = unsafe { unhwp_to_markdown(doc, 0) };
-        assert!(!md.is_null());
-        unsafe { unhwp_free_string(md) };
+        let md = take_string(unsafe { unhwp_to_markdown(doc, 0) });
+        assert!(md.contains("Section zero content"), "markdown: {md}");
+        assert!(md.contains("Section one content"), "markdown: {md}");
 
-        // Test text conversion
-        let text = unsafe { unhwp_to_text(doc) };
-        assert!(!text.is_null());
-        unsafe { unhwp_free_string(text) };
+        let text = take_string(unsafe { unhwp_to_text(doc) });
+        assert!(text.contains("Section zero content"), "text: {text}");
+        assert!(text.contains("Section one content"), "text: {text}");
 
-        // Test JSON conversion
-        let json = unsafe { unhwp_to_json(doc, UNHWP_JSON_PRETTY) };
-        assert!(!json.is_null());
-        unsafe { unhwp_free_string(json) };
+        let json = take_string(unsafe { unhwp_to_json(doc, UNHWP_JSON_PRETTY) });
+        assert!(json.contains("Section one content"), "json: {json}");
 
-        // Test section count
-        let count = unsafe { unhwp_section_count(doc) };
-        assert!(count >= 0);
+        assert_eq!(unsafe { unhwp_section_count(doc) }, 2);
 
         // A successful call resets the kind, or a caller polling
         // `unhwp_last_error_kind` after success would see a stale failure.
