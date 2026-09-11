@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   formats; the HWP 5.0 batch path now does too. Under the default `Strict` such a document
   fails, and under `Lenient` the readable sections are returned as before. Callers that
   relied on the previous behaviour should pass `ErrorMode::Lenient` explicitly.
+- ⚠️ **A truncated or malformed record in an HWP 5.0 section is now an error, not partial
+  content.** Section parsing discarded record errors, and the record reader kept going after
+  one, so the bytes following a truncated record could be read as further records — damage
+  could surface as wrong text rather than as a failure. The reader now stops at the first
+  malformed record and the section reports it as `ErrorKind::RecordParse`, the same way the
+  `DocInfo` stream already did; `ErrorMode` then applies as for any unparsable section
+  (`Strict` fails the document, `Lenient` skips that section).
 
 ## [0.11.0] - 2026-09-11
 

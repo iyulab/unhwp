@@ -287,10 +287,15 @@ impl<'a> Iterator for RecordIterator<'a> {
 
         let offset = self.position as u64;
 
-        // Parse header
+        // Parse header. Any error ends the iteration: the stream past a malformed record
+        // has no trustworthy record boundary, so reading on would interpret whatever bytes
+        // follow -- possibly the truncated record's own data -- as further records.
         let (header, header_size) = match RecordHeader::parse(&self.data[self.position..]) {
             Ok(h) => h,
-            Err(e) => return Some(Err(e)),
+            Err(e) => {
+                self.position = self.data.len();
+                return Some(Err(e));
+            }
         };
 
         self.position += header_size;
@@ -298,11 +303,13 @@ impl<'a> Iterator for RecordIterator<'a> {
         // Read data
         let data_end = self.position + header.size as usize;
         if data_end > self.data.len() {
+            let position = self.position;
+            self.position = self.data.len();
             return Some(Err(Error::RecordParse {
                 offset,
                 message: format!(
                     "Record data exceeds stream bounds: {} + {} > {}",
-                    self.position,
+                    position,
                     header.size,
                     self.data.len()
                 ),
@@ -377,5 +384,33 @@ mod tests {
         assert_eq!(r2.tag_id(), 67);
         assert_eq!(r2.tag(), TagId::ParaText);
         assert_eq!(r2.data(), &[0xCC, 0xDD, 0xEE]);
+    }
+
+    /// A record whose size runs past the end of the stream is an error, and nothing after it
+    /// may be read as a record: those bytes belong to the truncated record's data, so
+    /// interpreting them as a header would turn corruption into content.
+    #[test]
+    fn test_record_iterator_stops_after_a_truncated_record() {
+        let mut data = Vec::new();
+
+        // Record 1: Tag 66 (ParaHeader), Level 0, Size 2 -- intact.
+        data.extend_from_slice(&[0x42, 0x00, 0x20, 0x00]);
+        data.extend_from_slice(&[0xAA, 0xBB]);
+
+        // Record 2: Tag 67 (ParaText), Level 0, Size 200 -- only 7 bytes follow.
+        data.extend_from_slice(&(67u32 | (200 << 20)).to_le_bytes());
+        // Those 7 bytes happen to look like a complete record (tag 66, size 3).
+        data.extend_from_slice(&[0x42, 0x00, 0x30, 0x00, 0xCC, 0xDD, 0xEE]);
+
+        let mut records = RecordIterator::new(&data);
+        assert!(records.next().unwrap().is_ok());
+        assert!(matches!(
+            records.next(),
+            Some(Err(Error::RecordParse { .. }))
+        ));
+        assert!(
+            records.next().is_none(),
+            "the iterator resumed inside the truncated record's data"
+        );
     }
 }

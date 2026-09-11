@@ -146,17 +146,68 @@ fn an_encrypted_document_is_refused_as_encrypted() {
 
 /// `ErrorMode::Strict` is the default. A section that cannot be read must fail the
 /// document rather than vanish from it -- otherwise a damaged file and a file that never
-/// had that section are indistinguishable to the caller.
+/// had that section are indistinguishable to the caller. The kind is pinned too: "it
+/// failed" alone would also pass for a failure with an unrelated cause.
 #[test]
 fn a_damaged_section_fails_the_document_by_default() {
     match parse_bytes(&damaged_second_section()) {
-        Err(_) => {}
+        Err(err) => assert_eq!(err.kind(), ErrorKind::Decompression, "got: {err}"),
         Ok(doc) => panic!(
             "a document with an unreadable section parsed instead of failing; it produced \
              {} section(s)",
             doc.sections.len()
         ),
     }
+}
+
+/// A section that decompresses fine but whose last record claims more bytes than remain.
+fn truncated_section() -> Vec<u8> {
+    let mut out = section("before the cut");
+    out.extend_from_slice(&(PARA_TEXT | (1 << 10) | (200 << 20)).to_le_bytes());
+    out.extend_from_slice(&[0x41, 0x00, 0x42, 0x00]); // 4 of the 200 bytes promised
+    out
+}
+
+fn truncated_second_section() -> Vec<u8> {
+    hwp5(
+        COMPRESSED,
+        &[
+            Body::Records(section("kept")),
+            Body::Records(truncated_section()),
+        ],
+    )
+}
+
+/// A record that runs past the end of its section is a record-structure error, and it
+/// reaches the caller as one -- `ErrorKind::RecordParse` exists for exactly this and is
+/// part of the binding surface.
+#[test]
+fn a_truncated_record_fails_the_document_by_default() {
+    match parse_bytes(&truncated_second_section()) {
+        Err(err) => assert_eq!(err.kind(), ErrorKind::RecordParse, "got: {err}"),
+        Ok(doc) => panic!(
+            "a document with a truncated record parsed instead of failing: {:?}",
+            doc.plain_text()
+        ),
+    }
+}
+
+/// Under `Lenient` the section holding the truncated record is skipped like any other
+/// unparsable section -- whole, so none of its half-read content leaks into the output.
+#[test]
+fn lenient_mode_skips_a_section_with_a_truncated_record() {
+    let opts = ParseOptions {
+        error_mode: ErrorMode::Lenient,
+        ..ParseOptions::default()
+    };
+
+    let doc = parse_bytes_with_options(&truncated_second_section(), &opts)
+        .expect("lenient parsing must not fail on a truncated record");
+
+    assert_eq!(doc.sections.len(), 1);
+    let text = doc.plain_text();
+    assert!(text.contains("kept"), "{text:?}");
+    assert!(!text.contains("before the cut"), "{text:?}");
 }
 
 /// The other half of the option: a caller that asked to salvage what it can still gets the

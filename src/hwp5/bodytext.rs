@@ -79,8 +79,10 @@ pub fn parse_section(
     styles: &StyleRegistry,
     picture_counter: &mut u32,
 ) -> Result<Section> {
-    // First, collect all records into a Vec for indexed access
-    let records: Vec<Record> = RecordIterator::new(data).filter_map(|r| r.ok()).collect();
+    // Collect all records into a Vec for indexed access. A malformed record fails the
+    // section -- the same contract `docinfo::parse_docinfo` keeps -- so the caller's
+    // `ErrorMode` decides what happens to it instead of the damage being dropped here.
+    let records: Vec<Record> = RecordIterator::new(data).collect::<Result<Vec<_>>>()?;
 
     let mut section = Section::new(section_index);
     let mut paragraph_context = ParagraphContext::new();
