@@ -2365,7 +2365,7 @@ checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
 
 [[package]]
 name = "unhwp"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "cfb",
  "criterion",
@@ -2389,7 +2389,7 @@ dependencies = [
 
 [[package]]
 name = "unhwp-cli"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "clap",
  "colored",
@@ -2404,7 +2404,7 @@ dependencies = [
 
 [[package]]
 name = "unhwp-wasm"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "base64 0.23.1",
  "js-sys",
