@@ -1,0 +1,211 @@
+//! HWP 5.0 documents, end to end: from the OLE container through the section records to
+//! the document model.
+//!
+//! The unit tests in `hwp5::bodytext` start from a section's record bytes, and the only
+//! committed fixture is an HWPX package, so nothing opened an actual HWP 5.0 container:
+//! the container, decompression, section enumeration and error-mode paths never ran.
+//! These tests assemble minimal containers in memory -- a `FileHeader`, an empty
+//! `DocInfo`, and one `BodyText/Section{n}` stream per section.
+
+use std::io::{Cursor, Write};
+use std::ops::ControlFlow;
+
+use unhwp::{
+    parse_bytes, parse_bytes_with_options, parse_file_streaming, ErrorKind, ErrorMode, ParseEvent,
+    ParseOptions, SectionStreamOptions,
+};
+
+const PARA_HEADER: u32 = 66;
+const PARA_TEXT: u32 = 67;
+
+const COMPRESSED: u32 = 1 << 0;
+const ENCRYPTED: u32 = 1 << 1;
+
+/// A record: 4-byte header (tag | level << 10 | size << 20) followed by its data.
+fn record(tag: u32, level: u32, data: &[u8]) -> Vec<u8> {
+    let header = tag | (level << 10) | ((data.len() as u32) << 20);
+    let mut out = header.to_le_bytes().to_vec();
+    out.extend_from_slice(data);
+    out
+}
+
+/// A section holding one paragraph of `text`.
+fn section(text: &str) -> Vec<u8> {
+    let utf16: Vec<u8> = text.encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let mut out = record(PARA_HEADER, 0, &[0u8; 8]);
+    out.extend(record(PARA_TEXT, 1, &utf16));
+    out
+}
+
+fn file_header(flags: u32) -> Vec<u8> {
+    let mut header = vec![0u8; 256];
+    header[..17].copy_from_slice(b"HWP Document File");
+    header[32..36].copy_from_slice(&[0, 0, 1, 5]); // revision, build, minor, major
+    header[36..40].copy_from_slice(&flags.to_le_bytes());
+    header
+}
+
+fn deflate(data: &[u8]) -> Vec<u8> {
+    let mut encoder =
+        flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder.write_all(data).unwrap();
+    encoder.finish().unwrap()
+}
+
+/// What goes into one `BodyText/Section{n}` stream.
+enum Body<'a> {
+    /// Section records, deflated when the header says the document is compressed.
+    Records(Vec<u8>),
+    /// Bytes written verbatim -- a stream the reader cannot make sense of.
+    Raw(&'a [u8]),
+}
+
+/// A minimal HWP 5.0 container.
+fn hwp5(flags: u32, sections: &[Body]) -> Vec<u8> {
+    let compressed = flags & COMPRESSED != 0;
+    let pack = |data: &[u8]| {
+        if compressed {
+            deflate(data)
+        } else {
+            data.to_vec()
+        }
+    };
+
+    let mut cfb = cfb::CompoundFile::create(Cursor::new(Vec::new())).unwrap();
+    cfb.create_stream("/FileHeader")
+        .unwrap()
+        .write_all(&file_header(flags))
+        .unwrap();
+    cfb.create_stream("/DocInfo")
+        .unwrap()
+        .write_all(&pack(&[]))
+        .unwrap();
+    cfb.create_storage("/BodyText").unwrap();
+    for (index, body) in sections.iter().enumerate() {
+        let bytes = match body {
+            Body::Records(records) => pack(records),
+            Body::Raw(raw) => raw.to_vec(),
+        };
+        cfb.create_stream(format!("/BodyText/Section{index}"))
+            .unwrap()
+            .write_all(&bytes)
+            .unwrap();
+    }
+    cfb.flush().unwrap();
+    cfb.into_inner().into_inner()
+}
+
+/// `0xFF` opens a deflate block of type 3, which is reserved -- no decoder accepts it.
+const NOT_DEFLATE: &[u8] = &[0xFF; 16];
+
+fn two_sections(flags: u32) -> Vec<u8> {
+    hwp5(
+        flags,
+        &[
+            Body::Records(section("첫 번째 구역")),
+            Body::Records(section("Second section")),
+        ],
+    )
+}
+
+fn damaged_second_section() -> Vec<u8> {
+    hwp5(
+        COMPRESSED,
+        &[Body::Records(section("kept")), Body::Raw(NOT_DEFLATE)],
+    )
+}
+
+#[test]
+fn an_uncompressed_document_parses_end_to_end() {
+    let doc = parse_bytes(&two_sections(0)).expect("a well-formed container must parse");
+
+    assert_eq!(doc.sections.len(), 2);
+    let text = doc.plain_text();
+    let first = text.find("첫 번째 구역").expect("first section's text");
+    let second = text.find("Second section").expect("second section's text");
+    assert!(first < second, "sections must keep their order: {text:?}");
+    assert_eq!(doc.metadata.format_version.as_deref(), Some("5.1.0.0"));
+}
+
+/// Most real documents set the compression bit, so the deflate path is the ordinary one.
+#[test]
+fn a_compressed_document_parses_to_the_same_content() {
+    let plain = parse_bytes(&two_sections(0)).unwrap();
+    let compressed = parse_bytes(&two_sections(COMPRESSED)).unwrap();
+
+    assert_eq!(compressed.sections.len(), 2);
+    assert_eq!(compressed.plain_text(), plain.plain_text());
+}
+
+#[test]
+fn an_encrypted_document_is_refused_as_encrypted() {
+    let err = parse_bytes(&two_sections(COMPRESSED | ENCRYPTED)).unwrap_err();
+
+    assert_eq!(err.kind(), ErrorKind::Encrypted, "got: {err}");
+}
+
+/// `ErrorMode::Strict` is the default. A section that cannot be read must fail the
+/// document rather than vanish from it -- otherwise a damaged file and a file that never
+/// had that section are indistinguishable to the caller.
+#[test]
+fn a_damaged_section_fails_the_document_by_default() {
+    match parse_bytes(&damaged_second_section()) {
+        Err(_) => {}
+        Ok(doc) => panic!(
+            "a document with an unreadable section parsed instead of failing; it produced \
+             {} section(s)",
+            doc.sections.len()
+        ),
+    }
+}
+
+/// The other half of the option: a caller that asked to salvage what it can still gets the
+/// readable sections. Pinning both halves keeps the option meaningful -- with only the
+/// strict test, hard-coding a failure would pass.
+#[test]
+fn lenient_mode_skips_the_damaged_section_and_keeps_the_rest() {
+    let opts = ParseOptions {
+        error_mode: ErrorMode::Lenient,
+        ..ParseOptions::default()
+    };
+
+    let doc = parse_bytes_with_options(&damaged_second_section(), &opts)
+        .expect("lenient parsing must not fail on a damaged section");
+
+    assert_eq!(doc.sections.len(), 1);
+    assert!(doc.plain_text().contains("kept"));
+}
+
+/// The streaming parser already honoured the option; the batch parser must agree with it
+/// on the same input, in both modes.
+#[test]
+fn the_streaming_parser_agrees_on_the_same_damaged_document() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("damaged.hwp");
+    std::fs::write(&path, damaged_second_section()).unwrap();
+
+    let strict = parse_file_streaming(&path, SectionStreamOptions::default(), |_| {
+        ControlFlow::Continue(())
+    });
+    assert!(
+        strict.is_err(),
+        "strict streaming must fail on the damaged section"
+    );
+
+    let lenient = SectionStreamOptions {
+        error_mode: ErrorMode::Lenient,
+        ..SectionStreamOptions::default()
+    };
+    let (mut parsed, mut failed) = (Vec::new(), Vec::new());
+    parse_file_streaming(&path, lenient, |event| {
+        match event {
+            ParseEvent::SectionParsed(section) => parsed.push(section.index),
+            ParseEvent::SectionFailed { index, .. } => failed.push(index),
+            _ => {}
+        }
+        ControlFlow::Continue(())
+    })
+    .expect("lenient streaming must not fail");
+    assert_eq!(parsed, [0]);
+    assert_eq!(failed, [1]);
+}

@@ -81,7 +81,7 @@ impl Hwp5Parser {
         self.parse_docinfo(&mut document)?;
 
         // Parse BodyText sections
-        self.parse_bodytext(&mut document)?;
+        self.parse_bodytext(&mut document, opts)?;
 
         // Extract BinData resources (skip if resources not requested)
         if opts.extract_resources {
@@ -206,38 +206,47 @@ impl Hwp5Parser {
         Ok(())
     }
 
-    /// Parses BodyText sections.
-    /// Parses BodyText sections sequentially to share picture counter across sections.
-    fn parse_bodytext(&self, document: &mut Document) -> Result<()> {
+    /// Parses BodyText sections, sequentially so the picture counter is shared across them.
+    ///
+    /// Honours [`ErrorMode`]. Under the default [`Strict`] the first unreadable or
+    /// unparsable section fails the document; under [`Lenient`] such a section is skipped
+    /// and the rest are returned. This path used to skip unconditionally, which made a
+    /// damaged section indistinguishable from one that was never there, while the
+    /// streaming path ([`Self::for_each_section`]) and the HWPX batch path honoured the
+    /// same option.
+    ///
+    /// [`ErrorMode`]: crate::parse_options::ErrorMode
+    /// [`Strict`]: crate::parse_options::ErrorMode::Strict
+    /// [`Lenient`]: crate::parse_options::ErrorMode::Lenient
+    fn parse_bodytext(&self, document: &mut Document, opts: &crate::ParseOptions) -> Result<()> {
+        use crate::parse_options::ErrorMode;
+
+        let lenient = opts.error_mode == ErrorMode::Lenient;
         let section_names = self.container.list_bodytext_sections()?;
         let is_compressed = self.is_compressed();
 
-        // Read all section data first
-        let section_data: Vec<(usize, Vec<u8>)> = section_names
-            .iter()
-            .enumerate()
-            .filter_map(|(index, name)| {
-                self.container
-                    .read_stream_decompressed(name, is_compressed)
-                    .ok()
-                    .map(|data| (index, data))
-            })
-            .collect();
+        let mut section_data: Vec<(usize, Vec<u8>)> = Vec::with_capacity(section_names.len());
+        for (index, name) in section_names.iter().enumerate() {
+            match self.container.read_stream_decompressed(name, is_compressed) {
+                Ok(data) => section_data.push((index, data)),
+                Err(_) if lenient => {}
+                Err(e) => return Err(e),
+            }
+        }
 
         let styles = document.styles.clone();
 
-        // Parse sections sequentially to share picture_counter across sections.
-        // This ensures BinId references remain correct even in multi-section documents.
+        // One counter across all sections keeps BinId references correct in
+        // multi-section documents. Iterating in index order also keeps the output ordered.
         let mut picture_counter: u32 = 0;
-        let mut sections: Vec<_> = section_data
-            .iter()
-            .filter_map(|(index, data)| {
-                bodytext::parse_section(data, *index, &styles, &mut picture_counter).ok()
-            })
-            .collect();
-
-        // Sort by index to maintain order
-        sections.sort_by_key(|s| s.index);
+        let mut sections = Vec::with_capacity(section_data.len());
+        for (index, data) in &section_data {
+            match bodytext::parse_section(data, *index, &styles, &mut picture_counter) {
+                Ok(section) => sections.push(section),
+                Err(_) if lenient => {}
+                Err(e) => return Err(e),
+            }
+        }
 
         document.sections = sections;
         Ok(())

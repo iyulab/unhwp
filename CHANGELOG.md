@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- ⚠️ **A damaged section in an HWP 5.0 document no longer disappears silently.** The batch
+  parser (`parse_file`, `parse_bytes`, and their `_with_options` forms) skipped any
+  `BodyText` section it could not read or decompress regardless of `ErrorMode`, so such a
+  document parsed "successfully" with that section's content missing. HWPX packages were
+  corrected in 0.10.0 and the streaming parser already honoured the option for both
+  formats; the HWP 5.0 batch path now does too. Under the default `Strict` such a document
+  fails, and under `Lenient` the readable sections are returned as before. Callers that
+  relied on the previous behaviour should pass `ErrorMode::Lenient` explicitly.
+
 ## [0.11.0] - 2026-09-11
 
 ### Changed
