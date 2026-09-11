@@ -151,7 +151,7 @@ pub fn parse_section(
 
                 // Parse table from the collected records
                 if let Some(table) =
-                    parse_table_records(&records[idx..table_end], styles, picture_counter)
+                    parse_table_records(&records[idx..table_end], styles, picture_counter)?
                 {
                     section.content.push(crate::model::Block::Table(table));
                 }
@@ -228,24 +228,28 @@ fn find_block_end(records: &[Record], start_idx: usize, base_level: u16) -> usiz
 }
 
 /// Parses table records into a Table structure.
+///
+/// `Ok(None)` means the records do not describe a table this parser recognises (the
+/// structure is tolerated, as before). An error inside a cell's content is returned: a cell
+/// is parsed with the same contract as any other paragraph in the section.
 fn parse_table_records(
     records: &[Record],
     styles: &StyleRegistry,
     picture_counter: &mut u32,
-) -> Option<Table> {
+) -> Result<Option<Table>> {
     if records.is_empty() {
-        return None;
+        return Ok(None);
     }
 
     // First record should be Table tag with table properties
     let table_record = &records[0];
     if table_record.tag() != TagId::Table {
-        return None;
+        return Ok(None);
     }
 
     let data = table_record.data();
     if data.len() < 14 {
-        return None;
+        return Ok(None);
     }
 
     // Table record structure:
@@ -258,7 +262,7 @@ fn parse_table_records(
     let col_count = u16::from_le_bytes([data[6], data[7]]) as usize;
 
     if row_count == 0 || col_count == 0 {
-        return None;
+        return Ok(None);
     }
 
     // Find all cell ListHeaders and their content
@@ -277,7 +281,7 @@ fn parse_table_records(
             // Find all records belonging to this cell
             let cell_end = find_cell_end(records, i, record.level());
 
-            let cell_content = parse_cell_content(&records[i..cell_end], styles, picture_counter);
+            let cell_content = parse_cell_content(&records[i..cell_end], styles, picture_counter)?;
             cells_data.push(cell_content);
             i = cell_end;
         } else {
@@ -342,7 +346,7 @@ fn parse_table_records(
     // Set header flag if we have at least one row
     table.has_header = !table.rows.is_empty();
 
-    Some(table)
+    Ok(Some(table))
 }
 
 /// Data for a single table cell
@@ -374,7 +378,7 @@ fn parse_cell_content(
     records: &[Record],
     styles: &StyleRegistry,
     picture_counter: &mut u32,
-) -> CellData {
+) -> Result<CellData> {
     let mut paragraphs = Vec::new();
     let mut rowspan = 1u32;
     let mut colspan = 1u32;
@@ -382,13 +386,13 @@ fn parse_cell_content(
     let mut col = 0u16;
 
     if records.is_empty() {
-        return CellData {
+        return Ok(CellData {
             paragraphs,
             rowspan,
             colspan,
             row,
             col,
-        };
+        });
     }
 
     // First record is ListHeader with cell properties
@@ -442,11 +446,11 @@ fn parse_cell_content(
             }
 
             TagId::ParaText => {
-                let _ = parse_para_text(record.data(), &mut para_context, picture_counter, styles);
+                parse_para_text(record.data(), &mut para_context, picture_counter, styles)?;
             }
 
             TagId::ParaCharShape => {
-                let _ = parse_char_shape_positions(record, &mut para_context, styles);
+                parse_char_shape_positions(record, &mut para_context, styles)?;
             }
 
             TagId::EqEdit => {
@@ -469,13 +473,13 @@ fn parse_cell_content(
         paragraphs.push(para);
     }
 
-    CellData {
+    Ok(CellData {
         paragraphs,
         rowspan,
         colspan,
         row,
         col,
-    }
+    })
 }
 
 /// Context for building a paragraph.
@@ -1175,6 +1179,59 @@ mod tests {
             "equation script should fill the inline slot, got: {:?}",
             para.content
         );
+    }
+
+    // === Error contract inside table cells ===
+
+    /// A 1x1 table whose only cell holds one paragraph with `text` as its ParaText data.
+    fn one_cell_table(text: &[u8]) -> Vec<u8> {
+        let mut table = b" lbt".to_vec(); // ctrl id "tbl ", stored reversed
+        table.extend_from_slice(&1u16.to_le_bytes()); // rows
+        table.extend_from_slice(&1u16.to_le_bytes()); // cols
+        table.extend_from_slice(&[0u8; 6]);
+
+        let mut list_header = vec![0u8; 16]; // col 0, row 0
+        list_header[12..14].copy_from_slice(&1u16.to_le_bytes()); // colspan
+        list_header[14..16].copy_from_slice(&1u16.to_le_bytes()); // rowspan
+
+        let mut stream = make_record(TagId::Table as u16, 0, &table);
+        stream.extend(make_record(TagId::ListHeader as u16, 1, &list_header));
+        stream.extend(make_record(TagId::ParaHeader as u16, 1, &[0u8; 8]));
+        stream.extend(make_record(TagId::ParaText as u16, 2, text));
+        stream
+    }
+
+    /// Control: the fixture really is a table, so the tests below are about the cell's
+    /// paragraph and not about a table the parser failed to recognise.
+    #[test]
+    fn test_one_cell_table_fixture_parses_as_a_table() {
+        let stream = one_cell_table(&utf16_bytes("cell"));
+        let section = parse_section(&stream, 0, &StyleRegistry::new(), &mut 0).unwrap();
+
+        let crate::model::Block::Table(table) = &section.content[0] else {
+            panic!("expected a table, got: {:?}", section.content);
+        };
+        assert_eq!(table.rows.len(), 1);
+        assert_eq!(table.rows[0].cells[0].plain_text(), "cell");
+    }
+
+    /// Control: a malformed ParaText in a body paragraph fails the section.
+    #[test]
+    fn test_malformed_para_text_in_a_paragraph_fails_the_section() {
+        let mut stream = make_record(TagId::ParaHeader as u16, 0, &[0u8; 8]);
+        stream.extend(make_record(TagId::ParaText as u16, 1, &[0x41, 0x00, 0x42]));
+
+        assert!(parse_section(&stream, 0, &StyleRegistry::new(), &mut 0).is_err());
+    }
+
+    /// The same malformed ParaText inside a table cell must fail the section too. It used
+    /// to be discarded there, so a table silently lost that cell's text while the same
+    /// damage anywhere else in the section was reported.
+    #[test]
+    fn test_malformed_para_text_in_a_table_cell_fails_the_section() {
+        let stream = one_cell_table(&[0x41, 0x00, 0x42]);
+
+        assert!(parse_section(&stream, 0, &StyleRegistry::new(), &mut 0).is_err());
     }
 
     #[test]

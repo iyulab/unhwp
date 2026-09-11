@@ -404,10 +404,15 @@ mod tests {
 
         let mut records = RecordIterator::new(&data);
         assert!(records.next().unwrap().is_ok());
-        assert!(matches!(
-            records.next(),
-            Some(Err(Error::RecordParse { .. }))
-        ));
+        // The error locates the damage: the record starts at byte 6, its data at byte 10,
+        // and the stream is 17 bytes long.
+        match records.next() {
+            Some(Err(Error::RecordParse { offset, message })) => {
+                assert_eq!(offset, 6);
+                assert!(message.contains("10 + 200 > 17"), "{message}");
+            }
+            other => panic!("expected a RecordParse error, got {other:?}"),
+        }
         assert!(
             records.next().is_none(),
             "the iterator resumed inside the truncated record's data"

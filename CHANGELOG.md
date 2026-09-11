@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   malformed record and the section reports it as `ErrorKind::RecordParse`, the same way the
   `DocInfo` stream already did; `ErrorMode` then applies as for any unparsable section
   (`Strict` fails the document, `Lenient` skips that section).
+- Malformed paragraph data inside an HWP 5.0 table cell is now reported like the same damage
+  anywhere else in the section. Cell paragraphs discarded the errors that body paragraphs
+  return, so a table could lose a cell's text without any failure.
 
 ## [0.11.0] - 2026-09-11
 
