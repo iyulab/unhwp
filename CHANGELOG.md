@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Breaking:** the shared plumbing — error-kind numbering, the C-ABI helpers and the markdown
+  shape-refinement pass — now comes from one crate, `unparser-shared`, instead of two
+  (`uncore` and `unrefine`). `refine` and `RefineOptions` are still re-exported from this crate
+  at the same paths, so code that names them through `unhwp` is unaffected. Code that named
+  `unrefine::RefineOptions` directly has to switch, because `RenderOptions::refine` now holds
+  `unparser_shared::refine::RefineOptions`. Error kinds, the C ABI and the bindings are unchanged.
+  The dependency tree also loses its second copy of `pulldown-cmark` (0.12 next to 0.13) and
+  `pulldown-cmark-to-cmark` (18 next to 22), which `unrefine` had been pulling in alongside the
+  versions this crate already uses.
+
 ## [0.10.0] - 2026-09-09
 
 ### Changed

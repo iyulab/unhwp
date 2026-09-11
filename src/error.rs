@@ -17,7 +17,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// generic failure rather than as an error.
 ///
 /// Values are drawn from the `un*` family's shared numbering
-/// ([`uncore::kind`] docs): `1..=13` mirror [`undoc`](https://docs.rs/undoc)'s
+/// ([`unparser_shared::kind`] docs): `1..=13` mirror [`undoc`](https://docs.rs/undoc)'s
 /// discriminants of the same name (the closest sibling — ten of them are shared),
 /// and `400..=403` are unhwp's own band. Values `100` and above are reserved for
 /// FFI-boundary reasons that have no core `Error` counterpart (null arguments, caught
@@ -67,7 +67,7 @@ pub enum ErrorKind {
     /// happens past the point where a core `Error` is raised. It is reported at the ABI
     /// boundary. `13` is the number the sibling libraries use for the same reason.
     Render = 13,
-    /// [`Error::Decompression`] — unhwp's own band ([`uncore::kind::library_band`]`(2)`).
+    /// [`Error::Decompression`] — unhwp's own band ([`unparser_shared::kind::library_band`]`(2)`).
     Decompression = 400,
     /// [`Error::OleContainer`] — HWP 5.0's CFB container is unique to this format.
     OleContainer = 401,
@@ -275,7 +275,7 @@ mod kind_tests {
     // `unhwp_last_error_kind` values. Pinning every one of them here — via the same
     // macro `undoc` and `unpdf` will adopt — is what makes an accidental renumbering
     // a test failure instead of a silent consumer break.
-    uncore::assert_stable_kinds! {
+    unparser_shared::assert_stable_kinds! {
         ErrorKind, error_kind_discriminants_are_stable,
         Other = 1,
         Io = 2,

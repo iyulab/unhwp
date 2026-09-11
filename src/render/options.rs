@@ -50,12 +50,12 @@ pub struct RenderOptions {
     /// If None, no cleanup is performed.
     pub cleanup: Option<CleanupOptions>,
 
-    /// Shape-refinement pass ([`unrefine::refine`]) applied after cleanup.
+    /// Shape-refinement pass ([`unparser_shared::refine::refine`]) applied after cleanup.
     /// Lossless and idempotent — normalizes table shape, ordered-list
     /// numbering, link/image paths, frontmatter, and section anchors without
     /// deleting any visible text. If `None` (the default), no refinement is
     /// performed and output is unchanged from pre-`refine` behavior.
-    pub refine: Option<unrefine::RefineOptions>,
+    pub refine: Option<unparser_shared::refine::RefineOptions>,
 
     /// Heading analysis configuration.
     /// When set, enables sophisticated heading detection with sequence analysis.
@@ -164,7 +164,7 @@ impl RenderOptions {
 
     /// Enables the shape-refinement pass with default options.
     pub fn with_refine(mut self) -> Self {
-        self.refine = Some(unrefine::RefineOptions::default());
+        self.refine = Some(unparser_shared::refine::RefineOptions::default());
         self
     }
 

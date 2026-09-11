@@ -36,8 +36,12 @@ quick-xml = "0.42"
 # Error handling
 thiserror = "2.0"
 
-# Shared error-kind numbering + C-ABI plumbing for the un* family
-uncore = "0.2"
+# Shared plumbing for the un* family: error-kind numbering, C-ABI helpers, and
+# (feature "refine") the lossless markdown shape-refinement pass behind
+# RenderOptions.refine. unhwp keeps refine unconditional: its cleanup pipeline
+# already depends on the same pulldown-cmark/pulldown-cmark-to-cmark pins
+# declared below, so the feature adds no new crates to the dependency tree.
+unparser-shared = { version = "0.2", default-features = false, features = ["refine"] }
 
 # JSON serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -52,12 +56,6 @@ unicode-normalization = "0.1"
 # Markdown parsing (cleanup pipeline Stage 3)
 pulldown-cmark = { version = "0.13", default-features = false }
 pulldown-cmark-to-cmark = "22"
-
-# Lossless, idempotent markdown shape-refinement pass (RenderOptions.refine).
-# Depends on the same pulldown-cmark/pulldown-cmark-to-cmark pins already
-# pulled in above for the cleanup pipeline, so this adds no new crates to the
-# dependency tree.
-unrefine = "0.1"
 
 # Optional: Legacy encoding (HWP 3.x)
 encoding_rs = { version = "0.8", optional = true }

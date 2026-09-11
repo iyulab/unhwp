@@ -80,7 +80,7 @@ impl MarkdownRenderer {
         // refine's passes (table shape, section anchors, frontmatter) need
         // whole-document scope that a single streamed section doesn't have.
         if let Some(ref refine_options) = renderer.options.refine {
-            output = unrefine::refine(&output, refine_options);
+            output = unparser_shared::refine::refine(&output, refine_options);
         }
 
         Ok(output)
@@ -1060,7 +1060,7 @@ mod tests {
     /// `RenderOptions::default()` leaves `refine` off — the last line of
     /// defense protecting deployed consumers (design doc's "기본 경로 불변
     /// 회귀 테스트"). A Windows-style `image_path_prefix` is exactly the
-    /// kind of value `unrefine`'s link/image path pass would normalize, so
+    /// kind of value `unparser_shared::refine`'s link/image path pass would normalize, so
     /// its survival here proves refine did not run.
     #[test]
     fn test_refine_off_by_default_leaves_backslash_image_paths_untouched() {
@@ -1087,10 +1087,10 @@ mod tests {
         );
     }
 
-    /// The batch path wires `RenderOptions.refine` into `unrefine::refine`
+    /// The batch path wires `RenderOptions.refine` into `unparser_shared::refine::refine`
     /// after rendering (`render()`'s outer wrapper) — this exercises the
-    /// wiring end to end, not `unrefine`'s own pass logic (that's
-    /// `unrefine`'s test suite).
+    /// wiring end to end, not the refine pass's own logic (that's
+    /// `unparser-shared`'s test suite).
     #[test]
     fn test_refine_on_normalizes_backslash_image_paths() {
         let mut doc = Document::new();
