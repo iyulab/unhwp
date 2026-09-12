@@ -251,7 +251,7 @@ impl MultiFormatWriter {
             // a single section doesn't have. Apply it now as a read-modify-
             // write pass on the completed file, mirroring the same post-
             // flush pattern unpdf's CLI uses for cleanup.
-            if let Some(ref refine_options) = self
+            if let Some(refine_options) = self
                 .md_renderer
                 .as_ref()
                 .and_then(|r| r.options().refine.as_ref())
