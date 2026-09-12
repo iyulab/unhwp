@@ -372,6 +372,44 @@ let markdown = Unhwp::new()
     .to_markdown()?;
 ```
 
+### Error Handling Defaults
+
+**Parsing is strict by default.** A section that cannot be read, decompressed or parsed fails
+the whole document rather than quietly producing a shorter one. For a format whose sections
+carry the body text, a document that is short by one section and a document that was always
+that length are not distinguishable after the fact — so the default refuses to make that
+ambiguity silently.
+
+Opt into salvaging what is readable:
+
+```rust
+use unhwp::{parse_file_with_options, ErrorMode, ParseOptions};
+
+let options = ParseOptions {
+    error_mode: ErrorMode::Lenient,
+    ..ParseOptions::default()
+};
+let doc = parse_file_with_options("document.hwp", &options)?;
+
+// Lenient keeps what parsed and says what it dropped.
+if !doc.skipped_sections.is_empty() {
+    eprintln!("sections left out: {:?}", doc.skipped_sections);
+}
+```
+
+`Document::skipped_sections` holds the index of every section that was left out, and is always
+empty under `Strict`. The streaming API reports the same thing as it goes, as
+`ParseEvent::SectionFailed { index, error }`, so both APIs answer the question with the same
+indices. Check one of them before treating a lenient result as complete: `sections.len()`
+alone reports the same number whether a document had three sections or had five and lost two.
+
+Note that the error mode reaches Rust callers only. The C ABI, and the Python and .NET
+bindings built on it, currently parse in strict mode with no way to request otherwise.
+
+Its sibling parsers answer this differently, because the formats do: `unpdf` defaults to
+lenient, and `undoc` has no error mode at all. Code that drives all three should not assume a
+shared default.
+
 ### RenderOptions
 
 ```rust

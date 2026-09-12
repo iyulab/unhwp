@@ -45,6 +45,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   anywhere else in the section. Cell paragraphs discarded the errors that body paragraphs
   return, so a table could lose a cell's text without any failure.
 
+### Documentation
+
+- The README states the default error mode, how to opt into lenient parsing, and where a
+  lenient result reports what it dropped (`Document::skipped_sections`, or
+  `ParseEvent::SectionFailed` when streaming). It also records that the error mode reaches
+  Rust callers only — the C ABI and the bindings built on it parse strictly with no way to
+  request otherwise.
+
 ## [0.11.0] - 2026-09-11
 
 ### Changed
