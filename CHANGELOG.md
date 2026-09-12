@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`Document::skipped_sections`** lists the indices of sections that were left out because
+  they could not be read or parsed. It is always empty under the default `ErrorMode::Strict`,
+  where such a section fails the whole document. Under `ErrorMode::Lenient` it is how a caller
+  learns what continuing cost: `sections.len()` reports the same number whether a document had
+  three sections or had five and lost two. The streaming API has always reported this as
+  `ParseEvent::SectionFailed`; the batch API now answers the same question with the same
+  indices, for both HWP 5.0 and HWPX. The field is present in JSON output even when empty, so
+  "nothing was lost" is distinguishable from "this version does not report losses".
+
+### Changed
+
+- Strict parsing of an HWPX package now reports the failure of the lowest-numbered damaged
+  section rather than whichever parallel task failed first. The error a given document
+  produces no longer depends on scheduling.
+
 ### Fixed
 
 - ⚠️ **A damaged section in an HWP 5.0 document no longer disappears silently.** The batch

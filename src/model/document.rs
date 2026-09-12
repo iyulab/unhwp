@@ -15,6 +15,22 @@ pub struct Document {
     pub styles: StyleRegistry,
     /// Binary resources (images, etc.) keyed by ID
     pub resources: HashMap<String, Resource>,
+    /// Indices of sections that could not be read or parsed and were left out.
+    ///
+    /// Always empty under the default [`ErrorMode::Strict`], where an unreadable section
+    /// fails the whole document. Under [`ErrorMode::Lenient`] the section is skipped and its
+    /// index is recorded here, so a caller can tell a document that really has three sections
+    /// from one that had five and lost two. Without it `sections.len()` is the same number
+    /// either way, and the loss is invisible -- the streaming API has always reported it as
+    /// [`ParseEvent::SectionFailed`], and this is the batch API saying the same thing.
+    ///
+    /// [`ErrorMode::Strict`]: crate::ErrorMode::Strict
+    /// [`ErrorMode::Lenient`]: crate::ErrorMode::Lenient
+    /// [`ParseEvent::SectionFailed`]: crate::ParseEvent::SectionFailed
+    // Serialised even when empty. A consumer reading JSON has to be able to tell "nothing was
+    // lost" from "this build does not report losses" -- and an absent key says both.
+    #[serde(default)]
+    pub skipped_sections: Vec<usize>,
 }
 
 impl Document {

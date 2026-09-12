@@ -225,11 +225,15 @@ impl Hwp5Parser {
         let section_names = self.container.list_bodytext_sections()?;
         let is_compressed = self.is_compressed();
 
+        // Every section dropped under Lenient is recorded, not merely dropped. A caller that
+        // asked to keep going still has to be able to see what keeping going cost.
+        let mut skipped: Vec<usize> = Vec::new();
+
         let mut section_data: Vec<(usize, Vec<u8>)> = Vec::with_capacity(section_names.len());
         for (index, name) in section_names.iter().enumerate() {
             match self.container.read_stream_decompressed(name, is_compressed) {
                 Ok(data) => section_data.push((index, data)),
-                Err(_) if lenient => {}
+                Err(_) if lenient => skipped.push(index),
                 Err(e) => return Err(e),
             }
         }
@@ -243,10 +247,15 @@ impl Hwp5Parser {
         for (index, data) in &section_data {
             match bodytext::parse_section(data, *index, &styles, &mut picture_counter) {
                 Ok(section) => sections.push(section),
-                Err(_) if lenient => {}
+                Err(_) if lenient => skipped.push(*index),
                 Err(e) => return Err(e),
             }
         }
+
+        // Read failures come first and parse failures second, so the two runs interleave by
+        // index rather than following it. Sorting keeps the reported order the document's own.
+        skipped.sort_unstable();
+        document.skipped_sections = skipped;
 
         document.sections = sections;
         Ok(())

@@ -260,3 +260,109 @@ fn the_streaming_parser_agrees_on_the_same_damaged_document() {
     assert_eq!(parsed, [0]);
     assert_eq!(failed, [1]);
 }
+
+/// Skipping is only half of what Lenient owes a caller. `sections.len()` is the same number
+/// whether a document had three sections or had five and lost two, so a caller that asked to
+/// keep going could not see what keeping going cost. The streaming parser has always reported
+/// this as `SectionFailed`; the batch parser used to drop the section and say nothing.
+#[test]
+fn lenient_mode_reports_which_section_it_skipped() {
+    let opts = ParseOptions {
+        error_mode: ErrorMode::Lenient,
+        ..ParseOptions::default()
+    };
+
+    let doc = parse_bytes_with_options(&damaged_second_section(), &opts)
+        .expect("lenient parsing must not fail on a damaged section");
+
+    assert_eq!(doc.sections.len(), 1);
+    assert_eq!(
+        doc.skipped_sections,
+        [1],
+        "the damaged section's index has to reach the caller"
+    );
+}
+
+/// The same for a section that reads but will not parse -- the two failure stages have to
+/// reach the caller the same way, or the report means different things for different damage.
+#[test]
+fn lenient_mode_reports_a_section_lost_to_a_truncated_record() {
+    let opts = ParseOptions {
+        error_mode: ErrorMode::Lenient,
+        ..ParseOptions::default()
+    };
+
+    let doc = parse_bytes_with_options(&truncated_second_section(), &opts)
+        .expect("lenient parsing must not fail on a truncated record");
+
+    assert_eq!(doc.skipped_sections, [1]);
+}
+
+/// A report that is never empty is not a report. An intact document must say so, in both
+/// modes -- otherwise "nothing was lost" and "this build does not measure loss" look alike.
+#[test]
+fn an_intact_document_reports_no_skipped_sections() {
+    let doc = parse_bytes(&two_sections(0)).expect("an intact document must parse");
+    assert!(
+        doc.skipped_sections.is_empty(),
+        "{:?}",
+        doc.skipped_sections
+    );
+
+    let lenient = ParseOptions {
+        error_mode: ErrorMode::Lenient,
+        ..ParseOptions::default()
+    };
+    let doc = parse_bytes_with_options(&two_sections(0), &lenient)
+        .expect("an intact document must parse under lenient too");
+    assert!(
+        doc.skipped_sections.is_empty(),
+        "{:?}",
+        doc.skipped_sections
+    );
+}
+
+/// The point of the change, stated as an equality: the two parsers now answer the same
+/// question with the same indices on the same bytes. Asserting each against a literal would
+/// pass even if they drifted apart again.
+#[test]
+fn the_batch_parser_reports_what_the_streaming_parser_reports() {
+    let bytes = damaged_second_section();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("damaged.hwp");
+    std::fs::write(&path, &bytes).unwrap();
+
+    let opts = ParseOptions {
+        error_mode: ErrorMode::Lenient,
+        ..ParseOptions::default()
+    };
+    let batch = parse_bytes_with_options(&bytes, &opts).expect("lenient batch must not fail");
+
+    let stream_opts = SectionStreamOptions {
+        error_mode: ErrorMode::Lenient,
+        ..SectionStreamOptions::default()
+    };
+    let mut streamed = Vec::new();
+    parse_file_streaming(&path, stream_opts, |event| {
+        if let ParseEvent::SectionFailed { index, .. } = event {
+            streamed.push(index);
+        }
+        ControlFlow::Continue(())
+    })
+    .expect("lenient streaming must not fail");
+
+    assert_eq!(batch.skipped_sections, streamed);
+}
+
+/// Strict does not skip, so it has nothing to report -- and a document it accepts must not
+/// carry a phantom loss.
+#[test]
+fn strict_mode_never_reports_a_skip() {
+    let doc = parse_bytes(&two_sections(0)).expect("an intact document must parse");
+    assert!(doc.skipped_sections.is_empty());
+
+    assert!(
+        parse_bytes(&damaged_second_section()).is_err(),
+        "strict must still fail rather than report the loss"
+    );
+}

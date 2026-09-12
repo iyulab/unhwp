@@ -12,7 +12,7 @@ mod xml;
 pub use container::HwpxContainer;
 
 use crate::error::{Error, Result};
-use crate::model::Document;
+use crate::model::{Document, Section};
 use crate::streaming::{ParseEvent, SectionStreamOptions};
 use quick_xml::events::Event;
 use quick_xml::{Reader, XmlVersion};
@@ -268,12 +268,16 @@ impl HwpxParser {
         let lenient = opts.error_mode == ErrorMode::Lenient;
         let section_files = self.container.list_sections()?;
 
+        // Every section dropped under Lenient is recorded, not merely dropped. A caller that
+        // asked to keep going still has to be able to see what keeping going cost.
+        let mut skipped: Vec<usize> = Vec::new();
+
         // Read all section XML content first (requires mutable borrow)
         let mut section_data: Vec<(usize, String)> = Vec::with_capacity(section_files.len());
         for (index, path) in section_files.iter().enumerate() {
             match self.container.read_file(path) {
                 Ok(xml) => section_data.push((index, xml)),
-                Err(_) if lenient => {}
+                Err(_) if lenient => skipped.push(index),
                 Err(e) => return Err(e),
             }
         }
@@ -281,8 +285,11 @@ impl HwpxParser {
         // Clone styles for parallel access
         let styles = document.styles.clone();
 
+        // Carrying the index alongside the outcome collapses what used to be four branches
+        // -- parallel/sequential crossed with strict/lenient -- into one. The branching that
+        // remains is only about *where* the work runs, never about what a failure means.
         let parse_one =
-            |(index, xml): &(usize, String)| section::parse_section(xml, *index, &styles);
+            |(index, xml): &(usize, String)| (*index, section::parse_section(xml, *index, &styles));
 
         // Use parallel processing only when there are enough sections to benefit
         // Threshold of 3 sections avoids parallel overhead for small documents
@@ -290,47 +297,36 @@ impl HwpxParser {
         const PARALLEL_THRESHOLD: usize = 3;
 
         #[cfg(not(target_arch = "wasm32"))]
-        let mut sections: Vec<_> = if section_data.len() >= PARALLEL_THRESHOLD {
-            if lenient {
-                section_data
-                    .par_iter()
-                    .filter_map(|d| parse_one(d).ok())
-                    .collect()
-            } else {
-                section_data
-                    .par_iter()
-                    .map(parse_one)
-                    .collect::<Result<Vec<_>>>()?
-            }
-        } else if lenient {
-            section_data
-                .iter()
-                .filter_map(|d| parse_one(d).ok())
-                .collect()
+        let outcomes: Vec<(usize, Result<Section>)> = if section_data.len() >= PARALLEL_THRESHOLD {
+            section_data.par_iter().map(parse_one).collect()
         } else {
-            section_data
-                .iter()
-                .map(parse_one)
-                .collect::<Result<Vec<_>>>()?
+            section_data.iter().map(parse_one).collect()
         };
 
         #[cfg(target_arch = "wasm32")]
-        let mut sections: Vec<_> = if lenient {
-            section_data
-                .iter()
-                .filter_map(|d| parse_one(d).ok())
-                .collect()
-        } else {
-            section_data
-                .iter()
-                .map(parse_one)
-                .collect::<Result<Vec<_>>>()?
-        };
+        let outcomes: Vec<(usize, Result<Section>)> = section_data.iter().map(parse_one).collect();
+
+        // Strict reports the failure of the lowest index, whatever order the work finished in.
+        // The cost is that every section is parsed before the first failure surfaces; a damaged
+        // document is rare and a deterministic error is worth more than the parsing saved.
+        let mut sections = Vec::with_capacity(outcomes.len());
+        for (index, outcome) in outcomes {
+            match outcome {
+                Ok(section) => sections.push(section),
+                Err(_) if lenient => skipped.push(index),
+                Err(e) => return Err(e),
+            }
+        }
 
         // Sort by index to maintain order
         sections.sort_by_key(|s| s.index);
 
+        // Read failures come first and parse failures second, so the two runs interleave by
+        // index rather than following it. Sorting keeps the reported order the document's own.
+        skipped.sort_unstable();
+
         document.sections = sections;
+        document.skipped_sections = skipped;
         Ok(())
     }
 
