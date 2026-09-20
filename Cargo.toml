@@ -25,7 +25,7 @@ ffi = []            # C-ABI FFI bindings
 
 [dependencies]
 # OLE container parsing (HWP 5.0)
-cfb = "0.14"
+cfb = "0.15"
 
 # Compression
 flate2 = "1.0"

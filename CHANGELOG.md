@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The OLE/CFB reader moved to cfb 0.15 (was 0.14). Its permissive parser now tolerates a FAT
+  entry that points past the end of the file, so an HWP 5.0 document that previously failed to
+  open at the container level can now be read.
+
 - Strict parsing of an HWPX package now reports the failure of the lowest-numbered damaged
   section rather than whichever parallel task failed first. The error a given document
   produces no longer depends on scheduling.
