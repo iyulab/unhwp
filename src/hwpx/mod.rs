@@ -20,6 +20,22 @@ use quick_xml::{Reader, XmlVersion};
 use self::xml::{decode_text, resolve_general_ref};
 #[cfg(not(target_arch = "wasm32"))]
 use rayon::prelude::*;
+
+/// Sections parsed at once, below which the rayon pool costs more than it saves.
+#[cfg(not(target_arch = "wasm32"))]
+const PARALLEL_THRESHOLD: usize = 3;
+
+/// Whether section parsing runs on the rayon pool.
+///
+/// [`ParseOptions::parallel`] is the caller's answer and it comes first: `sequential()` used
+/// to set a field nothing read, so a caller asking for single-threaded parsing -- for a
+/// reproducible profile, or on a machine where the extra threads are the problem -- got the
+/// parallel path anyway. The threshold is this crate's own answer for the case where the
+/// caller has not objected: below it the pool costs more than it saves.
+#[cfg(not(target_arch = "wasm32"))]
+fn use_parallel(opts: &crate::ParseOptions, sections: usize) -> bool {
+    opts.parallel && sections >= PARALLEL_THRESHOLD
+}
 use std::io::{Read, Seek};
 use std::ops::ControlFlow;
 use std::path::Path;
@@ -291,13 +307,8 @@ impl HwpxParser {
         let parse_one =
             |(index, xml): &(usize, String)| (*index, section::parse_section(xml, *index, &styles));
 
-        // Use parallel processing only when there are enough sections to benefit
-        // Threshold of 3 sections avoids parallel overhead for small documents
         #[cfg(not(target_arch = "wasm32"))]
-        const PARALLEL_THRESHOLD: usize = 3;
-
-        #[cfg(not(target_arch = "wasm32"))]
-        let outcomes: Vec<(usize, Result<Section>)> = if section_data.len() >= PARALLEL_THRESHOLD {
+        let outcomes: Vec<(usize, Result<Section>)> = if use_parallel(opts, section_data.len()) {
             section_data.par_iter().map(parse_one).collect()
         } else {
             section_data.iter().map(parse_one).collect()
@@ -520,6 +531,35 @@ fn guess_mime_type(filename: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `ParseOptions::sequential()` set a field that nothing read: the choice between the
+    /// rayon pool and a plain iterator was made from the section count alone, so a caller who
+    /// asked for single-threaded parsing got the parallel path. The decision is a function
+    /// now, which is the part that can be asserted -- how many threads ran is not.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn sequential_parsing_is_honoured_whatever_the_section_count() {
+        let sequential = crate::ParseOptions::new().sequential();
+        for sections in [0, 1, PARALLEL_THRESHOLD, PARALLEL_THRESHOLD + 10] {
+            assert!(
+                !use_parallel(&sequential, sections),
+                "{sections} sections: the caller asked for sequential parsing"
+            );
+        }
+    }
+
+    /// The threshold is this crate's answer for a caller who has not objected, and it still
+    /// applies: a two-section document does not pay for the pool.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn the_pool_is_used_only_above_the_threshold() {
+        let default = crate::ParseOptions::new();
+        assert!(default.parallel, "the default is to parallelise");
+
+        assert!(!use_parallel(&default, PARALLEL_THRESHOLD - 1));
+        assert!(use_parallel(&default, PARALLEL_THRESHOLD));
+        assert!(use_parallel(&default, PARALLEL_THRESHOLD + 1));
+    }
 
     #[test]
     fn test_metadata_entity_references_resolved() {

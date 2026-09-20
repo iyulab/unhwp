@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `ParseOptions::sequential()` now actually turns off parallel section parsing. The field it
+  sets was never read: the choice between the rayon pool and a plain iterator came from the
+  section count alone, so a caller asking for single-threaded parsing -- for a reproducible
+  profile, or on a machine where the extra threads are the problem -- got the parallel path
+  anyway. The count threshold still applies to callers who have not asked either way.
+
+
 - A damaged HWP 5.0 container is reported as an OLE container error (`ErrorKind::OleContainer`)
   instead of an I/O error. That discriminant exists for exactly this case and is published to
   the C, C# and Python surfaces, but nothing in the crate produced it: the container was opened
