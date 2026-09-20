@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- `ParseOptions` says what each option actually governs today: `error_mode` applies to the HWP
+  5.0 and HWPX paths, whose unit of failure is a section, and not to HWP 3.0, which has no
+  skippable unit and parses strictly; `sequential()` applies to HWPX section parsing, the only
+  path that parallelises; `extract_mode` is **not honoured** (the only effect of `text_only()`
+  and `structure_only()` is the resource extraction they also turn off); and `memory_limit` is
+  **not enforced**. Both of the last two need a decision about this crate's output or its
+  failure modes before they can mean anything, and saying so beats leaving a caller to find out.
+
 ### Added
 
 - **`Document::skipped_sections`** lists the indices of sections that were left out because
