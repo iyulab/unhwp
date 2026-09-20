@@ -18,6 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   indices, for both HWP 5.0 and HWPX. The field is present in JSON output even when empty, so
   "nothing was lost" is distinguishable from "this version does not report losses".
 
+### Fixed
+
+- A damaged HWP 5.0 container is reported as an OLE container error (`ErrorKind::OleContainer`)
+  instead of an I/O error. That discriminant exists for exactly this case and is published to
+  the C, C# and Python surfaces, but nothing in the crate produced it: the container was opened
+  with `?`, so every parse failure arrived as `Io` and told callers to check a disk that was
+  never involved -- the file is fully in memory before the container is opened. Reading a stream
+  now keeps the same distinction: a stream this document does not have is still
+  `MissingComponent`, while a stream the container cannot deliver is an OLE container error
+  rather than being reported as absent. No discriminant was added, renumbered or removed.
+
 ### Changed
 
 - The OLE/CFB reader moved to cfb 0.15 (was 0.14). Its permissive parser now tolerates a FAT
