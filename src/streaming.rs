@@ -107,6 +107,14 @@ pub struct SectionStreamOptions {
     /// When `true`, each resource is emitted as a [`ParseEvent::ResourceExtracted`]
     /// event after [`ParseEvent::DocumentEnd`].
     pub extract_resources: bool,
+
+    /// Whether to parse the text content of each section.
+    ///
+    /// `true` by default. Setting it to `false` is "structure only", the same contract the
+    /// batch API gives: a [`ParseEvent::SectionParsed`] still arrives for every section,
+    /// carrying its index and **none of its content blocks**. The section is still read, so
+    /// a section that cannot be read is still reported -- only the parse is skipped.
+    pub extract_text: bool,
 }
 
 impl Default for SectionStreamOptions {
@@ -114,6 +122,7 @@ impl Default for SectionStreamOptions {
         Self {
             error_mode: ErrorMode::Strict,
             extract_resources: true,
+            extract_text: true,
         }
     }
 }
@@ -123,6 +132,7 @@ impl From<&ParseOptions> for SectionStreamOptions {
         Self {
             error_mode: opts.error_mode,
             extract_resources: opts.extract_resources,
+            extract_text: opts.extract_text,
         }
     }
 }

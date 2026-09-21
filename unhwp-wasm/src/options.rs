@@ -4,7 +4,7 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen]
 pub struct ParseOptions {
     lenient: bool,
-    text_only: bool,
+    without_resources: bool,
 }
 
 #[wasm_bindgen]
@@ -19,9 +19,11 @@ impl ParseOptions {
         self
     }
 
-    #[wasm_bindgen(js_name = textOnly)]
-    pub fn text_only(mut self) -> Self {
-        self.text_only = true;
+    /// Skip binary resources (images, equations). Named for what it does: the
+    /// structure and text of the document are produced either way.
+    #[wasm_bindgen(js_name = withoutResources)]
+    pub fn without_resources(mut self) -> Self {
+        self.without_resources = true;
         self
     }
 
@@ -30,8 +32,8 @@ impl ParseOptions {
         if self.lenient {
             opts = opts.lenient();
         }
-        if self.text_only {
-            opts = opts.text_only();
+        if self.without_resources {
+            opts = opts.without_resources();
         }
         opts
     }
@@ -48,7 +50,7 @@ mod tests {
     fn test_parse_options_default() {
         let opts = ParseOptions::new();
         assert!(!opts.lenient);
-        assert!(!opts.text_only);
+        assert!(!opts.without_resources);
     }
 
     #[wasm_bindgen_test]
@@ -58,8 +60,8 @@ mod tests {
     }
 
     #[wasm_bindgen_test]
-    fn test_parse_options_text_only() {
-        let opts = ParseOptions::new().text_only();
-        assert!(opts.text_only);
+    fn test_parse_options_without_resources() {
+        let opts = ParseOptions::new().without_resources();
+        assert!(opts.without_resources);
     }
 }

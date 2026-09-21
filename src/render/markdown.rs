@@ -1,7 +1,7 @@
 //! Markdown renderer implementation.
 
 use super::heading_analyzer::{HeadingAnalyzer, HeadingDecision};
-use super::RenderOptions;
+use super::{RenderOptions, TableFallback};
 use crate::error::Result;
 use crate::model::{
     Alignment, Block, Document, ImageRef, InlineContent, ListStyle, Paragraph, Section,
@@ -570,15 +570,24 @@ impl MarkdownRenderer {
             return;
         }
 
-        // Ensure blank line before table (Markdown convention)
-        // But avoid double blank lines if output already ends with blank line
-        if !output.is_empty() && !output.ends_with("\n\n") {
-            if output.ends_with('\n') {
-                output.push('\n');
-            } else {
-                output.push_str("\n\n");
+        // What to do with a table Markdown cannot express. The option said this for a long
+        // time without anything reading it, so every table rendered as SimplifiedMarkdown
+        // whatever the caller asked for. Tables without merges are unaffected: there is
+        // nothing to fall back from.
+        if table.has_merged_cells() {
+            match self.options.table_fallback {
+                TableFallback::Skip => return,
+                TableFallback::Html => {
+                    ensure_blank_line(output);
+                    output.push_str(&render_table_html(table));
+                    output.push_str("\n\n");
+                    return;
+                }
+                TableFallback::SimplifiedMarkdown => {}
             }
         }
+
+        ensure_blank_line(output);
 
         // Single-row tables are typically used as decorative boxes, not actual tables.
         // Render them as plain text instead.
@@ -965,6 +974,52 @@ fn format_link_destination(url: &str) -> String {
     } else {
         url.to_string()
     }
+}
+
+/// A merged table as HTML, keeping the `colspan`/`rowspan` Markdown cannot express.
+///
+/// Cell text is the plain text of the cell, not its Markdown: emphasis markers inside an
+/// HTML block are not rendered by most Markdown processors, so emitting them would read as
+/// literal asterisks. This matches what the sibling OOXML renderer does for the same case.
+fn render_table_html(table: &Table) -> String {
+    let mut html = String::from("<table>\n");
+    for row in &table.rows {
+        html.push_str("  <tr>\n");
+        for cell in &row.cells {
+            let tag = if row.is_header { "th" } else { "td" };
+            let mut attrs = String::new();
+            if cell.colspan > 1 {
+                attrs.push_str(&format!(" colspan=\"{}\"", cell.colspan));
+            }
+            if cell.rowspan > 1 {
+                attrs.push_str(&format!(" rowspan=\"{}\"", cell.rowspan));
+            }
+            let text = escape_html(&cell.plain_text());
+            html.push_str(&format!("    <{tag}{attrs}>{text}</{tag}>\n"));
+        }
+        html.push_str("  </tr>\n");
+    }
+    html.push_str("</table>");
+    html
+}
+
+/// The blank line Markdown needs before a block. Shared by the table paths so the HTML
+/// fallback spaces itself exactly as the Markdown one does.
+fn ensure_blank_line(output: &mut String) {
+    if output.is_empty() || output.ends_with("\n\n") {
+        return;
+    }
+    if output.ends_with('\n') {
+        output.push('\n');
+    } else {
+        output.push_str("\n\n");
+    }
+}
+
+fn escape_html(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 #[cfg(test)]

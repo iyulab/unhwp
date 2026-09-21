@@ -149,6 +149,15 @@ impl HwpxParser {
                     }
                 }
                 Err(e) => return Err(e),
+                // Structure only -- the same contract the batch path gives: the section
+                // is still read (so a read failure is still reported) and its content blocks
+                // are not built. See `ParseOptions::extract_text`.
+                Ok(_) if !opts.extract_text => {
+                    let sec = Section::new(index);
+                    if f(ParseEvent::SectionParsed(&sec)) == ControlFlow::Break(()) {
+                        return Ok(());
+                    }
+                }
                 Ok(xml) => match section::parse_section(&xml, index, &styles) {
                     Err(e) if opts.error_mode == crate::parse_options::ErrorMode::Lenient => {
                         if f(ParseEvent::SectionFailed { index, error: e })
@@ -304,8 +313,16 @@ impl HwpxParser {
         // Carrying the index alongside the outcome collapses what used to be four branches
         // -- parallel/sequential crossed with strict/lenient -- into one. The branching that
         // remains is only about *where* the work runs, never about what a failure means.
-        let parse_one =
-            |(index, xml): &(usize, String)| (*index, section::parse_section(xml, *index, &styles));
+        // Structure only: the section survives carrying its index, and none of its content
+        // blocks are built -- the shape the sibling PDF parser gives a page. The body is not
+        // read at all, so a body that could not be parsed is not reported in this mode.
+        let extract_text = opts.extract_text;
+        let parse_one = |(index, xml): &(usize, String)| {
+            if !extract_text {
+                return (*index, Ok(Section::new(*index)));
+            }
+            (*index, section::parse_section(xml, *index, &styles))
+        };
 
         #[cfg(not(target_arch = "wasm32"))]
         let outcomes: Vec<(usize, Result<Section>)> = if use_parallel(opts, section_data.len()) {

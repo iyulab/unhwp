@@ -65,7 +65,7 @@ pub use detect::detect_format_from_path;
 pub use detect::{detect_format, detect_format_from_bytes, FormatType};
 pub use error::{Error, ErrorKind, Result};
 pub use model::Document;
-pub use parse_options::{ErrorMode, ExtractMode, ParseOptions};
+pub use parse_options::{ErrorMode, ParseOptions};
 pub use render::{RenderOptions, SectionMarkerStyle, TableFallback};
 #[cfg(not(target_arch = "wasm32"))]
 pub use streaming::parse_file_streaming;
@@ -114,7 +114,7 @@ pub fn parse_file_with_options(path: impl AsRef<Path>, opts: &ParseOptions) -> R
         #[cfg(feature = "hwp3")]
         FormatType::Hwp3 => {
             let mut parser = hwp3::Hwp3Parser::open(path)?;
-            parser.parse()
+            parser.parse_with_options(opts)
         }
         #[cfg(not(feature = "hwp3"))]
         FormatType::Hwp3 => Err(Error::UnsupportedFormat(
@@ -328,18 +328,6 @@ impl Unhwp {
     /// Sets lenient error handling (skip invalid sections).
     pub fn lenient(mut self) -> Self {
         self.parse_options = self.parse_options.lenient();
-        self
-    }
-
-    /// Extracts only text content (faster, smaller output).
-    pub fn text_only(mut self) -> Self {
-        self.parse_options = self.parse_options.text_only();
-        self
-    }
-
-    /// Sets memory limit in megabytes.
-    pub fn with_memory_limit_mb(mut self, mb: usize) -> Self {
-        self.parse_options = self.parse_options.with_memory_limit_mb(mb);
         self
     }
 

@@ -7,15 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **`ExtractMode::TextOnly` and `ParseOptions::text_only()`.** The variant named a mode
+  this crate never implemented: the only thing `text_only()` did was turn off resource
+  extraction, which `ParseOptions::without_resources()` already says plainly. A variant
+  that is an alias for an option on a different axis is a promise the parser does not
+  keep, and the honest fix is to remove the promise rather than invent a meaning for it.
+  Callers using `text_only()` move to `without_resources()`; `StructureOnly` is unaffected.
+- **`ParseOptions::memory_limit` and the `with_memory_limit_mb()` builders.** Nothing read
+  the field: a document past the limit parsed like any other. Enforcing it would mean
+  choosing what to measure (the input, the peak, the total allocated), where to check it,
+  and which error to raise — a design neither sibling parser has, and one nobody has asked
+  for. The field is removed rather than left advertising a limit that does not exist.
+
+### Changed
+
+- **`table_fallback` now does what it says.** All three variants existed with documented
+  meanings, a builder and a doctest example that set it, and **no code read the option** --
+  every table with a merged cell rendered as `SimplifiedMarkdown` whatever the caller chose.
+  `Html` now emits a real HTML table keeping `colspan`/`rowspan` (matching the sibling OOXML
+  renderer, and using the cell's plain text because emphasis markers inside an HTML block are
+  not rendered), and `Skip` leaves such a table out entirely. `SimplifiedMarkdown` stays the
+  default and its output is unchanged. A table **without** merged cells is unaffected by the
+  setting in every mode: the option is about what to do when Markdown cannot express the
+  table, and there is nothing to fall back from otherwise.
+
+- **`ExtractMode` is replaced by `ParseOptions::extract_text: bool`** (builder `with_text`),
+  matching the sibling PDF parser's options and the `extract_resources` flag beside it. With
+  `TextOnly` gone the enum had two variants, one of which meant "not the other".
+- 🔴**`structure_only()` now does what it says.** It set a field nothing read: parsing
+  produced the whole document whatever the caller asked for, and the only observable effect
+  was the resource extraction it also turned off. Structure-only parsing now produces every
+  section carrying its index with **none of its content blocks** — the same shape the sibling
+  PDF parser gives a page — on all three format paths (HWPX, HWP 5.0 and HWP 3.0), and
+  through the streaming API as well as the batch one. Sections are still read, so a section
+  that cannot be read is still reported; what is skipped is parsing it, so a body that could
+  not be parsed no longer fails the document. HWP 3.0 differs in one way: its single body is
+  read by the same call that parses it, so structure-only parsing of that format does not
+  touch the body at all.
+- `Hwp3Parser::parse_with_options` joins the other two parsers' options entry point. Only
+  `extract_text` applies to it: this format has one body with no skippable unit, so
+  `error_mode` has nothing to skip, and it carries no binary resources.
+- **`SectionStreamOptions` gains `extract_text`**, so the streaming API carries the same
+  contract as the batch one. The conversion from `ParseOptions` used to drop the axis, so a
+  caller who asked the batch API for structure only and then switched to streaming silently
+  got whole sections back. Adding the field breaks struct-literal construction of
+  `SectionStreamOptions`; `..SectionStreamOptions::default()` restores it.
+- `structure_only()` is now a preset over two independent axes rather than a mode. Turning
+  text off no longer turns resources off by itself — `tests/structure_only.rs` pins that,
+  along with the output contract above.
+
+- **WebAssembly: `ParseOptions.textOnly()` is now `ParseOptions.withoutResources()`.** Same
+  behaviour, named for what it actually does — the structure and text of the document are
+  produced either way. The playground option is relabelled to match.
+
+- The OLE/CFB reader moved to cfb 0.15 (was 0.14). Its permissive parser now tolerates a FAT
+  entry that points past the end of the file, so an HWP 5.0 document that previously failed to
+  open at the container level can now be read.
+
+- Strict parsing of an HWPX package now reports the failure of the lowest-numbered damaged
+  section rather than whichever parallel task failed first. The error a given document
+  produces no longer depends on scheduling.
+
 ### Documentation
 
-- `ParseOptions` says what each option actually governs today: `error_mode` applies to the HWP
-  5.0 and HWPX paths, whose unit of failure is a section, and not to HWP 3.0, which has no
+- `ParseOptions` says what each option actually governs: `error_mode` applies to the HWP 5.0
+  and HWPX paths, whose unit of failure is a section, and not to HWP 3.0, which has no
   skippable unit and parses strictly; `sequential()` applies to HWPX section parsing, the only
-  path that parallelises; `extract_mode` is **not honoured** (the only effect of `text_only()`
-  and `structure_only()` is the resource extraction they also turn off); and `memory_limit` is
-  **not enforced**. Both of the last two need a decision about this crate's output or its
-  failure modes before they can mean anything, and saying so beats leaving a caller to find out.
+  path that parallelises. (The same entry used to record that `extract_mode` was not honoured
+  and `memory_limit` not enforced. Both are resolved in this release — see Changed and
+  Removed — so the disclaimer is gone with them.)
+
+- The README states the default error mode, how to opt into lenient parsing, and where a
+  lenient result reports what it dropped (`Document::skipped_sections`, or
+  `ParseEvent::SectionFailed` when streaming). It also records that the error mode reaches
+  Rust callers only — the C ABI and the bindings built on it parse strictly with no way to
+  request otherwise.
 
 ### Added
 
@@ -46,18 +114,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MissingComponent`, while a stream the container cannot deliver is an OLE container error
   rather than being reported as absent. No discriminant was added, renumbered or removed.
 
-### Changed
-
-- The OLE/CFB reader moved to cfb 0.15 (was 0.14). Its permissive parser now tolerates a FAT
-  entry that points past the end of the file, so an HWP 5.0 document that previously failed to
-  open at the container level can now be read.
-
-- Strict parsing of an HWPX package now reports the failure of the lowest-numbered damaged
-  section rather than whichever parallel task failed first. The error a given document
-  produces no longer depends on scheduling.
-
-### Fixed
-
 - ⚠️ **A damaged section in an HWP 5.0 document no longer disappears silently.** The batch
   parser (`parse_file`, `parse_bytes`, and their `_with_options` forms) skipped any
   `BodyText` section it could not read or decompress regardless of `ErrorMode`, so such a
@@ -76,14 +132,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Malformed paragraph data inside an HWP 5.0 table cell is now reported like the same damage
   anywhere else in the section. Cell paragraphs discarded the errors that body paragraphs
   return, so a table could lose a cell's text without any failure.
-
-### Documentation
-
-- The README states the default error mode, how to opt into lenient parsing, and where a
-  lenient result reports what it dropped (`Document::skipped_sections`, or
-  `ParseEvent::SectionFailed` when streaming). It also records that the error mode reaches
-  Rust callers only — the C ABI and the bindings built on it parse strictly with no way to
-  request otherwise.
 
 ## [0.11.0] - 2026-09-11
 

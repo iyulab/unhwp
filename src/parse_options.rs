@@ -11,24 +11,18 @@ pub struct ParseOptions {
     /// lose anything without saying so.
     pub error_mode: ErrorMode,
 
-    /// What content to extract.
+    /// Whether to extract the text content of each section.
     ///
-    /// **Not honoured yet.** Parsing produces the whole document whatever this says; the
-    /// only effect of [`Self::text_only`] and [`Self::structure_only`] is the
-    /// [`Self::extract_resources`] they also turn off. What a structure-only `Document`
-    /// should contain -- paragraphs with empty text, or no paragraphs -- is a decision about
-    /// this crate's output that has not been made, and the sibling parser does not answer it
-    /// either: `unpdf` gates its text pipeline on `StructureOnly` but treats `TextOnly`
-    /// exactly like `Full`.
-    pub extract_mode: ExtractMode,
-
-    /// Memory limit in bytes (0 = unlimited).
+    /// `true` by default. Setting it to `false` is "structure only": every section is still
+    /// produced, carrying its index, and none of its content blocks are built -- the same
+    /// shape the sibling PDF parser gives a page. It is an axis of its own, orthogonal to
+    /// [`Self::extract_resources`], so asking for structure decides nothing about images.
     ///
-    /// **Not enforced.** Nothing reads this field; a document larger than the limit is
-    /// parsed like any other. Enforcing it means choosing what to measure (the input, the
-    /// peak, the total allocated) and what to raise on the way past it, and neither sibling
-    /// parser has such an option to follow.
-    pub memory_limit: usize,
+    /// The section is still *read* in this mode, so a section that cannot be read is still
+    /// reported; what is skipped is parsing it, so a body that could not be parsed no longer
+    /// fails the document. HWP 3.0 differs: its single body is read by the same call that
+    /// parses it, so structure-only parsing of that format does not touch the body at all.
+    pub extract_text: bool,
 
     /// Whether to extract binary resources (images, etc.).
     pub extract_resources: bool,
@@ -41,8 +35,7 @@ impl Default for ParseOptions {
     fn default() -> Self {
         Self {
             error_mode: ErrorMode::Strict,
-            extract_mode: ExtractMode::Full,
-            memory_limit: 0,
+            extract_text: true,
             extract_resources: true,
             parallel: true,
         }
@@ -67,30 +60,19 @@ impl ParseOptions {
         self
     }
 
-    /// Extracts only text content (no images, equations).
+    /// Extracts only document structure: no text content and no binary resources.
     ///
-    /// Today this only turns off [`Self::extract_resources`] -- see [`Self::extract_mode`].
-    pub fn text_only(mut self) -> Self {
-        self.extract_mode = ExtractMode::TextOnly;
-        self.extract_resources = false;
-        self
-    }
-
-    /// Extracts only document structure (no text content).
-    ///
-    /// Today this only turns off [`Self::extract_resources`] -- text is still extracted.
-    /// See [`Self::extract_mode`].
+    /// A preset over the two axes -- see [`Self::extract_text`] and
+    /// [`Self::extract_resources`], which can be set independently.
     pub fn structure_only(mut self) -> Self {
-        self.extract_mode = ExtractMode::StructureOnly;
+        self.extract_text = false;
         self.extract_resources = false;
         self
     }
 
-    /// Sets memory limit in megabytes.
-    ///
-    /// Recorded but not enforced -- see [`Self::memory_limit`].
-    pub fn with_memory_limit_mb(mut self, mb: usize) -> Self {
-        self.memory_limit = mb * 1024 * 1024;
+    /// Extracts the text content of each section, or leaves it out ("structure only").
+    pub fn with_text(mut self, extract: bool) -> Self {
+        self.extract_text = extract;
         self
     }
 
@@ -123,16 +105,4 @@ pub enum ErrorMode {
     Strict,
     /// Skip problematic sections and continue parsing.
     Lenient,
-}
-
-/// What content to extract from the document.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ExtractMode {
-    /// Extract all content (text, styles, structure, resources).
-    #[default]
-    Full,
-    /// Extract only text content.
-    TextOnly,
-    /// Extract only document structure (headings, paragraphs, tables).
-    StructureOnly,
 }

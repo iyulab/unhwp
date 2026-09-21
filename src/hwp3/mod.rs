@@ -22,7 +22,7 @@ pub use body::BodyParser;
 pub use header::{Hwp3Header, Hwp3Version};
 
 use crate::error::Result;
-use crate::model::Document;
+use crate::model::{Document, Section};
 use encoding_rs::EUC_KR;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -52,11 +52,26 @@ impl<R: Read + Seek> Hwp3Parser<R> {
 
     /// Parses the document and returns the IR model.
     pub fn parse(&mut self) -> Result<Document> {
+        self.parse_with_options(&crate::ParseOptions::default())
+    }
+
+    /// Parses the document with explicit options.
+    ///
+    /// Only [`ParseOptions::extract_text`](crate::ParseOptions::extract_text) applies here.
+    /// This format has one body with no skippable unit, so
+    /// [`ParseOptions::error_mode`](crate::ParseOptions::error_mode) has nothing to skip and
+    /// parsing is always strict; resources are not carried by this format at all.
+    pub fn parse_with_options(&mut self, opts: &crate::ParseOptions) -> Result<Document> {
         let mut document = Document::new();
 
-        // Parse document content
-        let body_parser = BodyParser::new(&self.header);
-        body_parser.parse(&mut self.reader, &mut document)?;
+        if opts.extract_text {
+            let body_parser = BodyParser::new(&self.header);
+            body_parser.parse(&mut self.reader, &mut document)?;
+        } else {
+            // Structure only. This format's single body is one section, so the structural
+            // unit that survives is that one section -- empty, as on the other two paths.
+            document.sections.push(Section::new(0));
+        }
 
         Ok(document)
     }

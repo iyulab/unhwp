@@ -70,7 +70,7 @@
       <input type="checkbox" id="opt-lenient"> 관대 모드 (오류 허용)
     </label>
     <label title="이미지 등 바이너리 리소스를 추출하지 않아 속도가 빠릅니다">
-      <input type="checkbox" id="opt-text-only"> 텍스트 전용
+      <input type="checkbox" id="opt-no-resources"> 리소스 제외
     </label>
   </div>
 
@@ -152,12 +152,12 @@
         const buf = await file.arrayBuffer();
         const data = new Uint8Array(buf);
         const isLenient = document.getElementById('opt-lenient').checked;
-        const isTextOnly = document.getElementById('opt-text-only').checked;
+        const isNoResources = document.getElementById('opt-no-resources').checked;
         let doc;
-        if (isLenient || isTextOnly) {
+        if (isLenient || isNoResources) {
           let opts = new ParseOptions();
           if (isLenient) opts = opts.lenient();
-          if (isTextOnly) opts = opts.textOnly();
+          if (isNoResources) opts = opts.withoutResources();
           doc = parseWithOptions(data, opts);
         } else {
           doc = parse(data);

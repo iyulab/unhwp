@@ -13,7 +13,7 @@ pub use header::FileHeader;
 pub use record::{Record, RecordHeader, RecordIterator, TagId};
 
 use crate::error::Result;
-use crate::model::Document;
+use crate::model::{Document, Section};
 use crate::streaming::{ParseEvent, SectionStreamOptions};
 use std::io::{Read, Seek};
 use std::ops::ControlFlow;
@@ -151,6 +151,13 @@ impl Hwp5Parser {
                     }
                 }
                 Err(e) => return Err(e),
+                // Structure only -- see the HWPX path and `ParseOptions::extract_text`.
+                Ok(_) if !opts.extract_text => {
+                    let section = Section::new(index);
+                    if f(ParseEvent::SectionParsed(&section)) == ControlFlow::Break(()) {
+                        return Ok(());
+                    }
+                }
                 Ok(bytes) => {
                     match bodytext::parse_section(&bytes, index, &styles, &mut picture_counter) {
                         Err(e) if opts.error_mode == crate::parse_options::ErrorMode::Lenient => {
@@ -245,6 +252,12 @@ impl Hwp5Parser {
         let mut picture_counter: u32 = 0;
         let mut sections = Vec::with_capacity(section_data.len());
         for (index, data) in &section_data {
+            // Structure only -- see `ParseOptions::extract_text`. Same shape as the HWPX and
+            // PDF paths: the section survives, its content blocks are not built.
+            if !opts.extract_text {
+                sections.push(Section::new(*index));
+                continue;
+            }
             match bodytext::parse_section(data, *index, &styles, &mut picture_counter) {
                 Ok(section) => sections.push(section),
                 Err(_) if lenient => skipped.push(*index),

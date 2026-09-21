@@ -18,6 +18,10 @@ use unhwp::{
 };
 use writer::{MultiFormatWriter, OutputFormat};
 
+/// The subdirectory `convert` extracts images into, relative to its output directory.
+/// The markdown link prefix is derived from it rather than written out a second time.
+const IMAGES_SUBDIR: &str = "images";
+
 /// HWP/HWPX document extraction to Markdown, text, and JSON
 #[derive(Parser)]
 #[command(
@@ -527,10 +531,26 @@ fn cmd_convert(args: ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
         fmts
     };
 
-    // Build render options
+    // Images directory (None = skip)
+    let images_dir: Option<PathBuf> = if args.no_images {
+        None
+    } else {
+        Some(output_dir.join(IMAGES_SUBDIR))
+    };
+
+    // Build render options. The link prefix comes from the same constant the directory
+    // above is built from: this command writes the image files and renders the links
+    // that point at them, and the two halves must not be able to disagree.
+    // `--no-images` renders no image blocks at all, so the prefix is emptied rather than
+    // left at the library default (`assets/`), which names a directory this command does
+    // not create.
     let mut render_opts = RenderOptions::default()
         .with_frontmatter()
-        .with_image_prefix("images/");
+        .with_image_prefix(if images_dir.is_some() {
+            format!("{}/", IMAGES_SUBDIR)
+        } else {
+            String::new()
+        });
     if args.section_markers {
         render_opts = render_opts.with_section_markers(SectionMarkerStyle::Comment);
     }
@@ -539,17 +559,11 @@ fn cmd_convert(args: ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
         render_opts = render_opts.with_refine();
     }
 
-    // Images directory (None = skip)
-    let images_dir: Option<PathBuf> = if args.no_images {
-        None
-    } else {
-        Some(output_dir.join("images"))
-    };
-
     // Streaming options: lenient for CLI (best-effort)
     let opts = SectionStreamOptions {
         error_mode: ErrorMode::Lenient,
         extract_resources: images_dir.is_some(),
+        ..SectionStreamOptions::default()
     };
 
     // Progress bar — starts at 0; length set in DocumentStart handler
