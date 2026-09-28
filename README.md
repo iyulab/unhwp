@@ -154,7 +154,7 @@ cargo add unhwp
 ### Basic Conversion
 
 ```bash
-# Convert HWP/HWPX to Markdown (creates <filename>_output/ directory)
+# Convert HWP/HWPX to Markdown (creates <stem>_<ext>_output/ next to the input)
 unhwp document.hwp
 
 # Specify output directory
@@ -171,15 +171,15 @@ By default, only Markdown is produced. Use `--formats` or `--all` to add more fo
 ```bash
 # Default: Markdown only
 unhwp document.hwp
-# → document_output/extract.md
-# → document_output/images/
+# → document_hwp_output/extract.md
+# → document_hwp_output/images/
 
 # All formats
 unhwp convert document.hwp --all
-# → document_output/extract.md
-# → document_output/extract.txt
-# → document_output/content.json
-# → document_output/images/
+# → document_hwp_output/extract.md
+# → document_hwp_output/extract.txt
+# → document_hwp_output/content.json
+# → document_hwp_output/images/
 
 # Specific formats
 unhwp convert document.hwp --formats md,txt

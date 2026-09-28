@@ -64,7 +64,7 @@ struct ConvertArgs {
     /// Input file path
     input: PathBuf,
 
-    /// Output directory (default: <filename>_output)
+    /// Output directory (default: <stem>_<ext>_output next to the input)
     #[arg(short, long)]
     output: Option<PathBuf>,
 
@@ -495,16 +495,7 @@ fn cmd_convert(args: ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
     // Determine output directory
     let output_dir = match args.output {
         Some(ref p) => p.clone(),
-        None => {
-            let stem = args
-                .input
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            let parent = args.input.parent().unwrap_or(std::path::Path::new("."));
-            parent.join(format!("{}_output", stem))
-        }
+        None => default_output_dir(&args.input),
     };
 
     // Create output directory
@@ -818,9 +809,48 @@ fn write_output(path: Option<&PathBuf>, content: &str) -> Result<(), Box<dyn std
     Ok(())
 }
 
+/// The directory a conversion writes to when no `--output` is given: next to the input,
+/// named after its stem *and* its extension.
+///
+/// The extension is what tells `report.docx` and `report.pptx` apart; a directory named
+/// after the stem alone sends both to the same place, where the second conversion
+/// silently overwrites the first one's files. Lowercased, because on the file systems
+/// that ignore case `report.PDF` and `report.pdf` are the same file.
+fn default_output_dir(input: &std::path::Path) -> PathBuf {
+    let stem = input.file_stem().unwrap_or_default().to_string_lossy();
+    let name = match input.extension() {
+        Some(ext) => format!("{}_{}_output", stem, ext.to_string_lossy().to_lowercase()),
+        None => format!("{}_output", stem),
+    };
+    input
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join(name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_output_dirs_differ_for_inputs_differing_only_in_extension() {
+        let a = default_output_dir(std::path::Path::new("dir/A2.hwp"));
+        let b = default_output_dir(std::path::Path::new("dir/A2.hwpx"));
+        assert_ne!(a, b);
+        assert_eq!(a, std::path::Path::new("dir").join("A2_hwp_output"));
+    }
+
+    #[test]
+    fn default_output_dir_lowercases_the_extension_and_handles_none() {
+        assert_eq!(
+            default_output_dir(std::path::Path::new("Report.HWP")),
+            std::path::Path::new("").join("Report_hwp_output")
+        );
+        assert_eq!(
+            default_output_dir(std::path::Path::new("README")),
+            std::path::Path::new("").join("README_output")
+        );
+    }
 
     #[test]
     fn test_cli_parse() {
