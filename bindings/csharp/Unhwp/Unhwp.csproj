@@ -51,6 +51,7 @@
 
     <!-- README -->
     <None Include="README.md" Pack="true" PackagePath="" />
+    <None Include="..\..\..\LICENSE" Pack="true" PackagePath="\" Visible="false" />
   </ItemGroup>
 
 
