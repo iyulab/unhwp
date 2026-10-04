@@ -231,6 +231,18 @@ public class IntegrationTests
     }
 
     [Fact]
+    public void GetResourceIds_TextOnlyDocument_ReturnsEmptyList()
+    {
+        var testFile = GetTestFile();
+
+        using var doc = UnhwpDocument.ParseFile(testFile);
+
+        // The native side answers with a JSON array even when it is empty, so this reaches
+        // the binding's deserializer — which must not depend on reflection-based JSON.
+        Assert.Empty(doc.GetResourceIds());
+    }
+
+    [Fact]
     public void ParseFile_NonexistentFile_ThrowsFileNotFoundException()
     {
         Assert.Throws<FileNotFoundException>(() =>

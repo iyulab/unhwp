@@ -339,7 +339,7 @@ public class UnhwpDocument : IDisposable
         try
         {
             var json = PtrToStringUtf8(ptr);
-            return JsonSerializer.Deserialize<string[]>(json) ?? Array.Empty<string>();
+            return JsonSerializer.Deserialize(json, UnhwpJsonContext.Default.StringArray) ?? Array.Empty<string>();
         }
         finally
         {
