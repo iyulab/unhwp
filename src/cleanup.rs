@@ -1059,6 +1059,11 @@ fn is_list_line(line: &str) -> bool {
     false
 }
 
+/// A pipe-table line: it opens with a pipe and has at least one more cell boundary.
+fn is_table_row(line: &str) -> bool {
+    line.starts_with('|') && line.matches('|').count() >= 2
+}
+
 /// Check if line is an orphan (meaningless fragment)
 fn is_orphan_line(line: &str) -> bool {
     let len = line.chars().count();
@@ -1071,6 +1076,12 @@ fn is_orphan_line(line: &str) -> bool {
     // Preserve horizontal rules and YAML frontmatter delimiters
     // These are meaningful markdown structural elements
     if line == "---" || line == "..." || line == "***" || line == "___" {
+        return false;
+    }
+
+    // Table rows are structure, not fragments: the delimiter row (`|---|---|`) and a row
+    // whose cells are all empty carry no word, yet dropping either breaks the table.
+    if is_table_row(line) {
         return false;
     }
 
@@ -1483,6 +1494,29 @@ mod tests {
             "Full pipeline should not escape table pipes: {}",
             result
         );
+        // The delimiter row is what makes the pipe lines a table at all. It has no
+        // alphanumeric content, so a punctuation-only line filter must not take it.
+        assert!(
+            result.lines().any(is_table_delimiter_row),
+            "Full pipeline must keep the table delimiter row: {result:?}"
+        );
+    }
+
+    /// A row with an empty cell in every column carries no word, but dropping it changes
+    /// the table's row count and shifts every later row up.
+    #[test]
+    fn test_table_rows_without_text_survive_full_pipeline() {
+        let input = "| Col A | Col B |\n|-------|-------|\n| 1 | 2 |\n|  |  |\n| 3 | 4 |\n";
+        let result = cleanup(input, &CleanupOptions::default());
+        let rows: Vec<&str> = result.lines().filter(|l| l.starts_with('|')).collect();
+        assert_eq!(rows.len(), 5, "every table line must survive: {result:?}");
+    }
+
+    fn is_table_delimiter_row(line: &str) -> bool {
+        let t = line.trim();
+        t.starts_with('|')
+            && t.contains('-')
+            && t.chars().all(|c| matches!(c, '|' | '-' | ':' | ' '))
     }
 
     /// A PUA codepoint the bullet table names is a glyph whose meaning is known, so it is
