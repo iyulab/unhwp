@@ -1,6 +1,7 @@
 """Tests for the unhwp Python bindings."""
 
 import os
+import sys
 import pytest
 from pathlib import Path
 
@@ -230,3 +231,21 @@ class TestIntegration:
 
         # Cleanup should generally reduce or equal size
         assert len(clean) <= len(raw) + 100  # Allow small increase from formatting
+
+
+def test_a_library_path_naming_no_file_is_an_error(tmp_path):
+    """UNHWP_LIB_PATH pointing at nothing fails the import instead of loading the packaged library."""
+    import subprocess
+
+    missing = tmp_path / "missing-library"
+    env = dict(os.environ, UNHWP_LIB_PATH=str(missing))
+    env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1] / "src")
+    result = subprocess.run(
+        [sys.executable, "-c", "import unhwp; unhwp.version()"],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "UNHWP_LIB_PATH" in result.stderr and missing.name in result.stderr
