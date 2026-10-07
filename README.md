@@ -447,16 +447,24 @@ Install-Package Unhwp
 
 Build from source or download from [GitHub Releases](https://github.com/iyulab/unhwp/releases):
 
-| Platform | Library File |
-|----------|-------------|
-| Windows x64 | `unhwp.dll` |
-| Linux x64 | `libunhwp.so` |
-| macOS | `libunhwp.dylib` |
+| Platform | Archive | Library |
+|----------|---------|---------|
+| Windows x64 | `libunhwp-windows-x86_64-v<version>.zip` | `unhwp.dll` |
+| Linux x64 (glibc) | `libunhwp-linux-x86_64-v<version>.tar.gz` | `libunhwp.so` |
+| Linux x64 (musl) | `libunhwp-linux-x86_64-musl-v<version>.tar.gz` | `libunhwp.so` |
+| macOS x64 | `libunhwp-macos-x86_64-v<version>.tar.gz` | `libunhwp.dylib` |
+| macOS arm64 | `libunhwp-macos-aarch64-v<version>.tar.gz` | `libunhwp.dylib` |
+
+Each archive holds the library and its C header, `unhwp.h`.
 
 ```bash
 # Build native library from source (requires ffi feature)
 cargo build --release --features ffi
 ```
+
+The C API is declared in [include/unhwp.h](include/unhwp.h). Failures return `NULL` (or
+`-1`); call `unhwp_last_error()` for the message and `unhwp_last_error_kind()` for the
+`UnhwpErrorKind` classification.
 
 ### Quick Start
 

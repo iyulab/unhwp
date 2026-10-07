@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A C header, `include/unhwp.h`**, declaring the C ABI: its functions, the `UNHWP_FLAG_*`
+  and `UNHWP_JSON_*` values, and every `UnhwpErrorKind` number. The library has exported a C
+  ABI all along, and its own docs told callers to include this header, which did not exist.
+- **Prebuilt C-ABI libraries on every release.** Each GitHub Release now carries
+  `libunhwp-<platform>-v<version>` archives for Windows x64, Linux x64 (glibc and musl) and
+  macOS (x64 and arm64), each holding the library and `unhwp.h`.
+
 ### Fixed
 
 - **Python: `UNHWP_LIB_PATH` naming no file is an error.** The binding fell back to its packaged

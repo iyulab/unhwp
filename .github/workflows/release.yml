@@ -22,6 +22,7 @@ jobs:
     with:
       package-name: unhwp
       version: ${{ inputs.version }}
+      ffi-archives: true
       csharp-project-name: Unhwp
       nuget-staging-mode: flat
       nuget-test-matrix: |
