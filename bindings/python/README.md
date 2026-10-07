@@ -161,6 +161,13 @@ opts = unhwp.CleanupOptions(
 - Linux (x64)
 - macOS (x64, ARM64)
 
+## Native library
+
+The package ships the native library for your platform. To load another build of it — one
+you compiled from the Rust crate, say — set `UNHWP_LIB_PATH` to that file. A path that names no file
+is an error: importing raises `OSError` naming the path, rather than quietly loading the
+packaged library instead.
+
 ## License
 
 MIT License - see [LICENSE](../../LICENSE) for details.
