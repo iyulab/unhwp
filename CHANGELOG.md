@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Emphasis next to punctuation is emphasis.** A styled run that began or ended in
+  punctuation touching a letter or digit was written with its delimiters against the
+  punctuation (`32*, s*`), which CommonMark does not read as emphasis. Such punctuation is now
+  written outside the delimiters (`32, *s*`), and a run that is only punctuation between words
+  is written plain.
+- **Emphasis inside a superscript or subscript is emphasis.** Bold or italic was wrapped
+  around the HTML tag (`x**<sup>2</sup>**`), which CommonMark does not read as emphasis. It
+  now goes inside the tag (`x<sup>**2**</sup>`).
+
+### Changed
+
+- Requires `unparser-shared` 0.3.
+
 ## [0.13.3] - 2026-10-06
 
 ### Fixed

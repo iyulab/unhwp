@@ -9,6 +9,7 @@ use crate::model::{
 };
 
 use std::collections::HashMap;
+use unparser_shared::markdown::emphasis_span;
 
 /// Maximum character length for a heading.
 /// Text longer than this is unlikely to be a semantic heading.
@@ -388,7 +389,8 @@ impl MarkdownRenderer {
         // heading lines — while still being preserved (zero data loss).
         let mut floating_images: Vec<&ImageRef> = Vec::new();
         let mut need_strip = strip_bullet;
-        for item in &para.content {
+        for (i, item) in para.content.iter().enumerate() {
+            let after = para.content.get(i + 1).and_then(leading_char);
             if let InlineContent::Image(img) = item {
                 if img.floating {
                     floating_images.push(img);
@@ -401,12 +403,12 @@ impl MarkdownRenderer {
                     need_strip = false;
                     if !stripped.is_empty() {
                         let modified = TextRun::with_style(stripped, run.style.clone());
-                        self.render_text_run(&modified, output);
+                        self.render_text_run(&modified, output, after);
                     }
                     continue;
                 }
             }
-            self.render_inline(item, output);
+            self.render_inline(item, output, after);
         }
 
         // End paragraph
@@ -482,7 +484,7 @@ impl MarkdownRenderer {
     ///
     /// Differs from `render_inline_to_string` only in LineBreak handling:
     /// paragraphs respect `preserve_line_breaks` option.
-    fn render_inline(&self, item: &InlineContent, output: &mut String) {
+    fn render_inline(&self, item: &InlineContent, output: &mut String, after: Option<char>) {
         if let InlineContent::LineBreak = item {
             if self.options.preserve_line_breaks {
                 output.push_str("  \n"); // Two spaces + newline for Markdown line break
@@ -490,12 +492,13 @@ impl MarkdownRenderer {
                 output.push(' ');
             }
         } else {
-            self.render_inline_to_string(item, output);
+            self.render_inline_to_string(item, output, after);
         }
     }
 
-    /// Renders a text run with formatting.
-    fn render_text_run(&self, run: &TextRun, output: &mut String) {
+    /// Renders a text run with formatting, after what `output` already holds and before
+    /// `after` — the characters its emphasis delimiters land between.
+    fn render_text_run(&self, run: &TextRun, output: &mut String, after: Option<char>) {
         let style = &run.style;
         let text = if self.options.escape_special_chars {
             escape_markdown(&run.text)
@@ -503,10 +506,19 @@ impl MarkdownRenderer {
             run.text.clone()
         };
 
-        // Apply formatting markers
+        // Apply formatting markers. Tags go outside the delimiters, so `*` and `~~` touch
+        // `>`/`<` rather than the neighbouring text.
         let mut prefix = String::new();
         let mut suffix = String::new();
 
+        if style.superscript {
+            prefix.push_str("<sup>");
+            suffix.insert_str(0, "</sup>");
+        }
+        if style.subscript {
+            prefix.push_str("<sub>");
+            suffix.insert_str(0, "</sub>");
+        }
         if style.bold {
             prefix.push_str("**");
             suffix.insert_str(0, "**");
@@ -521,33 +533,31 @@ impl MarkdownRenderer {
             prefix.push_str("~~");
             suffix.insert_str(0, "~~");
         }
-        if style.superscript {
-            prefix.push_str("<sup>");
-            suffix.insert_str(0, "</sup>");
-        }
-        if style.subscript {
-            prefix.push_str("<sub>");
-            suffix.insert_str(0, "</sub>");
-        }
 
         // CommonMark requires emphasis markers to hug non-whitespace: `**  x  **`
         // is NOT parsed as emphasis. When a run carries leading/trailing whitespace
-        // (e.g. text following a tab), keep that whitespace outside the markers.
+        // (e.g. text following a tab), keep that whitespace outside the markers — and
+        // punctuation that touches a neighbouring word too, when a delimiter is
+        // outermost (`32*, s*` is not emphasis either).
         if prefix.is_empty() {
             output.push_str(&text);
             return;
         }
-        let trimmed = text.trim();
-        if trimmed.is_empty() {
-            // Whitespace-only run: no content to emphasize.
+        let span = if prefix.starts_with('<') {
+            emphasis_span(&text, None, None)
+        } else {
+            emphasis_span(&text, output.chars().next_back(), after)
+        };
+        let Some(span) = span else {
+            // Nothing to emphasize: whitespace, or punctuation between words.
             output.push_str(&text);
             return;
-        }
-        let lead = &text[..text.len() - text.trim_start().len()];
-        let trail = &text[text.trim_end().len()..];
+        };
+        let lead = &text[..span.start];
+        let trail = &text[span.end..];
         output.push_str(lead);
         output.push_str(&prefix);
-        output.push_str(trimmed);
+        output.push_str(&text[span]);
         output.push_str(&suffix);
         output.push_str(trail);
     }
@@ -782,8 +792,9 @@ impl MarkdownRenderer {
             .iter()
             .map(|para| {
                 let mut para_content = String::new();
-                for item in &para.content {
-                    self.render_inline_to_string(item, &mut para_content);
+                for (i, item) in para.content.iter().enumerate() {
+                    let after = para.content.get(i + 1).and_then(leading_char);
+                    self.render_inline_to_string(item, &mut para_content, after);
                 }
                 para_content.replace('\n', " ").trim().to_string()
             })
@@ -801,10 +812,15 @@ impl MarkdownRenderer {
 
     /// Renders a single inline content item to a string buffer.
     /// Reusable for both paragraph rendering and table cell rendering.
-    fn render_inline_to_string(&self, item: &InlineContent, output: &mut String) {
+    fn render_inline_to_string(
+        &self,
+        item: &InlineContent,
+        output: &mut String,
+        after: Option<char>,
+    ) {
         match item {
             InlineContent::Text(run) => {
-                self.render_text_run(run, output);
+                self.render_text_run(run, output, after);
             }
             InlineContent::LineBreak => {
                 output.push(' ');
@@ -917,6 +933,18 @@ fn strip_leading_bullet_char(text: &str) -> String {
     let remaining: String = chars.collect();
     // Trim leading whitespace after the bullet
     remaining.trim_start().to_string()
+}
+
+/// The first character `item` writes — what a styled run just before it lands against.
+fn leading_char(item: &InlineContent) -> Option<char> {
+    match item {
+        InlineContent::Text(run) => run.text.chars().next(),
+        InlineContent::LineBreak => Some('\n'),
+        InlineContent::Image(_) => Some('!'),
+        InlineContent::Equation(_) | InlineContent::Footnote(_) | InlineContent::Link { .. } => {
+            Some('[')
+        }
+    }
 }
 
 /// Escape Markdown special characters.
@@ -1219,6 +1247,51 @@ mod tests {
         // Whitespace is preserved but lives outside the markers.
         assert!(result.contains("title  **1**"), "got: {result:?}");
         assert!(!result.contains("**  1**"), "broken emphasis: {result:?}");
+    }
+
+    /// Render one paragraph of `(text, style)` runs.
+    fn render_runs(runs: &[(&str, TextStyle)]) -> String {
+        let mut doc = Document::new();
+        let mut section = Section::new(0);
+        let mut para = Paragraph::new();
+        for (text, style) in runs {
+            para.content.push(InlineContent::Text(TextRun::with_style(
+                *text,
+                style.clone(),
+            )));
+        }
+        section.push_paragraph(para);
+        doc.sections.push(section);
+        MarkdownRenderer::new(RenderOptions::default())
+            .render(&doc)
+            .unwrap()
+    }
+
+    #[test]
+    fn test_punctuation_against_a_word_stays_outside_the_markers() {
+        // `32*, s*` is not emphasis in CommonMark: a delimiter whose inside is punctuation
+        // must have whitespace or punctuation outside it.
+        let italic = TextStyle {
+            italic: true,
+            ..TextStyle::default()
+        };
+        let result = render_runs(&[
+            ("n = 32", TextStyle::default()),
+            (", s", italic.clone()),
+            (" = 48", TextStyle::default()),
+            (",", italic),
+            (" and", TextStyle::default()),
+        ]);
+        assert!(result.contains("n = 32, *s* = 48, and"), "got: {result:?}");
+    }
+
+    #[test]
+    fn test_emphasis_goes_inside_a_superscript_tag() {
+        // `x**<sup>2</sup>**` is not emphasis: the opener touches `x` outside and `<` inside.
+        let mut bold_sup = TextStyle::bold();
+        bold_sup.superscript = true;
+        let result = render_runs(&[("x", TextStyle::default()), ("2", bold_sup)]);
+        assert!(result.contains("x<sup>**2**</sup>"), "got: {result:?}");
     }
 
     #[test]
