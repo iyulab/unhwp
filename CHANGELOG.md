@@ -15,8 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Prebuilt C-ABI libraries on every release.** Each GitHub Release now carries
   `libunhwp-<platform>-v<version>` archives for Windows x64, Linux x64 (glibc and musl) and
   macOS (x64 and arm64), each holding the library and `unhwp.h`.
+- **A musl-linked Linux CLI on every release** (`unhwp-linux-x86_64-musl-v<version>.tar.gz`),
+  for systems without glibc.
 
 ### Fixed
+
+- **A musl-linked CLI updates itself to the musl build.** `update` chose its archive by OS
+  and architecture alone, so a CLI built for musl (the one that runs on Alpine and other
+  systems without glibc) replaced itself with the glibc build, which does not start there.
+  It now asks for the `-musl` archive, and finds nothing rather than the glibc one when a
+  release lacks it.
 
 - **Python: `UNHWP_LIB_PATH` naming no file is an error.** The binding fell back to its packaged
   library without a word when the variable pointed at a path that does not exist, so a
