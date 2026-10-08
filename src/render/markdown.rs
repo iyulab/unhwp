@@ -9,7 +9,7 @@ use crate::model::{
 };
 
 use std::collections::HashMap;
-use unparser_shared::markdown::emphasis_span;
+use unparser_shared::markdown::{self, emphasis_span};
 
 /// Maximum character length for a heading.
 /// Text longer than this is unlikely to be a semantic heading.
@@ -434,7 +434,7 @@ impl MarkdownRenderer {
             if !output.ends_with("\n\n") {
                 output.push('\n');
             }
-            output.push_str(&self.image_markdown(img));
+            output.push_str(&self.image_markdown(img, false));
             output.push_str("\n\n");
         }
     }
@@ -492,7 +492,7 @@ impl MarkdownRenderer {
                 output.push(' ');
             }
         } else {
-            self.render_inline_to_string(item, output, after);
+            self.render_inline_to_string(item, output, after, false);
         }
     }
 
@@ -562,8 +562,9 @@ impl MarkdownRenderer {
         output.push_str(trail);
     }
 
-    /// Builds the `![alt](path)` markdown for an image reference.
-    fn image_markdown(&self, img: &ImageRef) -> String {
+    /// Builds the `![alt](path)` markdown for an image reference: the alt text on one line with
+    /// link-text syntax escaped, the path as a destination that reads back as written.
+    fn image_markdown(&self, img: &ImageRef, in_table_cell: bool) -> String {
         let alt = img.alt_text.as_deref().unwrap_or("image");
         let filename = self
             .image_id_to_filename
@@ -571,7 +572,7 @@ impl MarkdownRenderer {
             .cloned()
             .unwrap_or_else(|| img.id.clone());
         let path = format!("{}{}", self.options.image_path_prefix, filename);
-        format!("![{}]({})", alt, format_link_destination(&path))
+        markdown::image(alt, &path, in_table_cell)
     }
 
     /// Renders a table.
@@ -794,7 +795,7 @@ impl MarkdownRenderer {
                 let mut para_content = String::new();
                 for (i, item) in para.content.iter().enumerate() {
                     let after = para.content.get(i + 1).and_then(leading_char);
-                    self.render_inline_to_string(item, &mut para_content, after);
+                    self.render_inline_to_string(item, &mut para_content, after, true);
                 }
                 para_content.replace('\n', " ").trim().to_string()
             })
@@ -811,12 +812,14 @@ impl MarkdownRenderer {
     }
 
     /// Renders a single inline content item to a string buffer.
-    /// Reusable for both paragraph rendering and table cell rendering.
+    /// Reusable for both paragraph rendering and table cell rendering; inside a table cell a
+    /// `|` in an image or link target is escaped, since it would end the cell.
     fn render_inline_to_string(
         &self,
         item: &InlineContent,
         output: &mut String,
         after: Option<char>,
+        in_table_cell: bool,
     ) {
         match item {
             InlineContent::Text(run) => {
@@ -826,7 +829,7 @@ impl MarkdownRenderer {
                 output.push(' ');
             }
             InlineContent::Image(img) => {
-                output.push_str(&self.image_markdown(img));
+                output.push_str(&self.image_markdown(img, in_table_cell));
             }
             InlineContent::Equation(eq) => {
                 if let Some(ref latex) = eq.latex {
@@ -849,7 +852,11 @@ impl MarkdownRenderer {
                 output.push_str(&format!("[^{}]", text));
             }
             InlineContent::Link { text, url } => {
-                output.push_str(&format!("[{}]({})", text, format_link_destination(url)));
+                output.push_str(&format!(
+                    "[{}]({})",
+                    text,
+                    markdown::link_destination(url, in_table_cell)
+                ));
             }
         }
     }
@@ -981,27 +988,6 @@ fn escape_yaml(text: &str) -> String {
     text.replace('\\', "\\\\")
         .replace('"', "\\\"")
         .replace('\n', "\\n")
-}
-
-/// Format a link/image destination for `[text](destination)` syntax, wrapping it in
-/// `<...>` when it contains a character CommonMark's bare-parenthesis destination form
-/// forbids. A destination with a raw space is not valid CommonMark outside `<...>` at
-/// all -- `pulldown-cmark` does not even produce a `Link`/`Image` event for it, so a
-/// consumer sees the brackets as literal text instead of a link. A hyperlink field
-/// target, or an `image_path_prefix`-built path, can legitimately contain a space.
-fn format_link_destination(url: &str) -> String {
-    if url.contains(' ') || url.contains(['<', '>']) {
-        // Backslash-escape, not percent-encode: a link destination is data, and
-        // percent-encoding `<`/`>` would silently change the target (e.g. a real
-        // file path) instead of just escaping it for Markdown syntax.
-        let escaped = url
-            .replace('\\', "\\\\")
-            .replace('<', "\\<")
-            .replace('>', "\\>");
-        format!("<{}>", escaped)
-    } else {
-        url.to_string()
-    }
 }
 
 /// A merged table as HTML, keeping the `colspan`/`rowspan` Markdown cannot express.
@@ -2206,6 +2192,38 @@ mod table_cell_content_tests {
             "Link in cell should render as markdown link, got: {}",
             result
         );
+    }
+
+    #[test]
+    fn test_image_alt_and_link_targets_stay_inside_their_syntax_in_a_cell() {
+        use crate::model::{ImageRef, InlineContent};
+
+        // A multi-line description would end the paragraph inside `![...]`; a `|` in a
+        // target would end the table cell; an unbalanced `)` would end a bare destination.
+        let cell = TableCell {
+            content: vec![Paragraph {
+                style: Default::default(),
+                content: vec![
+                    InlineContent::Image(ImageRef {
+                        alt_text: Some("첫 줄\n\n둘째 [줄]".to_string()),
+                        ..ImageRef::new("a|b.png")
+                    }),
+                    InlineContent::Link {
+                        text: "메모".to_string(),
+                        url: "notes).txt".to_string(),
+                    },
+                ],
+            }],
+            rowspan: 1,
+            colspan: 1,
+            ..Default::default()
+        };
+        let result = MarkdownRenderer::new(RenderOptions::default()).render_cell_content(&cell);
+        assert!(
+            result.contains(r"![첫 줄 둘째 \[줄\]](assets/a\|b.png)"),
+            "image: {result:?}"
+        );
+        assert!(result.contains("[메모](<notes).txt>)"), "link: {result:?}");
     }
 
     #[test]

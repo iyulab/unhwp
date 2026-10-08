@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Image descriptions and link targets can no longer break the Markdown.** A picture's
+  description was written verbatim into `![alt](...)`: a description with a blank line ended the
+  paragraph and left the image as literal text plus a stray paragraph, and a `]` ended the alt
+  text early. The alt text is now one line with link-text syntax escaped. A link or image target
+  with a parenthesis that does not balance, a trailing backslash, a character reference or a line
+  break now reads back as written, and a `|` in a target inside a table cell no longer ends the
+  cell. Both writers now come from `unparser-shared` 0.4, shared with the other parsers of the
+  family.
+
 ## [0.15.1] - 2026-10-08
 
 ### Documentation
