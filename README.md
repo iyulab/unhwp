@@ -616,6 +616,10 @@ unhwp maintains document structure during conversion:
 | `ffi` | C-ABI foreign function interface (required for C# / native bindings) | ❌ |
 | `async` | Async I/O with Tokio | ❌ |
 
+## Benchmarks
+
+We know of no public benchmark for HWP/HWPX documents yet, so none is reported here.
+
 ## Performance
 
 - Parallel section processing with Rayon
