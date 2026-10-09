@@ -90,13 +90,13 @@ fn damage_second_section(archive: &[u8]) -> Vec<u8> {
 
     let mut reader = zip::ZipArchive::new(Cursor::new(archive)).expect("fixture must be a zip");
     let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
-    let options: zip::write::FileOptions<'_, ()> =
-        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
     let mut damaged_any = false;
     for i in 0..reader.len() {
         let mut entry = reader.by_index(i).expect("entry must be readable");
-        let name = entry.name().to_string();
+        let name = entry.name().expect("entry name must decode").to_string();
         let mut body = Vec::new();
         entry
             .read_to_end(&mut body)

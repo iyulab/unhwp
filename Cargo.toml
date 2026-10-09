@@ -67,7 +67,7 @@ encoding_rs = { version = "0.8", optional = true }
 # dependency in this graph that demands a newer rustc than everything else, which would raise the
 # crate's minimum supported version on a capability no code path uses.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-zip = { version = "8.6", default-features = false, features = [
+zip = { version = "9.0", default-features = false, features = [
     "deflate",
     "deflate64",
     "bzip2",
@@ -84,7 +84,7 @@ tokio = { version = "1.42", features = ["fs", "io-util", "rt", "macros"], option
 
 # ZIP archive (HWPX) — wasm32: deflate-only (bzip2/lzma/xz/zstd require C libraries)
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-zip = { version = "8.6", default-features = false, features = ["deflate"] }
+zip = { version = "9.0", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 criterion = "0.8"

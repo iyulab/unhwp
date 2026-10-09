@@ -110,7 +110,7 @@ impl HwpxContainer {
         if sections.is_empty() {
             for i in 0..self.archive.len() {
                 if let Ok(file) = self.archive.by_index(i) {
-                    let name = file.name().to_string();
+                    let name = file.name()?.to_string();
                     if name.starts_with("Contents/section") && name.ends_with(".xml") {
                         sections.push(name);
                     }
@@ -132,7 +132,7 @@ impl HwpxContainer {
 
         for i in 0..self.archive.len() {
             if let Ok(file) = self.archive.by_index(i) {
-                let name = file.name().to_string();
+                let name = file.name()?.to_string();
                 if name.starts_with(paths::BINDATA_DIR) && !name.ends_with('/') {
                     resources.push(name);
                 }

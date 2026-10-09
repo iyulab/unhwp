@@ -29,7 +29,10 @@ const BAD: u8 = 0x80;
 /// encoding policy instead of about whether the fixture is a well-formed HWPX.
 fn repack(corrupt: Option<(&str, &str)>) -> Vec<u8> {
     let mut archive = zip::ZipArchive::new(Cursor::new(FIXTURE)).expect("fixture is a zip");
-    let names: Vec<String> = archive.file_names().map(str::to_string).collect();
+    let names: Vec<String> = archive
+        .file_names()
+        .map(|name| name.expect("entry name decodes").into_owned())
+        .collect();
 
     let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let options = SimpleFileOptions::default();
