@@ -62,9 +62,10 @@ public class MarkdownOptions
     public bool IncludeFrontmatter { get; set; } = false;
 
     /// <summary>
-    /// Escape special markdown characters.
+    /// Escape special markdown characters, so text that reads as Markdown syntax stays text.
+    /// Default: <see langword="true"/>, as in the Rust API.
     /// </summary>
-    public bool EscapeSpecialChars { get; set; } = false;
+    public bool EscapeSpecialChars { get; set; } = true;
 
     /// <summary>
     /// Add extra spacing between paragraphs.
@@ -82,7 +83,7 @@ public class MarkdownOptions
     {
         int flags = 0;
         if (IncludeFrontmatter) flags |= NativeMethods.UNHWP_FLAG_FRONTMATTER;
-        if (EscapeSpecialChars) flags |= NativeMethods.UNHWP_FLAG_ESCAPE_SPECIAL;
+        if (!EscapeSpecialChars) flags |= NativeMethods.UNHWP_FLAG_NO_ESCAPE;
         if (ParagraphSpacing) flags |= NativeMethods.UNHWP_FLAG_PARAGRAPH_SPACING;
         if (Refine) flags |= NativeMethods.UNHWP_FLAG_REFINE;
         return flags;

@@ -47,9 +47,11 @@ internal static class NativeMethods
 
     // Flags for markdown rendering
     public const int UNHWP_FLAG_FRONTMATTER = 1;
+    // Accepted, no effect: escaping is the default. Turn it off with UNHWP_FLAG_NO_ESCAPE.
     public const int UNHWP_FLAG_ESCAPE_SPECIAL = 2;
     public const int UNHWP_FLAG_PARAGRAPH_SPACING = 4;
     public const int UNHWP_FLAG_REFINE = 8;
+    public const int UNHWP_FLAG_NO_ESCAPE = 16;
 
     // JSON format options
     public const int UNHWP_JSON_PRETTY = 0;

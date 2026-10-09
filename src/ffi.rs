@@ -90,9 +90,14 @@ unparser_shared::export_handle! {
 
 /// Flags for markdown rendering.
 pub const UNHWP_FLAG_FRONTMATTER: u32 = 1;
+/// Accepted and without effect: escaping special Markdown characters is the default, as it
+/// is for the Rust API. Turn it off with `UNHWP_FLAG_NO_ESCAPE`. The bit is not reused.
 pub const UNHWP_FLAG_ESCAPE_SPECIAL: u32 = 2;
 pub const UNHWP_FLAG_PARAGRAPH_SPACING: u32 = 4;
 pub const UNHWP_FLAG_REFINE: u32 = 8;
+/// Write text without escaping special Markdown characters. No flags means the library's
+/// defaults, and escaping is one of them.
+pub const UNHWP_FLAG_NO_ESCAPE: u32 = 16;
 
 /// JSON format options.
 pub const UNHWP_JSON_PRETTY: c_int = 0;
@@ -188,9 +193,9 @@ unparser_shared::export_string_getter!(
         if flags & UNHWP_FLAG_FRONTMATTER != 0 {
             options = options.with_frontmatter();
         }
-        // The flag decides both ways: a caller that leaves it out asked for no escaping,
-        // whatever the Rust default is.
-        options.escape_special_chars = flags & UNHWP_FLAG_ESCAPE_SPECIAL != 0;
+        if flags & UNHWP_FLAG_NO_ESCAPE != 0 {
+            options.escape_special_chars = false;
+        }
         if flags & UNHWP_FLAG_PARAGRAPH_SPACING != 0 {
             options.preserve_line_breaks = true;
         }
@@ -477,6 +482,30 @@ mod tests {
         let owned = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().to_owned();
         unsafe { unhwp_free_string(ptr) };
         owned
+    }
+
+    /// No flags means the library's defaults, and escaping is one of them; only
+    /// `UNHWP_FLAG_NO_ESCAPE` turns it off. The old escape bit is accepted and changes nothing.
+    #[test]
+    fn escaping_is_the_default_and_no_escape_turns_it_off() {
+        let mut document = Document::new();
+        let mut section = crate::model::Section::new(0);
+        section.push_paragraph(crate::model::Paragraph::text("see [x](y) and a*b*c"));
+        document.sections.push(section);
+        let doc = Box::into_raw(Box::new(UnhwpDocument { inner: document }));
+        let render = |flags| take_string(unsafe { unhwp_to_markdown(doc, flags) });
+
+        let default = render(0);
+        assert!(default.contains(r"see \[x\](y) and a\*b\*c"), "{default}");
+        assert_eq!(render(UNHWP_FLAG_ESCAPE_SPECIAL), default);
+        let plain = render(UNHWP_FLAG_NO_ESCAPE);
+        assert!(plain.contains("see [x](y) and a*b*c"), "{plain}");
+        assert_eq!(
+            UNHWP_FLAG_NO_ESCAPE, 16,
+            "flag values are part of the C ABI"
+        );
+
+        unsafe { unhwp_free_document(doc) };
     }
 
     #[test]

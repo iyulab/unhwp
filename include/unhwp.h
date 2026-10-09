@@ -27,9 +27,10 @@ typedef struct UnhwpDocument UnhwpDocument;
 
 /* Flags for unhwp_to_markdown */
 #define UNHWP_FLAG_FRONTMATTER       1u /* Include YAML frontmatter */
-#define UNHWP_FLAG_ESCAPE_SPECIAL    2u /* Escape special Markdown characters */
+#define UNHWP_FLAG_ESCAPE_SPECIAL    2u /* Accepted, no effect: escaping is the default (see NO_ESCAPE) */
 #define UNHWP_FLAG_PARAGRAPH_SPACING 4u /* Keep line breaks inside paragraphs */
 #define UNHWP_FLAG_REFINE            8u /* Apply the shape-refinement pass */
+#define UNHWP_FLAG_NO_ESCAPE        16u /* Do not escape special Markdown characters */
 
 /* Format selector for unhwp_to_json */
 #define UNHWP_JSON_PRETTY   0  /* Pretty-printed JSON with indentation */

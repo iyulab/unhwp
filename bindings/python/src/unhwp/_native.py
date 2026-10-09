@@ -185,9 +185,11 @@ _lib.unhwp_free_bytes.restype = None
 
 # Export constants
 UNHWP_FLAG_FRONTMATTER = 1
+# Accepted, no effect: escaping is the default. Turn it off with UNHWP_FLAG_NO_ESCAPE.
 UNHWP_FLAG_ESCAPE_SPECIAL = 2
 UNHWP_FLAG_PARAGRAPH_SPACING = 4
 UNHWP_FLAG_REFINE = 8
+UNHWP_FLAG_NO_ESCAPE = 16
 
 UNHWP_JSON_PRETTY = 0
 UNHWP_JSON_COMPACT = 1

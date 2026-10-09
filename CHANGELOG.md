@@ -9,10 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The C ABI follows the Rust defaults: no flags means escaped Markdown.** A new
+  `UNHWP_FLAG_NO_ESCAPE` (16) turns escaping off. `UNHWP_FLAG_ESCAPE_SPECIAL` is accepted and
+  has no effect, and its bit is not reused. A C caller passing no flags used to get unescaped
+  text and now gets escaped text. C#'s `EscapeSpecialChars` now defaults to `true`, as
+  Python's `escape_special_chars` already did; setting either to `false` sends the new flag.
+  The same flags now mean the same thing in this crate's sibling parsers.
+
 - **Markdown escapes special characters by default** (`RenderOptions::escape_special_chars`
   is now `true`, as in this crate's sibling parsers): a line opening `* 주:` used to become a
   list item, and `*`/`_` pairs became emphasis. The C ABI is unchanged — `UNHWP_FLAG_ESCAPE_SPECIAL`
   still decides both ways, so a caller that leaves it out gets unescaped text as before.
+
+- Requires `unparser-shared` 0.6.
+
+- Updated `zip` to 9. Its archives report each entry name as a result, since a name is
+  decoded (as UTF-8, otherwise as CP437); CP437 maps every byte, so no name fails to decode and
+  reading is unchanged.
 
 ### Fixed
 
@@ -30,14 +43,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **An equation shown as its script is written raw.** When the script has no LaTeX form it is
   written as a code span fenced with enough backticks (`markdown::code_span` from
   `unparser-shared` 0.6), so a backtick in the script no longer ends the span.
-
-### Changed
-
-- Requires `unparser-shared` 0.6.
-
-- Updated `zip` to 9. Its archives report each entry name as a result, since a name is
-  decoded (as UTF-8, otherwise as CP437); CP437 maps every byte, so no name fails to decode and
-  reading is unchanged.
 
 ## [0.15.2] - 2026-10-09
 

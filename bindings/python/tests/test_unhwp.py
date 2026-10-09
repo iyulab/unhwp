@@ -80,6 +80,13 @@ class TestOptions:
         opts_off = unhwp.RenderOptions(refine=False)
         assert opts_off._to_flags() & unhwp._native.UNHWP_FLAG_REFINE == 0
 
+    def test_render_options_to_flags_turns_escaping_off_only_on_request(self):
+        """Escaping is the default; only escape_special_chars=False sends NO_ESCAPE."""
+        assert unhwp.RenderOptions()._to_flags() & unhwp._native.UNHWP_FLAG_NO_ESCAPE == 0
+        off = unhwp.RenderOptions(escape_special_chars=False)
+        assert off._to_flags() & unhwp._native.UNHWP_FLAG_NO_ESCAPE != 0
+        assert unhwp._native.UNHWP_FLAG_NO_ESCAPE == 16
+
     def test_cleanup_options_presets(self):
         """CleanupOptions should have working presets."""
         minimal = unhwp.CleanupOptions.minimal()

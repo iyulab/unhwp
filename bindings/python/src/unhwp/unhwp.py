@@ -182,8 +182,8 @@ class RenderOptions:
         flags = 0
         if self.include_frontmatter:
             flags |= native.UNHWP_FLAG_FRONTMATTER
-        if self.escape_special_chars:
-            flags |= native.UNHWP_FLAG_ESCAPE_SPECIAL
+        if not self.escape_special_chars:
+            flags |= native.UNHWP_FLAG_NO_ESCAPE
         if self.preserve_line_breaks:
             flags |= native.UNHWP_FLAG_PARAGRAPH_SPACING
         if self.refine:
