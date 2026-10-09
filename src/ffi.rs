@@ -188,9 +188,9 @@ unparser_shared::export_string_getter!(
         if flags & UNHWP_FLAG_FRONTMATTER != 0 {
             options = options.with_frontmatter();
         }
-        if flags & UNHWP_FLAG_ESCAPE_SPECIAL != 0 {
-            options.escape_special_chars = true;
-        }
+        // The flag decides both ways: a caller that leaves it out asked for no escaping,
+        // whatever the Rust default is.
+        options.escape_special_chars = flags & UNHWP_FLAG_ESCAPE_SPECIAL != 0;
         if flags & UNHWP_FLAG_PARAGRAPH_SPACING != 0 {
             options.preserve_line_breaks = true;
         }

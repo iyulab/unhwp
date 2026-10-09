@@ -85,7 +85,7 @@ impl Default for RenderOptions {
             list_marker: '-',
             use_atx_headers: true,
             paragraph_spacing: true,
-            escape_special_chars: false,
+            escape_special_chars: true,
             cleanup: None,
             refine: None,
             // Enable statistical heading analysis by default (font-size based)

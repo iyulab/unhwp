@@ -7,7 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Markdown escapes special characters by default** (`RenderOptions::escape_special_chars`
+  is now `true`, as in this crate's sibling parsers): a line opening `* 주:` used to become a
+  list item, and `*`/`_` pairs became emphasis. The C ABI is unchanged — `UNHWP_FLAG_ESCAPE_SPECIAL`
+  still decides both ways, so a caller that leaves it out gets unescaped text as before.
+
 ### Fixed
+
+- **A footnote is a footnote.** An HWPX footnote was written as `[^<its whole text>]` — a
+  reference with no definition, which GFM prints as it stands, cut short by any `]` in the
+  note. Each reference is now numbered within its section (`[^2-1]`) and its text written as a
+  definition after the section, the same whether the document is rendered whole or one
+  section at a time.
+- **Brackets in the text stay text.** `[` and `]` are escaped: `[x](y)` became a link, and a
+  line opening `[x]: y` a link reference definition, which is not printed at all.
 
 - **An equation keeps its table cell.** Inside a table cell, the `|` of an equation such as
   `\left| x \right|` split the cell, because a GFM table splits its cells before it reads any

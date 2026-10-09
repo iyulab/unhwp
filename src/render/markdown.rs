@@ -8,6 +8,7 @@ use crate::model::{
     StyleRegistry, Table, TableCell, TextRun,
 };
 
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use unparser_shared::markdown::{self, emphasis_span};
 
@@ -40,6 +41,19 @@ pub struct MarkdownRenderer {
     options: RenderOptions,
     /// Maps binaryItemIDRef (e.g., "image1") to actual filename (e.g., "image1.bmp")
     image_id_to_filename: HashMap<String, String>,
+    /// The footnotes referenced in the section being rendered.
+    notes: SectionNotes,
+}
+
+/// The footnotes of one section: each reference is numbered as it is met, and the bodies are
+/// written as definitions once the section is done. A label carries its section's number
+/// (`[^2-1]`), so a document rendered one section at a time gets the same labels as one
+/// rendered whole, and no two sections define the same label.
+#[derive(Debug, Default)]
+struct SectionNotes {
+    /// 1-based number of the section being rendered.
+    section: Cell<usize>,
+    bodies: RefCell<Vec<String>>,
 }
 
 impl MarkdownRenderer {
@@ -48,6 +62,7 @@ impl MarkdownRenderer {
         Self {
             options,
             image_id_to_filename: HashMap::new(),
+            notes: SectionNotes::default(),
         }
     }
 
@@ -62,6 +77,7 @@ impl MarkdownRenderer {
         let renderer = Self {
             options: self.options.clone(),
             image_id_to_filename: Self::build_image_mapping(document),
+            notes: SectionNotes::default(),
         };
 
         // If heading analysis is enabled, use the analyzer
@@ -85,6 +101,40 @@ impl MarkdownRenderer {
         }
 
         Ok(output)
+    }
+
+    /// Starts counting the footnotes of the section with 0-based `index`.
+    fn begin_section_notes(&self, index: usize) {
+        self.notes.section.set(index + 1);
+        self.notes.bodies.borrow_mut().clear();
+    }
+
+    /// A footnote's reference, `[^section-n]`; its text is kept for the definition written
+    /// after the section.
+    fn note_reference(&self, text: &str) -> String {
+        let mut bodies = self.notes.bodies.borrow_mut();
+        bodies.push(text.to_string());
+        format!("[^{}-{}]", self.notes.section.get(), bodies.len())
+    }
+
+    /// Writes the definitions of the footnotes the section just rendered referenced, one
+    /// `[^section-n]: text` each, the text on one line.
+    fn write_section_notes(&self, output: &mut String) {
+        let bodies = std::mem::take(&mut *self.notes.bodies.borrow_mut());
+        if bodies.is_empty() {
+            return;
+        }
+        ensure_blank_line(output);
+        let section = self.notes.section.get();
+        for (i, body) in bodies.iter().enumerate() {
+            let text = body.split_whitespace().collect::<Vec<_>>().join(" ");
+            let text = if self.options.escape_special_chars {
+                escape_markdown(&text)
+            } else {
+                text
+            };
+            output.push_str(&format!("[^{section}-{}]: {text}\n\n", i + 1));
+        }
     }
 
     /// Renders a single section to a Markdown string.
@@ -132,6 +182,7 @@ impl MarkdownRenderer {
                 heading_config: None,
                 ..opts.clone()
             },
+            notes: SectionNotes::default(),
         };
 
         let mut output = String::new();
@@ -140,6 +191,7 @@ impl MarkdownRenderer {
             output.push_str(&format!("<!-- section {} -->\n\n", section.index));
         }
 
+        renderer.begin_section_notes(section.index);
         for block in &section.content {
             match block {
                 Block::Paragraph(para) => {
@@ -150,6 +202,7 @@ impl MarkdownRenderer {
                 }
             }
         }
+        renderer.write_section_notes(&mut output);
 
         // Apply cleanup pipeline if enabled
         if let Some(ref cleanup_options) = renderer.options.cleanup {
@@ -173,6 +226,7 @@ impl MarkdownRenderer {
             if self.options.section_markers == super::SectionMarkerStyle::Comment {
                 output.push_str(&format!("<!-- section {} -->\n\n", section.index));
             }
+            self.begin_section_notes(section.index);
             for block in &section.content {
                 match block {
                     Block::Paragraph(para) => {
@@ -183,6 +237,7 @@ impl MarkdownRenderer {
                     }
                 }
             }
+            self.write_section_notes(&mut output);
         }
 
         // Apply cleanup pipeline if enabled
@@ -218,6 +273,7 @@ impl MarkdownRenderer {
             if self.options.section_markers == super::SectionMarkerStyle::Comment {
                 output.push_str(&format!("<!-- section {} -->\n\n", section.index));
             }
+            self.begin_section_notes(section.index);
             for block in &section.content {
                 match block {
                     Block::Paragraph(para) => {
@@ -230,6 +286,7 @@ impl MarkdownRenderer {
                     }
                 }
             }
+            self.write_section_notes(&mut output);
         }
 
         // Apply cleanup pipeline if enabled
@@ -849,7 +906,7 @@ impl MarkdownRenderer {
                 }
             }
             InlineContent::Footnote(text) => {
-                output.push_str(&format!("[^{}]", text));
+                output.push_str(&self.note_reference(text));
             }
             InlineContent::Link { text, url } => {
                 let label = if self.options.escape_special_chars {
@@ -962,9 +1019,11 @@ fn leading_char(item: &InlineContent) -> Option<char> {
 /// - `` ` `` - inline code
 /// - `*` and `_` - emphasis/bold
 /// - `|` - table delimiter
+/// - `[`, `]` - text written `[x](y)` would be a link, and a line opening `[x]: y` a link
+///   reference definition, which is not printed at all
 ///
 /// Characters that are NOT escaped (only special in specific contexts):
-/// - `()`, `[]`, `{}` - only special in link/image syntax `[text](url)`
+/// - `()`, `{}` - only special after a link's `]`, which is always escaped
 /// - `#` - only special at start of line (headings)
 /// - `+`, `-` - only special at start of line (lists) or `---` (rules)
 /// - `!` - only special before `[` (images)
@@ -974,7 +1033,7 @@ fn escape_markdown(s: &str) -> String {
     for c in s.chars() {
         match c {
             // Only escape characters that are ALWAYS special regardless of position
-            '\\' | '`' | '*' | '_' | '|' => {
+            '\\' | '`' | '*' | '_' | '|' | '[' | ']' => {
                 result.push('\\');
                 result.push(c);
             }
@@ -1118,6 +1177,57 @@ mod tests {
         let result = renderer.render(&doc).unwrap();
 
         assert!(result.contains("Hello, world!"));
+    }
+
+    /// Two sections, each with a footnote whose body holds brackets.
+    fn footnoted_document() -> Document {
+        let mut doc = Document::new();
+        for (index, note) in [(0, "See [1] above."), (1, "Second note.")] {
+            let mut section = Section::new(index);
+            let mut para = Paragraph::text("Claim");
+            para.content.push(InlineContent::Footnote(note.to_string()));
+            para.content
+                .push(InlineContent::Text(TextRun::new(" holds [x](y).")));
+            section.push_paragraph(para);
+            doc.sections.push(section);
+        }
+        doc
+    }
+
+    #[test]
+    fn a_footnote_is_a_numbered_reference_and_a_definition() {
+        let md = MarkdownRenderer::new(RenderOptions::default())
+            .render(&footnoted_document())
+            .unwrap();
+        // The body used to be the label itself — `[^See [1] above.]`, a reference with no
+        // definition, which GFM prints as it stands and a `]` in the note cut short.
+        assert_eq!(
+            md,
+            "Claim[^1-1] holds \\[x\\](y).\n\n[^1-1]: See \\[1\\] above.\n\n\
+             Claim[^2-1] holds \\[x\\](y).\n\n[^2-1]: Second note.\n\n"
+        );
+    }
+
+    #[test]
+    fn a_section_rendered_alone_labels_its_footnotes_the_same() {
+        let doc = footnoted_document();
+        let whole = MarkdownRenderer::new(RenderOptions::default())
+            .render(&doc)
+            .unwrap();
+        let styles = crate::model::StyleRegistry::default();
+        let alone: String = doc
+            .sections
+            .iter()
+            .map(|section| {
+                MarkdownRenderer::render_section_standalone(
+                    section,
+                    &styles,
+                    &RenderOptions::default(),
+                )
+                .unwrap()
+            })
+            .collect();
+        assert_eq!(alone, whole);
     }
 
     #[test]
@@ -1367,8 +1477,8 @@ mod tests {
     #[test]
     fn test_escape_markdown() {
         assert_eq!(escape_markdown("*bold*"), "\\*bold\\*");
-        // [] are not escaped - only special in link/image syntax context
-        assert_eq!(escape_markdown("[link]"), "[link]");
+        // Brackets are text: `[x](y)` would be a link, a line `[x]: y` a definition.
+        assert_eq!(escape_markdown("[link]"), r"\[link\]");
         assert_eq!(escape_markdown("a|b|c"), "a\\|b\\|c");
     }
 
