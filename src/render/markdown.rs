@@ -833,13 +833,13 @@ impl MarkdownRenderer {
             }
             InlineContent::Equation(eq) => {
                 if let Some(ref latex) = eq.latex {
-                    output.push_str(&format!("${}$", latex));
+                    output.push_str(&math_span(latex, in_table_cell));
                 } else if !eq.script.is_empty() {
                     let latex = crate::equation::to_latex(&eq.script);
                     if latex.is_empty() {
-                        output.push_str(&format!("`{}`", eq.script));
+                        output.push_str(&markdown::code_span(&eq.script, in_table_cell));
                     } else {
-                        output.push_str(&format!("${}$", latex));
+                        output.push_str(&math_span(&latex, in_table_cell));
                     }
                 } else {
                     // Equation object whose script could not be extracted.
@@ -982,6 +982,16 @@ fn escape_markdown(s: &str) -> String {
         }
     }
     result
+}
+
+/// An inline math span, `$latex$`. Inside a table cell `|` is escaped: a GFM table splits its
+/// cells before it reads any inline span, so the bars of `\left| x \right|` would end the cell.
+fn math_span(latex: &str, in_table_cell: bool) -> String {
+    if in_table_cell {
+        format!("${}$", latex.replace('|', "\\|"))
+    } else {
+        format!("${latex}$")
+    }
 }
 
 /// Escapes special characters for YAML strings.
@@ -2139,6 +2149,27 @@ mod table_cell_content_tests {
             "Equation in cell should render as LaTeX, got: {}",
             result
         );
+    }
+
+    #[test]
+    fn an_equation_with_bars_keeps_its_table_cell() {
+        use crate::model::{Equation, InlineContent};
+
+        // `|x|` inside `$…$` would split the cell: a GFM table reads `|` before math.
+        let cell = TableCell {
+            content: vec![Paragraph {
+                style: Default::default(),
+                content: vec![InlineContent::Equation(Equation {
+                    script: "abs x".to_string(),
+                    latex: Some(r"\left| x \right|".to_string()),
+                })],
+            }],
+            rowspan: 1,
+            colspan: 1,
+            ..Default::default()
+        };
+        let renderer = MarkdownRenderer::new(RenderOptions::default());
+        assert_eq!(renderer.render_cell_content(&cell), r"$\left\| x \right\|$");
     }
 
     #[test]

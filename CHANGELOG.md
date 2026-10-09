@@ -7,7 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **An equation keeps its table cell.** Inside a table cell, the `|` of an equation such as
+  `\left| x \right|` split the cell, because a GFM table splits its cells before it reads any
+  inline span; it is now escaped there.
+- **An equation shown as its script is written raw.** When the script has no LaTeX form it is
+  written as a code span fenced with enough backticks (`markdown::code_span` from
+  `unparser-shared` 0.6), so a backtick in the script no longer ends the span.
+
 ### Changed
+
+- Requires `unparser-shared` 0.6.
 
 - Updated `zip` to 9. Its archives report each entry name as a result, since a name is
   decoded (as UTF-8, otherwise as CP437); CP437 maps every byte, so no name fails to decode and
