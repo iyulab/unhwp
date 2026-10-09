@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   break now reads back as written, and a `|` in a target inside a table cell no longer ends the
   cell. Both writers now come from `unparser-shared` 0.4, shared with the other parsers of the
   family.
+- **A hyperlink's text is escaped, and can no longer end the link or a table cell.** Link text was
+  written verbatim: a `]` ended the link early, a `|` inside a table cell ended the cell, and `*`
+  or `_` styled text that the document did not style. It now gets the same escaping as other
+  text (`escape_special_chars`), and its brackets, line breaks and — in a cell — `|` are escaped
+  even with that option off (`unparser-shared` 0.5).
 
 ## [0.15.1] - 2026-10-08
 

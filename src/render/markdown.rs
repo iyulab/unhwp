@@ -852,11 +852,12 @@ impl MarkdownRenderer {
                 output.push_str(&format!("[^{}]", text));
             }
             InlineContent::Link { text, url } => {
-                output.push_str(&format!(
-                    "[{}]({})",
-                    text,
-                    markdown::link_destination(url, in_table_cell)
-                ));
+                let label = if self.options.escape_special_chars {
+                    escape_markdown(text)
+                } else {
+                    text.clone()
+                };
+                output.push_str(&markdown::link(&label, url, None, in_table_cell));
             }
         }
     }
@@ -2279,6 +2280,37 @@ mod table_cell_content_tests {
             result.contains("[문서](<a\\<b\\>c d>)"),
             "angle brackets not backslash-escaped: {result:?}"
         );
+    }
+
+    /// A `]` in the link text ends the link early unless it is escaped, and an unescaped `|`
+    /// in a cell ends the cell — both whatever `escape_special_chars` says.
+    #[test]
+    fn test_link_text_with_brackets_and_pipes_stays_inside_the_link_in_a_cell() {
+        use crate::model::InlineContent;
+
+        let cell = TableCell {
+            content: vec![Paragraph {
+                style: Default::default(),
+                content: vec![InlineContent::Link {
+                    text: "참고 [3] | 부록".to_string(),
+                    url: "https://example.com".to_string(),
+                }],
+            }],
+            rowspan: 1,
+            colspan: 1,
+            ..Default::default()
+        };
+        for escape_special_chars in [true, false] {
+            let options = RenderOptions {
+                escape_special_chars,
+                ..RenderOptions::default()
+            };
+            let result = MarkdownRenderer::new(options).render_cell_content(&cell);
+            assert!(
+                result.contains(r"[참고 \[3\] \| 부록](https://example.com)"),
+                "escape_special_chars={escape_special_chars}: {result:?}"
+            );
+        }
     }
 
     #[test]
