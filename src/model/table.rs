@@ -57,9 +57,9 @@ impl Table {
 
     fn placement(&self) -> unparser_shared::grid::Placement {
         unparser_shared::grid::place(self.rows.iter().map(|row| {
-            row.cells.iter().map(|cell| {
-                unparser_shared::grid::Span::new(cell.rowspan.into(), cell.colspan.into())
-            })
+            row.cells
+                .iter()
+                .map(|cell| unparser_shared::grid::Span::new(cell.rowspan, cell.colspan))
         }))
     }
 
