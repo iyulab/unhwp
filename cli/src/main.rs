@@ -184,6 +184,25 @@ enum Commands {
         output: PathBuf,
     },
 
+    /// Extract the tables as CSV (RFC 4180), one per table
+    ///
+    /// Without --output the tables are written to standard output, a blank line between
+    /// two. With --output each table is a file in that directory, named for the section it
+    /// is in and its place there: s1-t1.csv, s1-t2.csv, … A merged cell's text is in its
+    /// top-left position and the positions it covers are empty.
+    Tables {
+        /// Input file path
+        input: PathBuf,
+
+        /// Output directory (stdout if not specified)
+        #[arg(short, long, value_name = "DIR")]
+        output: Option<PathBuf>,
+
+        /// Write tab-separated values (.tsv) instead of CSV
+        #[arg(long)]
+        tsv: bool,
+    },
+
     /// Update unhwp to the latest version
     Update {
         /// Check only, don't install
@@ -469,6 +488,10 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 println!("{} No resources found in document", "!".yellow().bold());
             }
+        }
+
+        Commands::Tables { input, output, tsv } => {
+            cmd_tables(&input, output.as_deref(), tsv)?;
         }
 
         Commands::Update { check, force } => {
@@ -793,6 +816,56 @@ fn create_spinner(message: &str) -> ProgressBar {
     pb.set_message(message.to_string());
     pb.enable_steady_tick(std::time::Duration::from_millis(100));
     pb
+}
+
+/// Write every table of the document as delimited text: to standard output, a blank line
+/// between two, or one file per table in `output`, named `s<section>-t<n>.<ext>`.
+fn cmd_tables(
+    input: &std::path::Path,
+    output: Option<&std::path::Path>,
+    tsv: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let doc = parse_file(input)?;
+
+    let (delimiter, extension) = if tsv { ('\t', "tsv") } else { (',', "csv") };
+    let tables: Vec<(usize, usize, String)> = doc
+        .sections
+        .iter()
+        .enumerate()
+        .flat_map(|(s, section)| {
+            section
+                .content
+                .iter()
+                .filter_map(|block| match block {
+                    unhwp::model::Block::Table(table) => Some(table),
+                    _ => None,
+                })
+                .enumerate()
+                .map(move |(t, table)| (s + 1, t + 1, table.to_delimited(delimiter)))
+        })
+        .collect();
+
+    match output {
+        // Standard output carries the tables alone, so it can be piped into another tool.
+        None => {
+            let text: Vec<&str> = tables.iter().map(|(_, _, t)| t.as_str()).collect();
+            print!("{}", text.join("\r\n"));
+        }
+        Some(dir) => {
+            fs::create_dir_all(dir)?;
+            for (section, n, text) in &tables {
+                let name = format!("s{section}-t{n}.{extension}");
+                fs::write(dir.join(&name), text)?;
+                println!("{} {}", "Extracted".green(), name);
+            }
+            println!(
+                "\n{} {} tables extracted",
+                "Done!".green().bold(),
+                tables.len()
+            );
+        }
+    }
+    Ok(())
 }
 
 fn write_output(path: Option<&PathBuf>, content: &str) -> Result<(), Box<dyn std::error::Error>> {

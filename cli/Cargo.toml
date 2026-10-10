@@ -40,3 +40,7 @@ indicatif = "0.18"
 
 # Colored output
 colored = "3.1"
+
+[dev-dependencies]
+# Builds the HWPX the `tables` test reads, from the committed fixture.
+zip = { version = "9.0", default-features = false, features = ["deflate"] }

@@ -2,6 +2,7 @@
 
 use super::{Alignment, Paragraph};
 use serde::Serialize;
+use unparser_shared::csv;
 
 /// A table in the document.
 #[derive(Debug, Clone, Default, Serialize)]
@@ -67,6 +68,38 @@ impl Table {
     /// Gets a mutable cell at the specified position.
     pub fn get_cell_mut(&mut self, row: usize, col: usize) -> Option<&mut TableCell> {
         self.rows.get_mut(row).and_then(|r| r.cells.get_mut(col))
+    }
+
+    /// The table as CSV ([RFC 4180](https://www.rfc-editor.org/rfc/rfc4180)): one record per
+    /// row, in order, records ended by CRLF.
+    ///
+    /// A merged cell's text is in its top-left position and the positions it covers are
+    /// empty, so every record has the same number of fields and a value is never counted
+    /// twice. A field holding the delimiter, a quote or a line break is quoted, with quotes
+    /// doubled; a cell's paragraphs are kept on their own lines inside it.
+    ///
+    /// ```
+    /// use unhwp::model::{Table, TableCell, TableRow};
+    ///
+    /// let mut table = Table::new();
+    /// let mut row = TableRow::new();
+    /// row.cells = vec![TableCell::text("Bolt, M6"), TableCell::text("He said \"no\"")];
+    /// table.rows.push(row);
+    /// assert_eq!(table.to_csv(), "\"Bolt, M6\",\"He said \"\"no\"\"\"\r\n");
+    /// ```
+    pub fn to_csv(&self) -> String {
+        self.to_delimited(',')
+    }
+
+    /// The table as delimited text, like [`Table::to_csv`] with `delimiter` between fields
+    /// (`'\t'` for TSV).
+    pub fn to_delimited(&self, delimiter: char) -> String {
+        let rows = self.rows.iter().map(|row| {
+            row.cells
+                .iter()
+                .map(|cell| csv::Cell::new(cell.plain_text(), cell.rowspan, cell.colspan))
+        });
+        csv::to_delimited(rows, delimiter)
     }
 }
 

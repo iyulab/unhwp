@@ -234,6 +234,7 @@ unhwp text FILE [-o OUTPUT]               # Extract plain text
 unhwp json FILE [-o OUTPUT]               # Convert to JSON
 unhwp info FILE                           # Show document metadata
 unhwp extract FILE [-o DIR]               # Extract binary resources only
+unhwp tables FILE [-o DIR] [--tsv]       # Extract tables as CSV (one file per table with -o)
 ```
 
 ### Examples
@@ -250,6 +251,10 @@ unhwp convert report.hwp --section-markers
 
 # Skip image extraction (faster)
 unhwp convert report.hwp --no-images
+
+# Every table as CSV (RFC 4180); with -o, one file per table: s1-t1.csv, s1-t2.csv, ...
+# A merged cell's text is in its top-left position, the positions it covers empty.
+unhwp tables report.hwp -o ./tables
 
 # Quiet batch conversion (shell) — -q is on the `convert` subcommand
 for f in *.hwp; do unhwp convert "$f" -q; done
