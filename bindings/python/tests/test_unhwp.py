@@ -5,14 +5,10 @@ import sys
 import pytest
 from pathlib import Path
 
-# Skip tests if native library is not available
-try:
-    import unhwp
-    HAS_NATIVE = True
-except OSError:
-    HAS_NATIVE = False
-
-pytestmark = pytest.mark.skipif(not HAS_NATIVE, reason="Native library not available")
+# Imported unconditionally: a native library that does not load is a failure, not a reason to
+# skip. Skipped, every test would report green with nothing checked — and this suite is what
+# stands between a build and its release. conftest.py points UNHWP_LIB_PATH at a local build.
+import unhwp
 
 # The repository's own committed sample, also used by the Rust suite. It ships with the
 # source, so its absence is a broken checkout rather than an expected condition — tests
