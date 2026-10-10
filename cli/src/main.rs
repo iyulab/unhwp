@@ -829,20 +829,8 @@ fn cmd_tables(
 
     let (delimiter, extension) = if tsv { ('\t', "tsv") } else { (',', "csv") };
     let tables: Vec<(usize, usize, String)> = doc
-        .sections
-        .iter()
-        .enumerate()
-        .flat_map(|(s, section)| {
-            section
-                .content
-                .iter()
-                .filter_map(|block| match block {
-                    unhwp::model::Block::Table(table) => Some(table),
-                    _ => None,
-                })
-                .enumerate()
-                .map(move |(t, table)| (s + 1, t + 1, table.to_delimited(delimiter)))
-        })
+        .tables()
+        .map(|(section, n, table)| (section, n, table.to_delimited(delimiter)))
         .collect();
 
     match output {

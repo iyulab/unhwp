@@ -410,6 +410,38 @@ unparser_shared::export_bytes_getter!(
     }
 );
 
+unparser_shared::export_string_getter!(
+    /// Get every table of the document as delimited text, in reading order, as JSON:
+    /// `[{"section","index","text"}]` — the section's number (from 1), the table's place
+    /// among that section's tables (from 1), and the table as CSV (RFC 4180), or
+    /// tab-separated when `tsv` is non-zero. A merged cell's text is in its top-left position
+    /// and the positions it covers are empty; records end with CRLF. `[]` when the document
+    /// has no tables.
+    ///
+    /// # Safety
+    ///
+    /// - `doc` must be a valid document handle.
+    /// - Returns null on error. Use `unhwp_last_error` to get the error message.
+    /// - The returned string must be freed with `unhwp_free_string`.
+    LAST_ERROR,
+    unhwp_tables(doc: UnhwpDocument, tsv: c_int),
+    {
+        let document = &(*doc).inner;
+        let delimiter = if tsv != 0 { '\t' } else { ',' };
+        let tables: Vec<serde_json::Value> = document
+            .tables()
+            .map(|(section, index, table)| {
+                serde_json::json!({
+                    "section": section,
+                    "index": index,
+                    "text": table.to_delimited(delimiter),
+                })
+            })
+            .collect();
+        serde_json::to_string(&tables).map_err(json_err)
+    }
+);
+
 unparser_shared::export_free_string!(
     /// Free a string allocated by this library.
     ///
@@ -546,6 +578,66 @@ mod tests {
 
         // Free document
         unsafe { unhwp_free_document(doc) };
+    }
+
+    /// A table of `rows`, one text cell per field.
+    fn table_of(rows: &[&[&str]]) -> crate::model::Table {
+        let mut table = crate::model::Table::new();
+        for fields in rows {
+            let mut row = crate::model::TableRow::new();
+            row.cells
+                .extend(fields.iter().map(|f| crate::model::TableCell::text(*f)));
+            table.rows.push(row);
+        }
+        table
+    }
+
+    #[test]
+    fn tables_come_as_csv_with_their_place() {
+        // Name | Age over Alice | 30 in the first section; «Bob, Jr.» alone in the second,
+        // after a paragraph.
+        let mut document = Document::new();
+        let mut first = crate::model::Section::new(0);
+        first.push_table(table_of(&[&["Name", "Age"], &["Alice", "30"]]));
+        document.sections.push(first);
+        let mut second = crate::model::Section::new(1);
+        second.push_paragraph(crate::model::Paragraph::text("before"));
+        second.push_table(table_of(&[&["Bob, Jr."]]));
+        document.sections.push(second);
+        let doc = Box::into_raw(Box::new(UnhwpDocument { inner: document }));
+
+        let json = take_string(unsafe { unhwp_tables(doc, 0) });
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!([
+                {"section": 1, "index": 1, "text": "Name,Age\r\nAlice,30\r\n"},
+                {"section": 2, "index": 1, "text": "\"Bob, Jr.\"\r\n"},
+            ]),
+            "{json}"
+        );
+        let tsv: serde_json::Value =
+            serde_json::from_str(&take_string(unsafe { unhwp_tables(doc, 1) })).unwrap();
+        assert_eq!(tsv[0]["text"], "Name\tAge\r\nAlice\t30\r\n");
+        assert_eq!(tsv[1]["text"], "Bob, Jr.\r\n");
+
+        unsafe { unhwp_free_document(doc) };
+    }
+
+    #[test]
+    fn a_document_without_tables_has_an_empty_list() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/two_sections.hwpx"
+        );
+        let path_cstr = CString::new(path).unwrap();
+        let doc = unsafe { unhwp_parse_file(path_cstr.as_ptr()) };
+        assert!(!doc.is_null(), "the committed fixture must parse");
+        assert_eq!(take_string(unsafe { unhwp_tables(doc, 0) }), "[]");
+        unsafe { unhwp_free_document(doc) };
+
+        assert!(unsafe { unhwp_tables(ptr::null(), 0) }.is_null());
+        assert_eq!(unhwp_last_error_kind(), UNHWP_ERROR_INVALID_ARGUMENT);
     }
 
     #[test]

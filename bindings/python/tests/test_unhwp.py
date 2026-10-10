@@ -186,6 +186,73 @@ class TestNativeErrorKind:
         assert native.lib.unhwp_last_error_kind() == unhwp.ErrorKind.NONE
 
 
+def _cell(text: str, span: str = "") -> str:
+    return f"<hp:tc><hp:subList><hp:p><hp:run><hp:t>{text}</hp:t></hp:run></hp:p></hp:subList>{span}</hp:tc>"
+
+
+# ┌────────┬───────────────┐
+# │ Region │ Sales, total  │   «Region» merged down, «Sales, total» across two columns
+# │        ├───────┬───────┤
+# │        │ 2024  │ 2025  │
+# ├────────┼───────┼───────┤
+# │ North  │  10   │  12   │
+# └────────┴───────┴───────┘
+_TABLE_SECTION = (
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    '<hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section"'
+    ' xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph">'
+    "<hp:tbl>"
+    "<hp:tr>"
+    + _cell("Region", '<hp:cellSpan colSpan="1" rowSpan="2"/>')
+    + _cell("Sales, total", '<hp:cellSpan colSpan="2" rowSpan="1"/>')
+    + "</hp:tr>"
+    "<hp:tr>" + _cell("2024") + _cell("2025") + "</hp:tr>"
+    "<hp:tr>" + _cell("North") + _cell("10") + _cell("12") + "</hp:tr>"
+    "</hp:tbl>"
+    "</hs:sec>"
+)
+
+
+def _hwpx_with_a_table() -> bytes:
+    """The committed sample with its first section replaced by ``_TABLE_SECTION``."""
+    import io
+    import zipfile
+
+    out = io.BytesIO()
+    with zipfile.ZipFile(SAMPLE_DOCUMENT) as source, zipfile.ZipFile(out, "w") as target:
+        for entry in source.infolist():
+            body = source.read(entry)
+            if entry.filename == "Contents/section0.xml":
+                body = _TABLE_SECTION.encode("utf-8")
+            target.writestr(entry.filename, body, compress_type=zipfile.ZIP_STORED)
+    return out.getvalue()
+
+
+class TestGetTables:
+    """Tables as delimited text: ``ParseResult.get_tables``."""
+
+    def test_tables_come_as_csv_with_their_place(self):
+        with unhwp.parse_bytes(_hwpx_with_a_table()) as result:
+            assert result.get_tables() == [
+                {
+                    "section": 1,
+                    "index": 1,
+                    "text": 'Region,"Sales, total",\r\n,2024,2025\r\nNorth,10,12\r\n',
+                },
+            ]
+
+    def test_tsv_separates_fields_with_tabs(self):
+        with unhwp.parse_bytes(_hwpx_with_a_table()) as result:
+            assert (
+                result.get_tables(tsv=True)[0]["text"]
+                == "Region\tSales, total\t\r\n\t2024\t2025\r\nNorth\t10\t12\r\n"
+            )
+
+    def test_a_document_without_tables_has_none(self):
+        with unhwp.parse(str(SAMPLE_DOCUMENT)) as result:
+            assert result.get_tables() == []
+
+
 @pytest.mark.integration
 class TestIntegration:
     """End-to-end tests over the native library, run against the repository's own

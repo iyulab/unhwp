@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Table::cell_columns()` — the grid column each cell starts in, one list per row, parallel to
   the row's cells: a merge is recorded once on the cell that owns it, so a cell's index in its
   row is not its column once a cell merged down from a row above sits to its left.
+- **Tables as CSV from the bindings and the C ABI.** `unhwp_tables(doc, tsv)` returns every
+  table as CSV (RFC 4180), or tab-separated, with the section it is in and its place there, as
+  a JSON array of `{"section", "index", "text"}`. Python `ParseResult.get_tables()` and .NET
+  `UnhwpDocument.GetTables()` wrap it. For library users, `Document::tables()` lists the
+  tables with their place — what `unhwp tables` writes.
+
+### Changed
+
+- The .NET package README documents `UnhwpDocument`, the binding's API; it described types the
+  package does not have.
 
 ### Fixed
 

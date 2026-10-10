@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -323,6 +324,36 @@ public class UnhwpDocument : IDisposable
             {
                 NativeMethods.unhwp_free_string(ptr);
             }
+        }
+    }
+
+    /// <summary>
+    /// Get every table of the document as delimited text, in reading order.
+    /// </summary>
+    /// <remarks>
+    /// Each table is CSV (RFC 4180), or tab-separated when <paramref name="tsv"/> is true: a
+    /// merged cell's text is in its top-left position and the positions it covers are empty,
+    /// so every record has the same number of fields; records end with CRLF.
+    /// </remarks>
+    /// <param name="tsv">Tab-separated instead of comma-separated.</param>
+    /// <returns>The tables with their section and place in it; empty when there are none.</returns>
+    /// <exception cref="UnhwpException">If the tables cannot be produced.</exception>
+    public IReadOnlyList<TableText> GetTables(bool tsv = false)
+    {
+        ThrowIfDisposed();
+        var ptr = NativeMethods.unhwp_tables(_handle, tsv ? 1 : 0);
+        if (ptr == IntPtr.Zero)
+            throw NativeFailure("Failed to get tables");
+
+        try
+        {
+            var json = PtrToStringUtf8(ptr);
+            return JsonSerializer.Deserialize(json, UnhwpJsonContext.Default.TableTextArray)
+                ?? throw new UnhwpException("Failed to deserialize tables");
+        }
+        finally
+        {
+            NativeMethods.unhwp_free_string(ptr);
         }
     }
 

@@ -164,6 +164,9 @@ _lib.unhwp_get_title.restype = ctypes.c_void_p
 _lib.unhwp_get_author.argtypes = [ctypes.c_void_p]
 _lib.unhwp_get_author.restype = ctypes.c_void_p
 
+_lib.unhwp_tables.argtypes = [ctypes.c_void_p, ctypes.c_int]
+_lib.unhwp_tables.restype = ctypes.c_void_p
+
 _lib.unhwp_free_string.argtypes = [ctypes.c_void_p]
 _lib.unhwp_free_string.restype = None
 

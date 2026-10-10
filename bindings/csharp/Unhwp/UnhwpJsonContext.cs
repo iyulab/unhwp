@@ -8,6 +8,7 @@ namespace Unhwp;
 /// trimmed, Native AOT, and other apps that disable reflection-based serialization.
 /// </summary>
 [JsonSerializable(typeof(string[]))]
+[JsonSerializable(typeof(TableText[]))]
 internal sealed partial class UnhwpJsonContext : JsonSerializerContext
 {
 }

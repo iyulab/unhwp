@@ -119,6 +119,14 @@ elif fmt == unhwp.FORMAT_HWPX:
 
 ### Classes
 
+#### `ParseResult`
+What `parse()` and `parse_bytes()` return; use it as a context manager or call `close()`.
+
+- `markdown`, `text`, `plain_text`, `json` - The document rendered
+- `section_count`, `image_count`, `title`, `author` - About the document
+- `images`, `iter_images()` - Embedded images
+- `get_tables(tsv=False)` - Every table as CSV (RFC 4180), or tab-separated with `tsv=True`, in reading order: `{"section", "index", "text"}` — the section's number (from 1), the table's place among that section's tables (from 1), and the text. A merged cell's text is in its top-left position and the positions it covers are empty, so every record has the same number of fields: `pandas.read_csv(io.StringIO(t["text"]))` reads one.
+
 #### `RenderOptions`
 Options for Markdown rendering.
 

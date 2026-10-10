@@ -166,7 +166,7 @@ public class IntegrationTests
     /// missing file is a broken checkout rather than an expected condition — these tests
     /// fail loudly instead of quietly passing over an absent fixture.
     /// </summary>
-    private static string GetTestFile()
+    internal static string GetTestFile()
     {
         // bin/Debug/<tfm> -> Unhwp.Tests -> csharp -> bindings -> repository root.
         var repoRoot = Path.Combine(
@@ -249,5 +249,86 @@ public class IntegrationTests
         {
             UnhwpDocument.ParseFile("/nonexistent/path/file.hwp");
         });
+    }
+}
+
+/// <summary>
+/// Tables as delimited text: <see cref="UnhwpDocument.GetTables"/>.
+/// </summary>
+public class TableTextTests
+{
+    private static string Cell(string text, string span = "") =>
+        $"<hp:tc><hp:subList><hp:p><hp:run><hp:t>{text}</hp:t></hp:run></hp:p></hp:subList>{span}</hp:tc>";
+
+    /// <summary>
+    /// A section holding one table: «Region» merged down two rows, «Sales, total» across
+    /// two columns over 2024 | 2025, then North | 10 | 12.
+    /// </summary>
+    private static readonly string TableSection =
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+        + "<hs:sec xmlns:hs=\"http://www.hancom.co.kr/hwpml/2011/section\""
+        + " xmlns:hp=\"http://www.hancom.co.kr/hwpml/2011/paragraph\">"
+        + "<hp:tbl>"
+        + $"<hp:tr>{Cell("Region", "<hp:cellSpan colSpan=\"1\" rowSpan=\"2\"/>")}"
+        + $"{Cell("Sales, total", "<hp:cellSpan colSpan=\"2\" rowSpan=\"1\"/>")}</hp:tr>"
+        + $"<hp:tr>{Cell("2024")}{Cell("2025")}</hp:tr>"
+        + $"<hp:tr>{Cell("North")}{Cell("10")}{Cell("12")}</hp:tr>"
+        + "</hp:tbl>"
+        + "</hs:sec>";
+
+    /// <summary>The committed sample with its first section replaced by <see cref="TableSection"/>.</summary>
+    private static byte[] HwpxWithATable()
+    {
+        using var source = System.IO.Compression.ZipFile.OpenRead(IntegrationTests.GetTestFile());
+        using var output = new MemoryStream();
+        using (var target = new System.IO.Compression.ZipArchive(output, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+        {
+            foreach (var entry in source.Entries)
+            {
+                byte[] body;
+                if (entry.FullName == "Contents/section0.xml")
+                {
+                    body = System.Text.Encoding.UTF8.GetBytes(TableSection);
+                }
+                else
+                {
+                    using var read = entry.Open();
+                    using var buffer = new MemoryStream();
+                    read.CopyTo(buffer);
+                    body = buffer.ToArray();
+                }
+                var copy = target.CreateEntry(entry.FullName, System.IO.Compression.CompressionLevel.NoCompression);
+                using var write = copy.Open();
+                write.Write(body, 0, body.Length);
+            }
+        }
+        return output.ToArray();
+    }
+
+    [Fact]
+    public void GetTables_ComeAsCsvWithTheirPlace()
+    {
+        using var doc = UnhwpDocument.ParseBytes(HwpxWithATable());
+        var tables = doc.GetTables();
+        Assert.Single(tables);
+        Assert.Equal(1, tables[0].Section);
+        Assert.Equal(1, tables[0].Index);
+        Assert.Equal("Region,\"Sales, total\",\r\n,2024,2025\r\nNorth,10,12\r\n", tables[0].Text);
+    }
+
+    [Fact]
+    public void GetTables_Tsv_SeparatesFieldsWithTabs()
+    {
+        using var doc = UnhwpDocument.ParseBytes(HwpxWithATable());
+        Assert.Equal(
+            "Region\tSales, total\t\r\n\t2024\t2025\r\nNorth\t10\t12\r\n",
+            doc.GetTables(tsv: true)[0].Text);
+    }
+
+    [Fact]
+    public void GetTables_NoTables_IsEmpty()
+    {
+        using var doc = UnhwpDocument.ParseFile(IntegrationTests.GetTestFile());
+        Assert.Empty(doc.GetTables());
     }
 }

@@ -62,6 +62,23 @@ impl Document {
         })
     }
 
+    /// Every table of the document in reading order, with where it is: the section's number
+    /// (from 1) and the table's place among that section's tables (from 1) — the names
+    /// `unhwp tables` writes them under (`s<section>-t<n>`).
+    pub fn tables(&self) -> impl Iterator<Item = (usize, usize, &Table)> {
+        self.sections.iter().enumerate().flat_map(|(s, section)| {
+            section
+                .content
+                .iter()
+                .filter_map(|block| match block {
+                    Block::Table(table) => Some(table),
+                    _ => None,
+                })
+                .enumerate()
+                .map(move |(t, table)| (s + 1, t + 1, table))
+        })
+    }
+
     /// Returns the plain text content of the entire document.
     pub fn plain_text(&self) -> String {
         let mut result = Vec::new();
@@ -233,4 +250,42 @@ pub enum ResourceType {
     OleObject,
     /// Other binary data
     Other,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{TableCell, TableRow};
+
+    /// A one-cell table holding `text`.
+    fn table(text: &str) -> Table {
+        let mut row = TableRow::new();
+        row.cells.push(TableCell::text(text));
+        let mut table = Table::new();
+        table.rows.push(row);
+        table
+    }
+
+    #[test]
+    fn tables_are_numbered_per_section_in_reading_order() {
+        let mut doc = Document::new();
+        let mut first = Section::new(0);
+        first.push_table(table("a"));
+        first.push_paragraph(Paragraph::text("between"));
+        first.push_table(table("b"));
+        doc.sections.push(first);
+        doc.sections.push(Section::new(1));
+        let mut third = Section::new(2);
+        third.push_table(table("c"));
+        doc.sections.push(third);
+
+        let found: Vec<(usize, usize, String)> = doc
+            .tables()
+            .map(|(s, t, table)| (s, t, table.rows[0].cells[0].plain_text()))
+            .collect();
+        let expected =
+            [(1, 1, "a"), (1, 2, "b"), (3, 1, "c")].map(|(s, t, text)| (s, t, text.to_string()));
+        assert_eq!(found, expected);
+        assert_eq!(Document::new().tables().count(), 0);
+    }
 }

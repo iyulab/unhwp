@@ -18,187 +18,155 @@ Install-Package Unhwp
 ```csharp
 using Unhwp;
 
-// Simple conversion
-string markdown = UnhwpConverter.ToMarkdown("document.hwp");
+// Parse a document
+using var doc = UnhwpDocument.ParseFile("document.hwp");
+
+// Convert to Markdown
+string markdown = doc.ToMarkdown();
 Console.WriteLine(markdown);
 
-// Extract plain text
-string text = UnhwpConverter.ExtractText("document.hwp");
+// Plain text and JSON
+string text = doc.ToText();
+string json = doc.ToJson();
 
-// Full parsing with images
-using var result = UnhwpConverter.Parse("document.hwp");
-Console.WriteLine(result.Markdown);
-Console.WriteLine($"Sections: {result.SectionCount}");
-Console.WriteLine($"Paragraphs: {result.ParagraphCount}");
+Console.WriteLine($"Sections: {doc.SectionCount}");
+```
 
-// Save images
-foreach (var img in result.Images)
+### With Markdown Options
+
+```csharp
+using var doc = UnhwpDocument.ParseFile("document.hwpx");
+
+var markdown = doc.ToMarkdown(new MarkdownOptions
 {
-    img.Save($"output/{img.Name}");
+    IncludeFrontmatter = true,
+    Refine = true
+});
+```
+
+### Parse from Bytes
+
+```csharp
+byte[] data = File.ReadAllBytes("document.hwp");
+using var doc = UnhwpDocument.ParseBytes(data);
+```
+
+### Tables as CSV
+
+```csharp
+using var doc = UnhwpDocument.ParseFile("document.hwp");
+
+foreach (var table in doc.GetTables())
+{
+    File.WriteAllText($"s{table.Section}-t{table.Index}.csv", table.Text);
 }
 ```
 
+### Extract Images
+
+```csharp
+using var doc = UnhwpDocument.ParseFile("document.hwp");
+
+foreach (var id in doc.GetResourceIds())
+{
+    var data = doc.GetResourceData(id);
+    if (data != null)
+        File.WriteAllBytes(Path.Combine("output", id), data);
+}
+```
+
+### Handling Failures
+
+`UnhwpException.Kind` says *why* a call failed, so you can react to the reason instead of
+matching on message text:
+
+```csharp
+try
+{
+    using var doc = UnhwpDocument.ParseFile(path);
+}
+catch (UnhwpException ex)
+{
+    switch (ex.Kind)
+    {
+        case UnhwpErrorKind.OleContainer:
+        case UnhwpErrorKind.ZipArchive:
+            Console.Error.WriteLine("The file is damaged.");
+            break;
+        case UnhwpErrorKind.UnknownFormat:
+        case UnhwpErrorKind.UnsupportedFormat:
+            Console.Error.WriteLine("Not a supported HWP/HWPX document.");
+            break;
+        default:
+            // Also the right branch for a reason this build has no name for.
+            Console.Error.WriteLine($"Extraction failed ({ex.Kind}): {ex.Message}");
+            break;
+    }
+}
+```
+
+The numbers behind `UnhwpErrorKind` are a stable ABI contract: a new reason takes the next
+free number and existing ones are never renumbered. Always keep a `default` branch so an
+unrecognised value degrades to a generic failure rather than going unhandled. `Kind` is
+`Other` for failures raised by the wrapper itself, and never `None` (which means success).
+
 ## Features
 
-- **Fast**: Native Rust library with zero-copy parsing
+- **Fast**: Native Rust library
 - **Complete**: Extracts text, tables, images, and document structure
-- **Clean Output**: Optional cleanup pipeline for polished Markdown
 - **Format Support**: HWP 5.0, HWPX, and HWP 3.x (legacy)
+- **Trim and Native AOT compatible**: no reflection-based serialization
 
 ## API Reference
 
-### UnhwpConverter (Static Class)
+### UnhwpDocument Class
+
+Implements `IDisposable`; dispose it to release the native document.
+
+#### Static Members
+
+- `ParseFile(string path)` - Parse a document from a file path
+- `ParseBytes(byte[] data)` - Parse a document from bytes
+- `Version` - Library version
+
+#### Instance Methods
+
+- `ToMarkdown(MarkdownOptions? options = null)` - Convert to Markdown
+- `ToText()` - Convert to plain text
+- `ToJson(bool compact = false)` - Convert to JSON
+- `PlainText()` - Get plain text (fast extraction)
+- `GetTables(bool tsv = false)` - Every table as CSV (RFC 4180), or tab-separated, in reading order (`IReadOnlyList<TableText>`): `Section`, `Index` (its place in the section, from 1) and `Text`. A merged cell's text is in its top-left position and the positions it covers are empty, so every record has the same number of fields.
+- `GetResourceIds()` - List of resource IDs
+- `GetResourceInfo(string id)` - Resource metadata as `JsonDocument`, or null when absent
+- `GetResourceData(string id)` - Resource binary data, or null when absent
 
 #### Properties
 
-- `Version` - Gets the library version string
-- `SupportedFormats` - Gets a description of supported formats
-
-#### Methods
-
-##### `DetectFormat(string path) -> DocumentFormat`
-Detect the format of a document file.
-
-```csharp
-var format = UnhwpConverter.DetectFormat("document.hwp");
-if (format == DocumentFormat.Hwp5)
-    Console.WriteLine("HWP 5.0 format");
-```
-
-##### `Parse(string path, RenderOptions? options = null) -> ParseResult`
-Parse a document with full access to content and images.
-
-```csharp
-using var result = UnhwpConverter.Parse("document.hwp");
-Console.WriteLine(result.Markdown);
-Console.WriteLine(result.Text);
-foreach (var img in result.Images)
-    Console.WriteLine($"{img.Name}: {img.Data.Length} bytes");
-```
-
-##### `ParseBytes(byte[] data, RenderOptions? options = null) -> ParseResult`
-Parse a document from byte array.
-
-```csharp
-byte[] documentBytes = File.ReadAllBytes("document.hwp");
-using var result = UnhwpConverter.ParseBytes(documentBytes);
-Console.WriteLine(result.Markdown);
-```
-
-##### `ToMarkdown(string path) -> string`
-Convert an HWP/HWPX document to Markdown.
-
-```csharp
-string markdown = UnhwpConverter.ToMarkdown("document.hwp");
-```
-
-##### `ToMarkdownWithCleanup(string path, CleanupOptions? options = null) -> string`
-Convert with optional cleanup.
-
-```csharp
-string markdown = UnhwpConverter.ToMarkdownWithCleanup(
-    "document.hwp",
-    CleanupOptions.Aggressive
-);
-```
-
-##### `ExtractText(string path) -> string`
-Extract plain text content.
-
-```csharp
-string text = UnhwpConverter.ExtractText("document.hwp");
-```
-
-### Classes
-
-#### `ParseResult`
-Result of parsing a document. Implements `IDisposable`.
-
-Properties:
-- `Markdown` - Rendered Markdown content
-- `Text` - Plain text content
-- `RawContent` - Content without cleanup
+- `Title` - Document title, or null
+- `Author` - Document author, or null
 - `SectionCount` - Number of sections
-- `ParagraphCount` - Number of paragraphs
-- `ImageCount` - Number of images
-- `Images` - List of extracted images
+- `ResourceCount` - Number of resources
 
-#### `RenderOptions`
-Options for Markdown rendering.
+### MarkdownOptions Class
 
-```csharp
-var opts = new RenderOptions
-{
-    IncludeFrontmatter = true,
-    ImagePathPrefix = "images/",
-    TableFallback = TableFallback.Html,
-    PreserveLineBreaks = false,
-    EscapeSpecialChars = true
-};
-```
-
-#### `CleanupOptions`
-Options for output cleanup.
-
-```csharp
-// Presets
-var minimal = CleanupOptions.Minimal;
-var defaultOpts = CleanupOptions.Default;
-var aggressive = CleanupOptions.Aggressive;
-var disabled = CleanupOptions.Disabled;
-
-// Custom
-var custom = new CleanupOptions
-{
-    Enabled = true,
-    Preset = CleanupPreset.Default,
-    DetectMojibake = true,
-    PreserveFrontmatter = true
-};
-```
-
-#### `UnhwpImage`
-Represents an extracted image.
-
-Properties:
-- `Name` - Image filename
-- `Data` - Image data as byte array
-
-Methods:
-- `Save(string path)` - Save image to file
-
-### Enums
-
-#### `DocumentFormat`
-- `Unknown` - Unknown format
-- `Hwp5` - HWP 5.0 binary format
-- `Hwpx` - HWPX XML format
-- `Hwp3` - HWP 3.x legacy format
-
-#### `TableFallback`
-- `Markdown` - Render as Markdown tables
-- `Html` - Render as HTML tables
-- `Text` - Render as plain text
-
-#### `CleanupPreset`
-- `Minimal` - Minimal cleanup
-- `Default` - Balanced cleanup
-- `Aggressive` - Maximum cleanup
+- `IncludeFrontmatter` - Include YAML frontmatter with document metadata (default `false`)
+- `EscapeSpecialChars` - Escape special Markdown characters (default `true`)
+- `ParagraphSpacing` - Add extra spacing between paragraphs (default `false`)
+- `Refine` - Apply the lossless Markdown shape-refinement pass after rendering (default `false`)
 
 ## Platform Support
 
 - Windows (x64)
-- Linux (x64)
+- Linux (x64, glibc and musl)
 - macOS (x64, ARM64)
 
 ## Target Frameworks
 
-- .NET 6.0, 7.0, 8.0, 10.0
-- .NET Standard 2.0, 2.1
+- .NET 10.0
 
 ## License
 
-MIT License - see [LICENSE](../../../LICENSE) for details.
+MIT License - see [LICENSE](https://github.com/iyulab/unhwp/blob/main/LICENSE) for details.
 
 ## Links
 

@@ -9,7 +9,7 @@ import json
 from dataclasses import dataclass
 from enum import IntEnum
 from pathlib import Path
-from typing import List, Optional, Union, Iterator
+from typing import Dict, List, Optional, Union, Iterator
 
 from . import _native as native
 
@@ -365,6 +365,34 @@ class ParseResult:
             return None
         try:
             return _ptr_to_string(ptr)
+        finally:
+            native.lib.unhwp_free_string(ptr)
+
+    def get_tables(self, tsv: bool = False) -> List[Dict]:
+        """Every table of the document as delimited text, in reading order.
+
+        Args:
+            tsv: Tab-separated instead of comma-separated.
+
+        Returns:
+            A list of ``{"section", "index", "text"}``: the section's number
+            (from 1), the table's place among that section's tables (from 1),
+            and the table as CSV (RFC 4180) — tab-separated when ``tsv`` is
+            true. A merged cell's text is in its top-left position and the
+            positions it covers are empty, so every record has the same number
+            of fields; records end with CRLF.
+            ``pandas.read_csv(io.StringIO(t["text"]))`` reads one. An empty
+            list when the document has no tables.
+
+        Raises:
+            UnhwpError: If the tables cannot be produced.
+        """
+        self._ensure_open()
+        ptr = native.lib.unhwp_tables(self._handle, 1 if tsv else 0)
+        if not ptr:
+            raise _native_failure(UnhwpError, "Failed to get tables")
+        try:
+            return json.loads(_ptr_to_string(ptr) or "[]")
         finally:
             native.lib.unhwp_free_string(ptr)
 

@@ -153,6 +153,12 @@ internal static class NativeMethods
     public static extern void unhwp_free_string(IntPtr str);
 
     /// <summary>
+    /// Get every table as delimited text, with its place, as a JSON array.
+    /// </summary>
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    public static extern IntPtr unhwp_tables(IntPtr doc, int tsv);
+
+    /// <summary>
     /// Get all resource IDs as a JSON array.
     /// </summary>
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
