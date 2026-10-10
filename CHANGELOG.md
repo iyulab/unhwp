@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-10-10
+
 ### Added
 
 - `Table::cell_columns()` — the grid column each cell starts in, one list per row, parallel to
