@@ -254,8 +254,10 @@ impl MarkdownRenderer {
         document: &Document,
         config: &super::heading_analyzer::HeadingConfig,
     ) -> Result<String> {
-        // Run heading analysis
-        let mut analyzer = HeadingAnalyzer::new(config.clone());
+        // Run heading analysis. The cap is the render option, not part of the detection
+        // config: it bounds the output whichever way headings are found.
+        let mut analyzer =
+            HeadingAnalyzer::new(config.clone()).with_max_level(self.options.max_heading_level);
         let decisions = analyzer.analyze(document);
 
         let mut output = String::new();
@@ -1652,6 +1654,37 @@ mod tests {
             "Should not have 6 hash marks: {}",
             result
         );
+    }
+
+    /// `max_heading_level` bounds the output on the default path, where the heading analyzer
+    /// decides — it used to reach only the path without the analyzer, so setting it changed
+    /// nothing unless heading analysis had been switched off.
+    #[test]
+    fn max_heading_level_bounds_headings_found_by_the_analyzer() {
+        let mut doc = Document::new();
+        let mut section = Section::new(0);
+        for (level, text) in [(2, "Top"), (3, "Middle"), (4, "Bottom")] {
+            let mut para = Paragraph::with_style(crate::model::ParagraphStyle::heading(level));
+            para.content.push(InlineContent::Text(TextRun::new(text)));
+            section.push_paragraph(para);
+        }
+        doc.sections.push(section);
+
+        let render = |options: RenderOptions| {
+            assert!(
+                options.heading_config.is_some(),
+                "the default path runs the analyzer"
+            );
+            MarkdownRenderer::new(options).render(&doc).unwrap()
+        };
+        let default = render(RenderOptions::default());
+        assert!(default.contains("#### Bottom"), "{default}");
+
+        let capped = render(RenderOptions::default().with_max_heading_level(2));
+        assert!(capped.contains("## Top"), "{capped}");
+        assert!(capped.contains("## Middle"), "{capped}");
+        assert!(capped.contains("## Bottom"), "{capped}");
+        assert!(!capped.contains("###"), "{capped}");
     }
 
     #[test]

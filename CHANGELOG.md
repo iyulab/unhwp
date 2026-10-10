@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** the heading-level cap moved from `HeadingConfig` to the analyzer:
+  `HeadingConfig::max_heading_level` and `HeadingConfig::with_max_level` are gone, and
+  `HeadingAnalyzer::with_max_level` sets the cap. Rendering takes it from
+  `RenderOptions::max_heading_level`, the one setting for how deep headings go.
+
+### Removed
+
+- `RenderOptions::use_atx_headers`. Nothing read it; headings are always written ATX-style
+  (`#`).
+
+### Fixed
+
+- **`RenderOptions::max_heading_level` caps headings on the default rendering path.**
+  `with_max_heading_level` and the CLI's `--max-heading` reached only the path without
+  heading analysis, which is on by default, so setting them changed nothing.
+
 ## [0.18.0] - 2026-10-10
 
 ### Added

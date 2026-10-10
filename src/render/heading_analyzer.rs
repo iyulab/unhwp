@@ -27,9 +27,6 @@ use crate::model::{Block, Document, Paragraph};
 /// Configuration for heading analysis.
 #[derive(Debug, Clone)]
 pub struct HeadingConfig {
-    /// Maximum heading level to emit (1-6).
-    pub max_heading_level: u8,
-
     /// Maximum text length for a paragraph to be considered a heading.
     pub max_text_length: usize,
 
@@ -73,7 +70,6 @@ pub struct HeadingConfig {
 impl Default for HeadingConfig {
     fn default() -> Self {
         Self {
-            max_heading_level: 4,
             max_text_length: 80,
             trust_explicit_styles: true,
             analyze_sequences: true,
@@ -91,12 +87,6 @@ impl HeadingConfig {
     /// Create a new heading config with default settings.
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Set the maximum heading level.
-    pub fn with_max_level(mut self, level: u8) -> Self {
-        self.max_heading_level = level.clamp(1, 6);
-        self
     }
 
     /// Set the maximum text length for headings.
@@ -227,16 +217,31 @@ impl DocumentStats {
 /// Analyzer for sophisticated heading detection.
 pub struct HeadingAnalyzer {
     config: HeadingConfig,
+    max_heading_level: u8,
     stats: DocumentStats,
 }
 
 impl HeadingAnalyzer {
-    /// Create a new heading analyzer with the given configuration.
+    /// Create a new heading analyzer with the given configuration. Levels are capped at 4
+    /// until [`with_max_level`](Self::with_max_level) says otherwise — the same default as
+    /// [`RenderOptions::max_heading_level`](crate::RenderOptions::max_heading_level).
     pub fn new(config: HeadingConfig) -> Self {
         Self {
             config,
+            max_heading_level: 4,
             stats: DocumentStats::default(),
         }
+    }
+
+    /// Set the deepest heading level a decision may carry (1-6); deeper headings take this
+    /// level. The cap applies before levels are normalized.
+    ///
+    /// Not part of [`HeadingConfig`]: the cap is how deep the output may go, which the
+    /// renderer takes from [`RenderOptions::max_heading_level`](crate::RenderOptions::max_heading_level)
+    /// whichever way headings are detected.
+    pub fn with_max_level(mut self, level: u8) -> Self {
+        self.max_heading_level = level.clamp(1, 6);
+        self
     }
 
     /// Create a heading analyzer with default configuration.
@@ -551,11 +556,7 @@ impl HeadingAnalyzer {
 
     /// Cap heading level to configured maximum.
     fn cap_heading_level(&self, level: u8) -> u8 {
-        if level > self.config.max_heading_level {
-            self.config.max_heading_level
-        } else {
-            level
-        }
+        level.min(self.max_heading_level)
     }
 
     /// Apply sequence analysis to detect list patterns.
@@ -1233,8 +1234,7 @@ mod tests {
 
     #[test]
     fn test_max_heading_level_capped() {
-        let config = HeadingConfig::default().with_max_level(2);
-        let analyzer = HeadingAnalyzer::new(config);
+        let analyzer = HeadingAnalyzer::new(HeadingConfig::default()).with_max_level(2);
         let para = make_paragraph("제목", 4);
 
         let paras = vec![&para];

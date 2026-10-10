@@ -20,7 +20,8 @@ pub struct RenderOptions {
     pub table_fallback: TableFallback,
 
     /// Maximum heading level to use (1-6).
-    /// Headings beyond this level will use this level.
+    /// Headings beyond this level will use this level, whether the heading analyzer
+    /// ([`heading_config`](Self::heading_config)) or the document's own styles decide them.
     /// Default: 4 (HWP documents often misuse deep heading levels for visual styling)
     pub max_heading_level: u8,
 
@@ -36,9 +37,6 @@ pub struct RenderOptions {
     /// Character to use for unordered lists.
     /// Default: '-'
     pub list_marker: char,
-
-    /// Whether to use ATX-style headers (#) or Setext-style (underline).
-    pub use_atx_headers: bool,
 
     /// Whether to add blank lines between paragraphs.
     pub paragraph_spacing: bool,
@@ -83,7 +81,6 @@ impl Default for RenderOptions {
             preserve_line_breaks: true,
             include_empty_paragraphs: false,
             list_marker: '-',
-            use_atx_headers: true,
             paragraph_spacing: true,
             escape_special_chars: true,
             cleanup: None,
