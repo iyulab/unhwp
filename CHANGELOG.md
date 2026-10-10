@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `Table::cell_columns()` — the grid column each cell starts in, one list per row, parallel to
+  the row's cells: a merge is recorded once on the cell that owns it, so a cell's index in its
+  row is not its column once a cell merged down from a row above sits to its left.
+
+### Fixed
+
+- **`Table::column_count()` counts every column.** It returned the first row's cell count, so a
+  table whose first row merges across (`Region` beside `Sales` spanning two columns) reported
+  fewer columns than it has. It is now the table's grid width.
+
 ## [0.17.0] - 2026-10-10
 
 ### Added
