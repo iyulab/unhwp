@@ -43,6 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- Python `ParseResult.paragraph_count`. It returned the section count under the name of a
+  paragraph count; use `section_count`.
+- The C# integration guide (`docs/csharp-integration.md`), which described a P/Invoke API the
+  package does not have; the .NET binding's README documents the real one.
 - `RenderOptions::use_atx_headers`. Nothing read it; headings are always written ATX-style
   (`#`).
 - **Breaking (Python):** `CleanupOptions.detect_mojibake` and

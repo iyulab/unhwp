@@ -367,16 +367,6 @@ class ParseResult:
         return count
 
     @property
-    def paragraph_count(self) -> int:
-        """Get the number of paragraphs in the document.
-
-        Note: This returns section count as the native API does not expose
-        a separate paragraph count.
-        """
-        self._ensure_open()
-        return self.section_count
-
-    @property
     def is_distribution(self) -> bool:
         """Check if the document is a distribution (protected) document.
 

@@ -423,7 +423,6 @@ class TestIntegration:
             # A count of 1 is the signature of a section-order parser that stopped
             # after section0.
             assert result.section_count == 2
-            assert result.paragraph_count >= 0
             assert result.image_count >= 0
 
     def test_parse_with_options(self, test_file):

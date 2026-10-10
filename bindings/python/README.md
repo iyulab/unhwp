@@ -24,7 +24,6 @@ text = unhwp.extract_text("document.hwp")
 with unhwp.parse("document.hwp") as result:
     print(result.markdown)
     print(f"Sections: {result.section_count}")
-    print(f"Paragraphs: {result.paragraph_count}")
 
     # Save images
     for img in result.images:
