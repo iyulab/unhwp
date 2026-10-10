@@ -347,6 +347,19 @@ unparser_shared::export_string_getter!(
     {
         let document = &(*doc).inner;
 
+        // A bit this library does not define asks for something it cannot do.
+        const DEFINED: u32 = UNHWP_FLAG_FRONTMATTER
+            | UNHWP_FLAG_ESCAPE_SPECIAL
+            | UNHWP_FLAG_PARAGRAPH_SPACING
+            | UNHWP_FLAG_REFINE
+            | UNHWP_FLAG_NO_ESCAPE;
+        if flags & !DEFINED != 0 {
+            return Err(invalid_argument(format!(
+                "unknown flag bits {:#x} (this library defines {DEFINED:#x})",
+                flags & !DEFINED
+            )));
+        }
+
         let mut options = RenderOptions::default();
 
         if flags & UNHWP_FLAG_FRONTMATTER != 0 {
@@ -697,6 +710,21 @@ mod tests {
         let owned = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().to_owned();
         unsafe { unhwp_free_string(ptr) };
         owned
+    }
+
+    /// A bit the library does not define is refused: a caller built against a newer header
+    /// asked for something this library cannot do, and an ignored bit renders as if it had.
+    #[test]
+    fn an_undefined_flag_bit_is_rejected() {
+        let doc = Box::into_raw(Box::new(UnhwpDocument {
+            inner: Document::new(),
+        }));
+        for bit in [32, 1 << 31] {
+            assert!(unsafe { unhwp_to_markdown(doc, UNHWP_FLAG_FRONTMATTER | bit) }.is_null());
+            assert_eq!(unhwp_last_error_kind(), UNHWP_ERROR_INVALID_ARGUMENT);
+        }
+        take_string(unsafe { unhwp_to_markdown(doc, 31) });
+        unsafe { unhwp_free_document(doc) };
     }
 
     /// No flags means the library's defaults, and escaping is one of them; only

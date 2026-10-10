@@ -40,6 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `preserve_line_breaks=True`, which is what rendered all along.
 - .NET `MarkdownOptions.ParagraphSpacing` defaults to `true`, the library's default, and
   now controls the blank line after each paragraph.
+- **Breaking: a flag bit the library does not define is an error.** `unhwp_to_markdown`
+  ignored bits outside `UNHWP_FLAG_*`; it now fails with `UNHWP_ERROR_INVALID_ARGUMENT`.
 
 ### Removed
 

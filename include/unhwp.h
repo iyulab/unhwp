@@ -25,7 +25,8 @@ extern "C" {
 /* Opaque document handle */
 typedef struct UnhwpDocument UnhwpDocument;
 
-/* Flags for unhwp_to_markdown */
+/* Flags for unhwp_to_markdown. A bit not defined here fails with
+   UNHWP_ERROR_INVALID_ARGUMENT. */
 #define UNHWP_FLAG_FRONTMATTER       1u /* Include YAML frontmatter */
 #define UNHWP_FLAG_ESCAPE_SPECIAL    2u /* Accepted, no effect: escaping is the default (see NO_ESCAPE) */
 #define UNHWP_FLAG_PARAGRAPH_SPACING 4u /* Accepted, no effect: line breaks are kept by default */
