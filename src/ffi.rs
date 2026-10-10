@@ -33,6 +33,13 @@
 //!         unhwp_free_string(markdown);
 //!     }
 //!
+//!     // Every rendering setting, as JSON; absent fields keep their defaults.
+//!     char* html_tables = unhwp_to_markdown_with_options(
+//!         doc, "{\"table_fallback\": \"html\", \"image_path_prefix\": \"img/\"}");
+//!     if (html_tables) {
+//!         unhwp_free_string(html_tables);
+//!     }
+//!
 //!     unhwp_free_document(doc);
 //!     return 0;
 //! }
@@ -43,9 +50,10 @@ use std::ptr;
 
 use unparser_shared::ffi::{self, invalid_argument, FfiError, LastErrorSlot};
 
+use crate::cleanup::CleanupOptions;
 use crate::error::ErrorKind;
 use crate::model::Document;
-use crate::render::RenderOptions;
+use crate::render::{RenderOptions, SectionMarkerStyle, TableFallback};
 
 // Thread-local storage for the last error message and its classification. Declared
 // here rather than in `unparser-shared` — see that crate's `ffi` module docs for why the slot
@@ -93,11 +101,162 @@ pub const UNHWP_FLAG_FRONTMATTER: u32 = 1;
 /// Accepted and without effect: escaping special Markdown characters is the default, as it
 /// is for the Rust API. Turn it off with `UNHWP_FLAG_NO_ESCAPE`. The bit is not reused.
 pub const UNHWP_FLAG_ESCAPE_SPECIAL: u32 = 2;
+/// Accepted and without effect: line breaks inside paragraphs are kept by default. Turn
+/// that off with `unhwp_to_markdown_with_options` (`"preserve_line_breaks": false`). The
+/// bit is not reused.
 pub const UNHWP_FLAG_PARAGRAPH_SPACING: u32 = 4;
 pub const UNHWP_FLAG_REFINE: u32 = 8;
 /// Write text without escaping special Markdown characters. No flags means the library's
 /// defaults, and escaping is one of them.
 pub const UNHWP_FLAG_NO_ESCAPE: u32 = 16;
+
+/// Deserializable mirror of [`RenderOptions`] for `unhwp_to_markdown_with_options`.
+///
+/// The flag bitmask of `unhwp_to_markdown` reaches three of `RenderOptions`' settings; this
+/// reaches every one a C-ABI caller can meaningfully set. Every field is optional and an
+/// absent one keeps `RenderOptions::default()`'s value; a field this type does not know is
+/// an error rather than something silently ignored.
+///
+/// # Schema
+///
+/// ```json
+/// {
+///   "image_path_prefix": string,
+///   "table_fallback": "simplified_markdown" | "html" | "skip",
+///   "max_heading_level": number,
+///   "include_frontmatter": bool,
+///   "preserve_line_breaks": bool,
+///   "include_empty_paragraphs": bool,
+///   "list_marker": string,
+///   "paragraph_spacing": bool,
+///   "escape_special_chars": bool,
+///   "section_markers": "none" | "comment",
+///   "cleanup_preset": "minimal" | "standard" | "aggressive" | null,
+///   "refine": bool
+/// }
+/// ```
+///
+/// `max_heading_level` is 1-6 and `list_marker` one character; anything else is an error.
+/// `cleanup_preset` absent or `null` means no cleanup.
+#[derive(serde::Deserialize, Default)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+struct FfiRenderOptions {
+    image_path_prefix: Option<String>,
+    table_fallback: Option<FfiTableFallback>,
+    max_heading_level: Option<u8>,
+    include_frontmatter: Option<bool>,
+    preserve_line_breaks: Option<bool>,
+    include_empty_paragraphs: Option<bool>,
+    list_marker: Option<String>,
+    paragraph_spacing: Option<bool>,
+    escape_special_chars: Option<bool>,
+    section_markers: Option<FfiSectionMarkerStyle>,
+    cleanup_preset: Option<FfiCleanupPreset>,
+    refine: Option<bool>,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum FfiTableFallback {
+    SimplifiedMarkdown,
+    Html,
+    Skip,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum FfiSectionMarkerStyle {
+    None,
+    Comment,
+}
+
+/// The cleanup pipeline's three configurations: [`CleanupOptions::minimal`],
+/// [`CleanupOptions::default`] and [`CleanupOptions::aggressive`].
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum FfiCleanupPreset {
+    Minimal,
+    Standard,
+    Aggressive,
+}
+
+impl TryFrom<FfiRenderOptions> for RenderOptions {
+    type Error = String;
+
+    fn try_from(ffi: FfiRenderOptions) -> Result<Self, Self::Error> {
+        let mut options = RenderOptions::default();
+        if let Some(prefix) = ffi.image_path_prefix {
+            options.image_path_prefix = prefix;
+        }
+        if let Some(fallback) = ffi.table_fallback {
+            options.table_fallback = match fallback {
+                FfiTableFallback::SimplifiedMarkdown => TableFallback::SimplifiedMarkdown,
+                FfiTableFallback::Html => TableFallback::Html,
+                FfiTableFallback::Skip => TableFallback::Skip,
+            };
+        }
+        if let Some(level) = ffi.max_heading_level {
+            if !(1..=6).contains(&level) {
+                return Err(format!("max_heading_level must be 1-6, got {level}"));
+            }
+            options.max_heading_level = level;
+        }
+        if let Some(v) = ffi.include_frontmatter {
+            options.include_frontmatter = v;
+        }
+        if let Some(v) = ffi.preserve_line_breaks {
+            options.preserve_line_breaks = v;
+        }
+        if let Some(v) = ffi.include_empty_paragraphs {
+            options.include_empty_paragraphs = v;
+        }
+        if let Some(marker) = ffi.list_marker {
+            let mut chars = marker.chars();
+            options.list_marker = match (chars.next(), chars.next()) {
+                (Some(c), None) => c,
+                _ => return Err(format!("list_marker must be one character, got {marker:?}")),
+            };
+        }
+        if let Some(v) = ffi.paragraph_spacing {
+            options.paragraph_spacing = v;
+        }
+        if let Some(v) = ffi.escape_special_chars {
+            options.escape_special_chars = v;
+        }
+        if let Some(style) = ffi.section_markers {
+            options.section_markers = match style {
+                FfiSectionMarkerStyle::None => SectionMarkerStyle::None,
+                FfiSectionMarkerStyle::Comment => SectionMarkerStyle::Comment,
+            };
+        }
+        if let Some(preset) = ffi.cleanup_preset {
+            options.cleanup = Some(match preset {
+                FfiCleanupPreset::Minimal => CleanupOptions::minimal(),
+                FfiCleanupPreset::Standard => CleanupOptions::default(),
+                FfiCleanupPreset::Aggressive => CleanupOptions::aggressive(),
+            });
+        }
+        if ffi.refine == Some(true) {
+            options = options.with_refine();
+        }
+        Ok(options)
+    }
+}
+
+/// Resolve the `options_json` argument of `unhwp_to_markdown_with_options`.
+/// A null pointer means "use defaults" — it is not an error.
+///
+/// # Safety
+/// `ptr` must be null or a valid null-terminated UTF-8 string.
+unsafe fn render_options_from_json(ptr: *const c_char) -> Result<RenderOptions, FfiError> {
+    if ptr.is_null() {
+        return Ok(RenderOptions::default());
+    }
+    let json = unparser_shared::with_c_str!(ptr)?;
+    let ffi = serde_json::from_str::<FfiRenderOptions>(json)
+        .map_err(|e| invalid_argument(format!("invalid options_json: {e}")))?;
+    RenderOptions::try_from(ffi).map_err(|e| invalid_argument(format!("invalid options_json: {e}")))
+}
 
 /// JSON format options.
 pub const UNHWP_JSON_PRETTY: c_int = 0;
@@ -203,6 +362,30 @@ unparser_shared::export_string_getter!(
             options = options.with_refine();
         }
 
+        crate::render::render_markdown(document, &options).map_err(ffi_err)
+    }
+);
+
+unparser_shared::export_string_getter!(
+    /// Convert a document to Markdown, with options.
+    ///
+    /// The counterpart to `unhwp_to_markdown`'s flag bitmask, which reaches only three
+    /// settings. `unhwp_to_markdown` keeps working unchanged; this is the surface for
+    /// everything the bitmask cannot express.
+    ///
+    /// # Safety
+    ///
+    /// - `doc` must be a valid document handle.
+    /// - `options_json` may be null (the default options) or a valid null-terminated UTF-8
+    ///   JSON object matching [`FfiRenderOptions`]'s schema (see that type's docs).
+    /// - Returns null on error, malformed `options_json` included
+    ///   (`UNHWP_ERROR_INVALID_ARGUMENT`). Use `unhwp_last_error` to get the error message.
+    /// - The returned string must be freed with `unhwp_free_string`.
+    LAST_ERROR,
+    unhwp_to_markdown_with_options(doc: UnhwpDocument, options_json: *const c_char),
+    {
+        let document = &(*doc).inner;
+        let options = render_options_from_json(options_json)?;
         crate::render::render_markdown(document, &options).map_err(ffi_err)
     }
 );
@@ -637,6 +820,227 @@ mod tests {
         unsafe { unhwp_free_document(doc) };
 
         assert!(unsafe { unhwp_tables(ptr::null(), 0) }.is_null());
+        assert_eq!(unhwp_last_error_kind(), UNHWP_ERROR_INVALID_ARGUMENT);
+    }
+
+    /// A document that exercises every setting `unhwp_to_markdown_with_options` reaches:
+    /// a title, headings three levels deep, a line break, an empty paragraph, a list,
+    /// Markdown syntax in text, an image, a merged table, a private-use character and a
+    /// second section.
+    fn every_setting_shows() -> *mut UnhwpDocument {
+        use crate::model::{
+            InlineContent, ListStyle, Paragraph, ParagraphStyle, Section, TableCell, TextRun,
+        };
+
+        let mut document = Document::new();
+        document.metadata.title = Some("Quarterly report".into());
+
+        let mut first = Section::new(0);
+        for (level, text) in [(2, "Overview"), (3, "Regions"), (4, "North")] {
+            let mut heading = Paragraph::with_style(ParagraphStyle::heading(level));
+            heading
+                .content
+                .push(InlineContent::Text(TextRun::new(text)));
+            first.push_paragraph(heading);
+        }
+        let mut broken = Paragraph::new();
+        broken
+            .content
+            .push(InlineContent::Text(TextRun::new("first line")));
+        broken.content.push(InlineContent::LineBreak);
+        broken
+            .content
+            .push(InlineContent::Text(TextRun::new("second line")));
+        first.push_paragraph(broken);
+        first.push_paragraph(Paragraph::new());
+        first.push_paragraph(Paragraph::text("see [x](y) and a*b*c\u{E000}"));
+        for item in ["apples", "pears"] {
+            let mut entry = Paragraph::with_style(ParagraphStyle {
+                list_style: Some(ListStyle::Unordered),
+                ..ParagraphStyle::default()
+            });
+            entry.content.push(InlineContent::Text(TextRun::new(item)));
+            first.push_paragraph(entry);
+        }
+        let mut figure = Paragraph::new();
+        figure
+            .content
+            .push(InlineContent::Image(crate::model::ImageRef::new(
+                "BIN0001.png",
+            )));
+        first.push_paragraph(figure);
+        let mut table = table_of(&[&["Region", "Sales"], &["North", "10"], &["South", "12"]]);
+        table.rows[0].cells = vec![{
+            let mut merged = TableCell::text("Region and sales");
+            merged.colspan = 2;
+            merged
+        }];
+        first.push_table(table);
+        document.sections.push(first);
+
+        let mut second = Section::new(1);
+        second.push_paragraph(Paragraph::text("closing words"));
+        document.sections.push(second);
+
+        Box::into_raw(Box::new(UnhwpDocument { inner: document }))
+    }
+
+    fn render_with_options(doc: *const UnhwpDocument, json: &str) -> String {
+        let json = CString::new(json).unwrap();
+        take_string(unsafe { unhwp_to_markdown_with_options(doc, json.as_ptr()) })
+    }
+
+    /// Every field of the options JSON takes effect: each gives the same Markdown as the
+    /// Rust options it stands for, and that Markdown differs from the defaults' — so a field
+    /// that is parsed and then dropped fails here instead of rendering the defaults.
+    #[test]
+    fn every_option_takes_effect() {
+        let doc = every_setting_shows();
+        let default = render_with_options(doc, "{}");
+        let base = RenderOptions::default;
+        let cases: Vec<(&str, RenderOptions)> = vec![
+            (
+                r#"{"image_path_prefix": "img/"}"#,
+                base().with_image_prefix("img/"),
+            ),
+            (
+                r#"{"table_fallback": "html"}"#,
+                base().with_table_fallback(TableFallback::Html),
+            ),
+            (
+                r#"{"table_fallback": "skip"}"#,
+                base().with_table_fallback(TableFallback::Skip),
+            ),
+            (
+                r#"{"max_heading_level": 2}"#,
+                base().with_max_heading_level(2),
+            ),
+            (
+                r#"{"include_frontmatter": true}"#,
+                base().with_frontmatter(),
+            ),
+            (
+                r#"{"preserve_line_breaks": false}"#,
+                RenderOptions {
+                    preserve_line_breaks: false,
+                    ..base()
+                },
+            ),
+            (
+                r#"{"include_empty_paragraphs": true}"#,
+                RenderOptions {
+                    include_empty_paragraphs: true,
+                    ..base()
+                },
+            ),
+            (
+                r#"{"list_marker": "*"}"#,
+                RenderOptions {
+                    list_marker: '*',
+                    ..base()
+                },
+            ),
+            (
+                r#"{"paragraph_spacing": false}"#,
+                base().without_paragraph_spacing(),
+            ),
+            (
+                r#"{"escape_special_chars": false}"#,
+                RenderOptions {
+                    escape_special_chars: false,
+                    ..base()
+                },
+            ),
+            (
+                r#"{"section_markers": "comment"}"#,
+                base().with_section_markers(SectionMarkerStyle::Comment),
+            ),
+            (
+                r#"{"cleanup_preset": "minimal"}"#,
+                base().with_minimal_cleanup(),
+            ),
+            (r#"{"cleanup_preset": "standard"}"#, base().with_cleanup()),
+            (
+                r#"{"cleanup_preset": "aggressive"}"#,
+                base().with_aggressive_cleanup(),
+            ),
+            (
+                r#"{"image_path_prefix": "img\\sub\\", "refine": true}"#,
+                base().with_image_prefix("img\\sub\\").with_refine(),
+            ),
+        ];
+        for (json, options) in cases {
+            let document = unsafe { &(*doc).inner };
+            let expected = crate::render::render_markdown(document, &options).unwrap();
+            let actual = render_with_options(doc, json);
+            assert_eq!(actual, expected, "{json}");
+            assert_ne!(actual, default, "{json} left the output as the defaults'");
+        }
+
+        // refine is judged against the same prefix without it: the pass rewrites the
+        // backslashes of the image path.
+        let unrefined = render_with_options(doc, r#"{"image_path_prefix": "img\\sub\\"}"#);
+        let refined = render_with_options(
+            doc,
+            r#"{"image_path_prefix": "img\\sub\\", "refine": true}"#,
+        );
+        assert_ne!(refined, unrefined);
+        assert_eq!(render_with_options(doc, r#"{"refine": false}"#), default);
+        assert_eq!(
+            render_with_options(doc, r#"{"cleanup_preset": null}"#),
+            default
+        );
+
+        unsafe { unhwp_free_document(doc) };
+    }
+
+    /// A null `options_json` is the defaults, and so is `{}`: both match `unhwp_to_markdown`
+    /// with no flags.
+    #[test]
+    fn null_options_are_the_defaults() {
+        let doc = every_setting_shows();
+        let flags = take_string(unsafe { unhwp_to_markdown(doc, 0) });
+        let null = take_string(unsafe { unhwp_to_markdown_with_options(doc, ptr::null()) });
+        assert_eq!(null, flags);
+        assert_eq!(render_with_options(doc, "{}"), flags);
+        assert_eq!(unhwp_last_error_kind(), UNHWP_ERROR_NONE);
+        unsafe { unhwp_free_document(doc) };
+    }
+
+    /// Options that cannot be honoured are refused, not ignored: malformed JSON, a field
+    /// this library does not know, a value outside its range.
+    #[test]
+    fn options_that_cannot_be_honoured_are_invalid_arguments() {
+        let doc = every_setting_shows();
+        for json in [
+            "not json",
+            "[]",
+            r#"{"image_prefix": "img/"}"#,
+            r#"{"table_fallback": "ascii"}"#,
+            r#"{"max_heading_level": 0}"#,
+            r#"{"max_heading_level": 7}"#,
+            r#"{"list_marker": "**"}"#,
+            r#"{"list_marker": ""}"#,
+            r#"{"cleanup_preset": "default"}"#,
+            r#"{"refine": "yes"}"#,
+        ] {
+            let c = CString::new(json).unwrap();
+            let out = unsafe { unhwp_to_markdown_with_options(doc, c.as_ptr()) };
+            assert!(out.is_null(), "{json} was accepted");
+            assert_eq!(
+                unhwp_last_error_kind(),
+                UNHWP_ERROR_INVALID_ARGUMENT,
+                "{json}"
+            );
+            let message = unsafe { CStr::from_ptr(unhwp_last_error()) }
+                .to_str()
+                .unwrap();
+            assert!(message.contains("options_json"), "{json}: {message}");
+        }
+        unsafe { unhwp_free_document(doc) };
+
+        let c = CString::new("{}").unwrap();
+        assert!(unsafe { unhwp_to_markdown_with_options(ptr::null(), c.as_ptr()) }.is_null());
         assert_eq!(unhwp_last_error_kind(), UNHWP_ERROR_INVALID_ARGUMENT);
     }
 

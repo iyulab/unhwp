@@ -1,5 +1,7 @@
 """Tests for the unhwp Python bindings."""
 
+import dataclasses
+import json
 import os
 import sys
 import pytest
@@ -60,43 +62,23 @@ class TestFormatDetection:
 class TestOptions:
     """Test options classes."""
 
-    def test_render_options_defaults(self):
-        """RenderOptions should have sensible defaults."""
-        opts = unhwp.RenderOptions()
-        assert opts.include_frontmatter == False
-        assert opts.image_path_prefix == ""
-        assert opts.escape_special_chars == True
-        assert opts.refine == False
+    def test_every_render_option_is_sent(self):
+        """Each field of RenderOptions has its key in the JSON the native library reads —
+        a field added here and left out of the JSON would be accepted and ignored."""
+        sent = json.loads(unhwp.RenderOptions()._to_json())
+        declared = {f.name for f in dataclasses.fields(unhwp.RenderOptions)}
+        assert set(sent) == (declared - {"cleanup"}) | {"cleanup_preset"}
 
-    def test_render_options_to_flags_includes_refine(self):
-        """RenderOptions._to_flags should OR in UNHWP_FLAG_REFINE when set."""
-        opts = unhwp.RenderOptions(refine=True)
-        assert opts._to_flags() & unhwp._native.UNHWP_FLAG_REFINE != 0
+    def test_cleanup_is_sent_as_its_preset(self):
+        def preset(cleanup):
+            return json.loads(unhwp.RenderOptions(cleanup=cleanup)._to_json())["cleanup_preset"]
 
-        opts_off = unhwp.RenderOptions(refine=False)
-        assert opts_off._to_flags() & unhwp._native.UNHWP_FLAG_REFINE == 0
-
-    def test_render_options_to_flags_turns_escaping_off_only_on_request(self):
-        """Escaping is the default; only escape_special_chars=False sends NO_ESCAPE."""
-        assert unhwp.RenderOptions()._to_flags() & unhwp._native.UNHWP_FLAG_NO_ESCAPE == 0
-        off = unhwp.RenderOptions(escape_special_chars=False)
-        assert off._to_flags() & unhwp._native.UNHWP_FLAG_NO_ESCAPE != 0
-        assert unhwp._native.UNHWP_FLAG_NO_ESCAPE == 16
-
-    def test_cleanup_options_presets(self):
-        """CleanupOptions should have working presets."""
-        minimal = unhwp.CleanupOptions.minimal()
-        assert minimal.preset == 0
-        assert minimal.enabled == True
-
-        default = unhwp.CleanupOptions.default()
-        assert default.preset == 1
-
-        aggressive = unhwp.CleanupOptions.aggressive()
-        assert aggressive.preset == 2
-
-        disabled = unhwp.CleanupOptions.disabled()
-        assert disabled.enabled == False
+        assert preset(None) is None
+        assert preset(unhwp.CleanupOptions.disabled()) is None
+        assert preset(unhwp.CleanupOptions.minimal()) == "minimal"
+        assert preset(unhwp.CleanupOptions.default()) == "standard"
+        assert preset(unhwp.CleanupOptions()) == "standard"
+        assert preset(unhwp.CleanupOptions.aggressive()) == "aggressive"
 
 
 class TestConstants:
@@ -209,8 +191,9 @@ _TABLE_SECTION = (
 )
 
 
-def _hwpx_with_a_table() -> bytes:
-    """The committed sample with its first section replaced by ``_TABLE_SECTION``."""
+def _hwpx(section0: str, title: "str | None" = None) -> bytes:
+    """The committed sample with its first section replaced by ``section0``, and a
+    title in its package metadata when ``title`` is given."""
     import io
     import zipfile
 
@@ -219,9 +202,170 @@ def _hwpx_with_a_table() -> bytes:
         for entry in source.infolist():
             body = source.read(entry)
             if entry.filename == "Contents/section0.xml":
-                body = _TABLE_SECTION.encode("utf-8")
+                body = section0.encode("utf-8")
+            elif entry.filename == "Contents/content.hpf" and title is not None:
+                package = body.decode("utf-8")
+                metadata = f"<opf:metadata><opf:title>{title}</opf:title></opf:metadata>"
+                body = package.replace("<opf:manifest>", metadata + "<opf:manifest>").encode()
             target.writestr(entry.filename, body, compress_type=zipfile.ZIP_STORED)
     return out.getvalue()
+
+
+def _hwpx_with_a_table() -> bytes:
+    """The committed sample with its first section replaced by ``_TABLE_SECTION``."""
+    return _hwpx(_TABLE_SECTION)
+
+
+def _paragraph(text: str) -> str:
+    return f"<hp:p><hp:run><hp:t>{text}</hp:t></hp:run></hp:p>"
+
+
+# A section that shows what the render options do: chapter, section and article markers
+# (headings three levels deep), Markdown syntax in text with a private-use character, an
+# empty paragraph, an image, and a table whose first row merges across.
+_EVERY_OPTION_SECTION = (
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    '<hs:sec xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section"'
+    ' xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph"'
+    ' xmlns:hc="http://www.hancom.co.kr/hwpml/2011/core">'
+    + _paragraph("제1장 총칙")
+    + _paragraph("제1절 목적")
+    + _paragraph("제1조 정의")
+    + _paragraph("see [x](y) and a*b*c\ue000")
+    + "<hp:p></hp:p>"
+    + _paragraph("plain words")
+    + '<hp:p><hp:run><hp:pic><hc:img binaryItemIDRef="image1"/></hp:pic></hp:run></hp:p>'
+    + "<hp:p><hp:run><hp:tbl>"
+    + "<hp:tr>" + _cell("Region and sales", '<hp:cellSpan colSpan="2" rowSpan="1"/>') + "</hp:tr>"
+    + "<hp:tr>" + _cell("North") + _cell("10") + "</hp:tr>"
+    + "<hp:tr>" + _cell("South") + _cell("12") + "</hp:tr>"
+    + "</hp:tbl></hp:run></hp:p>"
+    + "</hs:sec>"
+)
+
+
+def _every_option_document() -> bytes:
+    return _hwpx(_EVERY_OPTION_SECTION, title="Quarterly report")
+
+
+def _markdown(options: "unhwp.RenderOptions | None" = None) -> str:
+    with unhwp.parse_bytes(_every_option_document(), render_options=options) as result:
+        return result.markdown
+
+
+class TestRenderOptions:
+    """``RenderOptions`` reach the native library: each one changes the Markdown."""
+
+    def test_the_defaults_are_the_library_defaults(self):
+        """``RenderOptions()`` renders what the native library renders with no options."""
+        from unhwp import _native as native
+
+        with unhwp.parse_bytes(_every_option_document()) as result:
+            ptr = native.lib.unhwp_to_markdown(result._handle, 0)
+            try:
+                library_default = unhwp.unhwp._ptr_to_string(ptr)
+            finally:
+                native.lib.unhwp_free_string(ptr)
+            assert result.markdown == library_default
+        assert _markdown(unhwp.RenderOptions()) == library_default
+
+    @pytest.mark.parametrize(
+        "options, present, absent",
+        [
+            ({"image_path_prefix": "img/"}, "](img/image1)", "](assets/image1)"),
+            ({"table_fallback": "html"}, "<table", "| North | 10 |"),
+            ({"table_fallback": "skip"}, "plain words", "Region and sales"),
+            ({"max_heading_level": 2}, "## ", "### "),
+            ({"include_frontmatter": True}, 'title: "Quarterly report"', None),
+            ({"include_empty_paragraphs": True}, "\n\n\n\nplain words", None),
+            ({"paragraph_spacing": False}, "plain words\n![image]", None),
+            ({"escape_special_chars": False}, "see [x](y) and a*b*c", "\\["),
+            ({"section_markers": "comment"}, "<!-- section 1 -->", None),
+            ({"cleanup": unhwp.CleanupOptions.minimal()}, "plain words", "\ue000"),
+        ],
+    )
+    def test_option_changes_the_output(self, options, present, absent):
+        default = _markdown()
+        markdown = _markdown(unhwp.RenderOptions(**options))
+        assert markdown != default
+        assert present in markdown
+        if absent is not None:
+            assert absent in default
+            assert absent not in markdown
+
+    def test_refine_changes_the_output(self):
+        unrefined = _markdown(unhwp.RenderOptions(image_path_prefix="img\\sub\\"))
+        refined = _markdown(unhwp.RenderOptions(image_path_prefix="img\\sub\\", refine=True))
+        assert "](img/sub/image1)" not in unrefined
+        assert "](img/sub/image1)" in refined
+
+    # One value per field that the native library refuses. A refusal proves the field
+    # reached it; the native suite proves each one, when valid, changes the Markdown —
+    # including the two this document cannot show (line breaks, list items).
+    _UNHONOURABLE = {
+        "image_path_prefix": 1,
+        "table_fallback": "ascii",
+        "max_heading_level": 7,
+        "include_frontmatter": "yes",
+        "preserve_line_breaks": "yes",
+        "include_empty_paragraphs": "yes",
+        "list_marker": "**",
+        "paragraph_spacing": "yes",
+        "escape_special_chars": "yes",
+        "section_markers": "page",
+        "cleanup": unhwp.CleanupOptions(preset="default"),
+        "refine": "yes",
+    }
+
+    def test_every_field_has_an_unhonourable_value(self):
+        declared = {f.name for f in dataclasses.fields(unhwp.RenderOptions)}
+        assert set(self._UNHONOURABLE) == declared
+
+    @pytest.mark.parametrize("name", sorted(_UNHONOURABLE))
+    def test_every_field_reaches_the_native_library(self, name):
+        options = unhwp.RenderOptions(**{name: self._UNHONOURABLE[name]})
+        with unhwp.parse_bytes(_every_option_document(), render_options=options) as result:
+            with pytest.raises(unhwp.RenderError) as raised:
+                result.markdown
+        assert raised.value.kind == unhwp.ErrorKind.INVALID_ARGUMENT
+        assert "options_json" in str(raised.value)
+
+
+class TestCleanup:
+    """``to_markdown_with_cleanup`` runs the cleanup it is given."""
+
+    @pytest.fixture
+    def document(self, tmp_path):
+        path = tmp_path / "every-option.hwpx"
+        path.write_bytes(_every_option_document())
+        return str(path)
+
+    def test_each_preset_is_the_render_option(self, document):
+        for cleanup in (
+            unhwp.CleanupOptions.minimal(),
+            unhwp.CleanupOptions.default(),
+            unhwp.CleanupOptions.aggressive(),
+        ):
+            with unhwp.parse(document, render_options=unhwp.RenderOptions(cleanup=cleanup)) as r:
+                assert unhwp.to_markdown_with_cleanup(document, cleanup) == r.markdown
+
+    def test_cleanup_changes_the_output(self, document):
+        raw = unhwp.to_markdown(document)
+        minimal = unhwp.to_markdown_with_cleanup(document, unhwp.CleanupOptions.minimal())
+        standard = unhwp.to_markdown_with_cleanup(document, unhwp.CleanupOptions.default())
+        assert "\ue000" in raw
+        assert "\ue000" not in minimal
+        # Standard cleanup also compacts the table; minimal leaves its cells padded.
+        assert "| North | 10 |" in minimal
+        assert "|North|10|" in standard
+
+    def test_standard_is_the_default_and_disabled_is_none(self, document):
+        assert unhwp.to_markdown_with_cleanup(document) == unhwp.to_markdown_with_cleanup(
+            document, unhwp.CleanupOptions.default()
+        )
+        assert unhwp.to_markdown_with_cleanup(
+            document, unhwp.CleanupOptions.disabled()
+        ) == unhwp.to_markdown(document)
 
 
 class TestGetTables:
@@ -283,24 +427,13 @@ class TestIntegration:
             assert result.image_count >= 0
 
     def test_parse_with_options(self, test_file):
-        """Should respect render options."""
-        opts = unhwp.RenderOptions(include_frontmatter=True)
+        """Render options apply to a document parsed from a path."""
+        opts = unhwp.RenderOptions(section_markers="comment")
         with unhwp.parse(str(test_file), render_options=opts) as result:
             markdown = result.markdown
-            # Frontmatter starts with ---
-            # (may or may not be present depending on document)
-            assert isinstance(markdown, str)
-
-    def test_to_markdown_with_cleanup(self, test_file):
-        """Should apply cleanup options."""
-        clean = unhwp.to_markdown_with_cleanup(
-            str(test_file),
-            cleanup_options=unhwp.CleanupOptions.aggressive()
-        )
-        raw = unhwp.to_markdown(str(test_file))
-
-        # Cleanup should generally reduce or equal size
-        assert len(clean) <= len(raw) + 100  # Allow small increase from formatting
+        assert "<!-- section 0 -->" in markdown
+        assert "<!-- section 1 -->" in markdown
+        assert "<!--" not in unhwp.to_markdown(str(test_file))
 
 
 def test_a_library_path_naming_no_file_is_an_error(tmp_path):

@@ -40,7 +40,9 @@ using var doc = UnhwpDocument.ParseFile("document.hwpx");
 var markdown = doc.ToMarkdown(new MarkdownOptions
 {
     IncludeFrontmatter = true,
-    Refine = true
+    ImagePathPrefix = "images/",
+    TableFallback = TableFallback.Html,
+    Cleanup = CleanupPreset.Standard,
 });
 ```
 
@@ -149,10 +151,25 @@ Implements `IDisposable`; dispose it to release the native document.
 
 ### MarkdownOptions Class
 
-- `IncludeFrontmatter` - Include YAML frontmatter with document metadata (default `false`)
-- `EscapeSpecialChars` - Escape special Markdown characters (default `true`)
-- `ParagraphSpacing` - Add extra spacing between paragraphs (default `false`)
-- `Refine` - Apply the lossless Markdown shape-refinement pass after rendering (default `false`)
+Every property reaches the native library, and the defaults are the library's own.
+
+| Property | Default | Meaning |
+|---|---|---|
+| `ImagePathPrefix` | `"assets/"` | Prefix of the image paths in the Markdown |
+| `TableFallback` | `SimplifiedMarkdown` | A table with merged cells: `SimplifiedMarkdown` (merges dropped), `Html` (rowspan/colspan kept) or `Skip` |
+| `MaxHeadingLevel` | `4` | Deepest heading level written (1-6) |
+| `IncludeFrontmatter` | `false` | Document metadata as YAML frontmatter |
+| `PreserveLineBreaks` | `true` | Line breaks inside a paragraph as Markdown hard breaks; `false` joins the lines |
+| `IncludeEmptyParagraphs` | `false` | Keep empty paragraphs as blank lines |
+| `ListMarker` | `'-'` | Marker of an unordered list item |
+| `ParagraphSpacing` | `true` | A blank line after each paragraph |
+| `EscapeSpecialChars` | `true` | Escape text that would read as Markdown syntax |
+| `SectionMarkers` | `None` | `Comment` writes `<!-- section N -->` before each section |
+| `Cleanup` | `null` | A `CleanupPreset` to run over the output: `Minimal` (normalization only), `Standard` (every stage) or `Aggressive` (headers and footers removed more eagerly) |
+| `Refine` | `false` | The lossless shape-refinement pass (table shape, list numbering, link/image paths, frontmatter, section anchors) |
+
+A value the library cannot honour, such as a `MaxHeadingLevel` outside 1-6, makes
+`ToMarkdown` throw `UnhwpException` with `Kind == UnhwpErrorKind.InvalidArgument`.
 
 ## Platform Support
 

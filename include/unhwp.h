@@ -28,7 +28,7 @@ typedef struct UnhwpDocument UnhwpDocument;
 /* Flags for unhwp_to_markdown */
 #define UNHWP_FLAG_FRONTMATTER       1u /* Include YAML frontmatter */
 #define UNHWP_FLAG_ESCAPE_SPECIAL    2u /* Accepted, no effect: escaping is the default (see NO_ESCAPE) */
-#define UNHWP_FLAG_PARAGRAPH_SPACING 4u /* Keep line breaks inside paragraphs */
+#define UNHWP_FLAG_PARAGRAPH_SPACING 4u /* Accepted, no effect: line breaks are kept by default */
 #define UNHWP_FLAG_REFINE            8u /* Apply the shape-refinement pass */
 #define UNHWP_FLAG_NO_ESCAPE        16u /* Do not escape special Markdown characters */
 
@@ -130,6 +130,34 @@ void unhwp_free_document(UnhwpDocument* doc);
  * @return Markdown string or NULL on error. Must be freed with unhwp_free_string().
  */
 char* unhwp_to_markdown(const UnhwpDocument* doc, uint32_t flags);
+
+/**
+ * Convert a document to Markdown, with options.
+ *
+ * Reaches every rendering setting, where the flag bitmask reaches three.
+ * `options_json` is NULL (the defaults) or a JSON object whose fields are all
+ * optional; an absent field keeps its default:
+ *
+ *   { "image_path_prefix": string,
+ *     "table_fallback": "simplified_markdown" | "html" | "skip",
+ *     "max_heading_level": number, "include_frontmatter": bool,
+ *     "preserve_line_breaks": bool, "include_empty_paragraphs": bool,
+ *     "list_marker": string, "paragraph_spacing": bool,
+ *     "escape_special_chars": bool, "section_markers": "none" | "comment",
+ *     "cleanup_preset": "minimal" | "standard" | "aggressive" | null,
+ *     "refine": bool }
+ *
+ * Defaults: "assets/", "simplified_markdown", 4, false, true, false, "-", true,
+ * true, "none", null (no cleanup), false. max_heading_level is 1-6 and
+ * list_marker one character. table_fallback says what becomes of a table with
+ * merged cells. A field the library does not know is an error, not ignored.
+ *
+ * @param doc Document handle
+ * @param options_json UTF-8, NUL-terminated JSON, or NULL
+ * @return Markdown string, or NULL on error -- malformed options_json included
+ *         (UNHWP_ERROR_INVALID_ARGUMENT). Must be freed with unhwp_free_string().
+ */
+char* unhwp_to_markdown_with_options(const UnhwpDocument* doc, const char* options_json);
 
 /**
  * Convert a document to plain text.

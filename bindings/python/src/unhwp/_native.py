@@ -143,6 +143,9 @@ _lib.unhwp_free_document.restype = None
 _lib.unhwp_to_markdown.argtypes = [ctypes.c_void_p, ctypes.c_int]
 _lib.unhwp_to_markdown.restype = ctypes.c_void_p
 
+_lib.unhwp_to_markdown_with_options.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+_lib.unhwp_to_markdown_with_options.restype = ctypes.c_void_p
+
 _lib.unhwp_to_text.argtypes = [ctypes.c_void_p]
 _lib.unhwp_to_text.restype = ctypes.c_void_p
 
@@ -187,13 +190,6 @@ _lib.unhwp_free_bytes.argtypes = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_
 _lib.unhwp_free_bytes.restype = None
 
 # Export constants
-UNHWP_FLAG_FRONTMATTER = 1
-# Accepted, no effect: escaping is the default. Turn it off with UNHWP_FLAG_NO_ESCAPE.
-UNHWP_FLAG_ESCAPE_SPECIAL = 2
-UNHWP_FLAG_PARAGRAPH_SPACING = 4
-UNHWP_FLAG_REFINE = 8
-UNHWP_FLAG_NO_ESCAPE = 16
-
 UNHWP_JSON_PRETTY = 0
 UNHWP_JSON_COMPACT = 1
 
@@ -202,12 +198,6 @@ FORMAT_UNKNOWN = 0
 FORMAT_HWP5 = 1
 FORMAT_HWPX = 2
 FORMAT_HWP3 = 3
-
-# Error code constants
-UNHWP_ERR_FILE_NOT_FOUND = 1
-UNHWP_ERR_PARSE = 2
-UNHWP_ERR_RENDER = 3
-UNHWP_ERR_UNSUPPORTED = 4
 
 # Public alias for the loaded library
 lib = _lib

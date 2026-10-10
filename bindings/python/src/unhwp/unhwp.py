@@ -165,59 +165,103 @@ class Image:
 
 
 @dataclass
-class RenderOptions:
-    """Options for rendering documents to Markdown."""
-    include_frontmatter: bool = False
-    image_path_prefix: str = ""
-    table_fallback: int = 0  # 0=markdown, 1=html, 2=text
-    preserve_line_breaks: bool = False
-    escape_special_chars: bool = True
-    refine: bool = False
-    """Apply the lossless, idempotent markdown shape-refinement pass (table
-    shape, ordered-list numbering, link/image paths, frontmatter, section
-    anchors) after rendering."""
-
-    def _to_flags(self) -> int:
-        """Convert to native flags bitmask."""
-        flags = 0
-        if self.include_frontmatter:
-            flags |= native.UNHWP_FLAG_FRONTMATTER
-        if not self.escape_special_chars:
-            flags |= native.UNHWP_FLAG_NO_ESCAPE
-        if self.preserve_line_breaks:
-            flags |= native.UNHWP_FLAG_PARAGRAPH_SPACING
-        if self.refine:
-            flags |= native.UNHWP_FLAG_REFINE
-        return flags
-
-
-@dataclass
 class CleanupOptions:
-    """Options for cleaning up extracted Markdown."""
+    """The cleanup pipeline run over the rendered Markdown: string normalization,
+    line cleaning (page numbers, repeated headers and footers), structural
+    filtering and final whitespace normalization.
+
+    Attributes:
+        enabled: Run the pipeline. ``False`` renders without cleanup.
+        preset: ``"minimal"`` (normalization only), ``"standard"`` (every stage)
+            or ``"aggressive"`` (every stage, removing headers and footers more
+            eagerly).
+    """
     enabled: bool = True
-    preset: int = 1  # 0=minimal, 1=default, 2=aggressive
-    detect_mojibake: bool = True
-    preserve_frontmatter: bool = True
+    preset: str = "standard"
 
     @classmethod
     def minimal(cls) -> "CleanupOptions":
         """Create minimal cleanup options."""
-        return cls(enabled=True, preset=0)
+        return cls(enabled=True, preset="minimal")
 
     @classmethod
     def default(cls) -> "CleanupOptions":
-        """Create default cleanup options."""
-        return cls(enabled=True, preset=1)
+        """Create default (standard) cleanup options."""
+        return cls(enabled=True, preset="standard")
 
     @classmethod
     def aggressive(cls) -> "CleanupOptions":
         """Create aggressive cleanup options."""
-        return cls(enabled=True, preset=2)
+        return cls(enabled=True, preset="aggressive")
 
     @classmethod
     def disabled(cls) -> "CleanupOptions":
         """Create disabled cleanup options."""
         return cls(enabled=False)
+
+
+@dataclass
+class RenderOptions:
+    """Options for rendering documents to Markdown.
+
+    Every field reaches the native library; the defaults are the library's own.
+    A value the library cannot honour (an unknown ``table_fallback``, a
+    ``max_heading_level`` outside 1-6, a ``list_marker`` that is not one
+    character) raises :class:`RenderError` with kind
+    :attr:`ErrorKind.INVALID_ARGUMENT` when the Markdown is produced.
+
+    Attributes:
+        image_path_prefix: Prefix of the image paths written in the Markdown.
+        table_fallback: What becomes of a table with merged cells, which
+            Markdown cannot express: ``"simplified_markdown"`` (a Markdown table,
+            merges dropped), ``"html"`` (an HTML table with rowspan/colspan) or
+            ``"skip"`` (left out).
+        max_heading_level: The deepest heading level written (1-6); deeper
+            headings take this level.
+        include_frontmatter: Write the document's metadata as YAML frontmatter.
+        preserve_line_breaks: Keep line breaks inside paragraphs as Markdown
+            hard breaks; ``False`` joins the lines with a space.
+        include_empty_paragraphs: Keep empty paragraphs as blank lines.
+        list_marker: The character that marks an unordered list item.
+        paragraph_spacing: A blank line after each paragraph.
+        escape_special_chars: Escape text that would read as Markdown syntax.
+        section_markers: ``"none"``, or ``"comment"`` for an
+            ``<!-- section N -->`` comment before each section.
+        cleanup: Run the cleanup pipeline over the output; ``None`` for none.
+        refine: Apply the lossless, idempotent markdown shape-refinement pass
+            (table shape, ordered-list numbering, link/image paths, frontmatter,
+            section anchors) after rendering.
+    """
+    image_path_prefix: str = "assets/"
+    table_fallback: str = "simplified_markdown"
+    max_heading_level: int = 4
+    include_frontmatter: bool = False
+    preserve_line_breaks: bool = True
+    include_empty_paragraphs: bool = False
+    list_marker: str = "-"
+    paragraph_spacing: bool = True
+    escape_special_chars: bool = True
+    section_markers: str = "none"
+    cleanup: Optional[CleanupOptions] = None
+    refine: bool = False
+
+    def _to_json(self) -> str:
+        """The options as ``unhwp_to_markdown_with_options`` reads them — every field."""
+        cleanup = self.cleanup
+        return json.dumps({
+            "image_path_prefix": self.image_path_prefix,
+            "table_fallback": self.table_fallback,
+            "max_heading_level": self.max_heading_level,
+            "include_frontmatter": self.include_frontmatter,
+            "preserve_line_breaks": self.preserve_line_breaks,
+            "include_empty_paragraphs": self.include_empty_paragraphs,
+            "list_marker": self.list_marker,
+            "paragraph_spacing": self.paragraph_spacing,
+            "escape_special_chars": self.escape_special_chars,
+            "section_markers": self.section_markers,
+            "cleanup_preset": cleanup.preset if cleanup and cleanup.enabled else None,
+            "refine": self.refine,
+        })
 
 
 class ParseResult:
@@ -235,9 +279,9 @@ class ParseResult:
         ...         img.save(f"output/{img.name}")
     """
 
-    def __init__(self, handle: int, flags: int = 0):
+    def __init__(self, handle: int, render_options: Optional[RenderOptions] = None):
         self._handle = handle
-        self._flags = flags
+        self._options_json = (render_options or RenderOptions())._to_json().encode("utf-8")
         self._closed = False
 
     def __enter__(self) -> "ParseResult":
@@ -262,9 +306,14 @@ class ParseResult:
 
     @property
     def markdown(self) -> str:
-        """Get the rendered Markdown content."""
+        """Get the Markdown content, rendered with the parse call's ``render_options``.
+
+        Raises:
+            RenderError: If rendering fails, or with kind
+                :attr:`ErrorKind.INVALID_ARGUMENT` if an option cannot be honoured.
+        """
         self._ensure_open()
-        ptr = native.lib.unhwp_to_markdown(self._handle, self._flags)
+        ptr = native.lib.unhwp_to_markdown_with_options(self._handle, self._options_json)
         if not ptr:
             raise _native_failure(RenderError, "Failed to convert to markdown")
         try:
@@ -528,13 +577,12 @@ def parse(
         ...     print(f"Images: {result.image_count}")
     """
     path_bytes = str(path).encode("utf-8")
-    flags = (render_options or RenderOptions())._to_flags()
 
     handle = native.lib.unhwp_parse_file(path_bytes)
     if not handle:
         raise _native_failure(ParseError, f"Failed to parse {path}")
 
-    return ParseResult(handle, flags)
+    return ParseResult(handle, render_options)
 
 
 def parse_bytes(
@@ -557,14 +605,13 @@ def parse_bytes(
         >>> with unhwp.parse_bytes(data) as result:
         ...     print(result.markdown)
     """
-    flags = (render_options or RenderOptions())._to_flags()
     data_ptr = (ctypes.c_uint8 * len(data)).from_buffer_copy(data)
 
     handle = native.lib.unhwp_parse_bytes(data_ptr, len(data))
     if not handle:
         raise _native_failure(ParseError, "Failed to parse bytes")
 
-    return ParseResult(handle, flags)
+    return ParseResult(handle, render_options)
 
 
 def to_markdown(path: Union[str, Path]) -> str:
@@ -595,13 +642,12 @@ def to_markdown_with_cleanup(
     """
     Convert an HWP/HWPX document to Markdown with cleanup.
 
-    Note: Cleanup is performed client-side as the native library does not
-    expose a dedicated cleanup API. Currently returns the same result as
-    to_markdown().
+    The same as ``parse(path, render_options=RenderOptions(cleanup=...))``
+    with the other options at their defaults.
 
     Args:
         path: Path to the document file.
-        cleanup_options: Optional cleanup options (reserved for future use).
+        cleanup_options: The cleanup to run; standard cleanup when omitted.
 
     Returns:
         Cleaned Markdown content as a string.
@@ -612,8 +658,9 @@ def to_markdown_with_cleanup(
         ...     cleanup_options=unhwp.CleanupOptions.aggressive()
         ... )
     """
-    # The native library does not have a cleanup API; return markdown as-is
-    return to_markdown(path)
+    options = RenderOptions(cleanup=cleanup_options or CleanupOptions.default())
+    with parse(path, render_options=options) as result:
+        return result.markdown
 
 
 def extract_text(path: Union[str, Path]) -> str:

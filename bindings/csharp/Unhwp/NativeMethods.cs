@@ -45,14 +45,6 @@ internal static class NativeMethods
         return IntPtr.Zero;
     }
 
-    // Flags for markdown rendering
-    public const int UNHWP_FLAG_FRONTMATTER = 1;
-    // Accepted, no effect: escaping is the default. Turn it off with UNHWP_FLAG_NO_ESCAPE.
-    public const int UNHWP_FLAG_ESCAPE_SPECIAL = 2;
-    public const int UNHWP_FLAG_PARAGRAPH_SPACING = 4;
-    public const int UNHWP_FLAG_REFINE = 8;
-    public const int UNHWP_FLAG_NO_ESCAPE = 16;
-
     // JSON format options
     public const int UNHWP_JSON_PRETTY = 0;
     public const int UNHWP_JSON_COMPACT = 1;
@@ -99,10 +91,12 @@ internal static class NativeMethods
     public static extern void unhwp_free_document(IntPtr doc);
 
     /// <summary>
-    /// Convert a document to Markdown.
+    /// Convert a document to Markdown, with options as JSON (null for the defaults).
     /// </summary>
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern IntPtr unhwp_to_markdown(IntPtr doc, int flags);
+    public static extern IntPtr unhwp_to_markdown_with_options(
+        IntPtr doc,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string? optionsJson);
 
     /// <summary>
     /// Convert a document to plain text.

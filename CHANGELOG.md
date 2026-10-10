@@ -7,23 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Every rendering setting through the C ABI.** `unhwp_to_markdown_with_options(doc,
+  options_json)` renders with a JSON object of options: `image_path_prefix`,
+  `table_fallback` (`"simplified_markdown"`, `"html"`, `"skip"`), `max_heading_level`,
+  `include_frontmatter`, `preserve_line_breaks`, `include_empty_paragraphs`, `list_marker`,
+  `paragraph_spacing`, `escape_special_chars`, `section_markers` (`"none"`, `"comment"`),
+  `cleanup_preset` (`"minimal"`, `"standard"`, `"aggressive"`) and `refine`. Every field is
+  optional and an absent one keeps its default; NULL is the defaults. Malformed JSON, a field
+  the library does not know, or a value it cannot honour fails with
+  `UNHWP_ERROR_INVALID_ARGUMENT` instead of being ignored. The flag bitmask of
+  `unhwp_to_markdown` reaches three settings and keeps working unchanged.
+- The bindings render through it. Python `RenderOptions` gains `max_heading_level`,
+  `include_empty_paragraphs`, `list_marker`, `paragraph_spacing`, `section_markers` and
+  `cleanup` (a `CleanupOptions`). .NET `MarkdownOptions` gains `ImagePathPrefix`,
+  `TableFallback`, `MaxHeadingLevel`, `PreserveLineBreaks`, `IncludeEmptyParagraphs`,
+  `ListMarker`, `SectionMarkers` and `Cleanup`, with the enums `TableFallback`,
+  `SectionMarkerStyle` and `CleanupPreset`. A value the library cannot honour raises
+  `RenderError` / throws `UnhwpException` with the invalid-argument kind.
+
 ### Changed
 
 - **Breaking:** the heading-level cap moved from `HeadingConfig` to the analyzer:
   `HeadingConfig::max_heading_level` and `HeadingConfig::with_max_level` are gone, and
   `HeadingAnalyzer::with_max_level` sets the cap. Rendering takes it from
   `RenderOptions::max_heading_level`, the one setting for how deep headings go.
+- **Breaking (Python):** `RenderOptions.table_fallback` is a string — `"simplified_markdown"`,
+  `"html"` or `"skip"` — where it was an integer naming modes the library does not have, and
+  `CleanupOptions.preset` is `"minimal"`, `"standard"` or `"aggressive"` where it was 0-2.
+  The declared defaults are the library's: `image_path_prefix="assets/"` and
+  `preserve_line_breaks=True`, which is what rendered all along.
+- .NET `MarkdownOptions.ParagraphSpacing` defaults to `true`, the library's default, and
+  now controls the blank line after each paragraph.
 
 ### Removed
 
 - `RenderOptions::use_atx_headers`. Nothing read it; headings are always written ATX-style
   (`#`).
+- **Breaking (Python):** `CleanupOptions.detect_mojibake` and
+  `CleanupOptions.preserve_frontmatter`. Cleanup reaches the library as a preset, so these
+  were accepted and ignored.
 
 ### Fixed
 
 - **`RenderOptions::max_heading_level` caps headings on the default rendering path.**
   `with_max_heading_level` and the CLI's `--max-heading` reached only the path without
   heading analysis, which is on by default, so setting them changed nothing.
+- **Python render options are no longer accepted and ignored.** `RenderOptions` reached the
+  library as the flag bitmask, so `image_path_prefix` and `table_fallback` never arrived and
+  `preserve_line_breaks=False` did not join lines; `to_markdown_with_cleanup` returned the
+  Markdown without cleanup whatever `CleanupOptions` it was given. Every field now applies.
+- .NET `MarkdownOptions.ParagraphSpacing` had no effect: it sent `UNHWP_FLAG_PARAGRAPH_SPACING`,
+  which keeps line breaks inside paragraphs — already the default. That flag is now documented
+  as accepted and without effect, like `UNHWP_FLAG_ESCAPE_SPECIAL`.
 
 ## [0.18.0] - 2026-10-10
 

@@ -53,45 +53,6 @@ public class UnhwpException : Exception
 }
 
 /// <summary>
-/// Options for markdown rendering.
-/// </summary>
-public class MarkdownOptions
-{
-    /// <summary>
-    /// Include YAML frontmatter with document metadata.
-    /// </summary>
-    public bool IncludeFrontmatter { get; set; } = false;
-
-    /// <summary>
-    /// Escape special markdown characters, so text that reads as Markdown syntax stays text.
-    /// Default: <see langword="true"/>, as in the Rust API.
-    /// </summary>
-    public bool EscapeSpecialChars { get; set; } = true;
-
-    /// <summary>
-    /// Add extra spacing between paragraphs.
-    /// </summary>
-    public bool ParagraphSpacing { get; set; } = false;
-
-    /// <summary>
-    /// Apply the lossless, idempotent markdown shape-refinement pass (table
-    /// shape, ordered-list numbering, link/image paths, frontmatter, section
-    /// anchors) after rendering. Default: <see langword="false"/>.
-    /// </summary>
-    public bool Refine { get; set; } = false;
-
-    internal int ToFlags()
-    {
-        int flags = 0;
-        if (IncludeFrontmatter) flags |= NativeMethods.UNHWP_FLAG_FRONTMATTER;
-        if (!EscapeSpecialChars) flags |= NativeMethods.UNHWP_FLAG_NO_ESCAPE;
-        if (ParagraphSpacing) flags |= NativeMethods.UNHWP_FLAG_PARAGRAPH_SPACING;
-        if (Refine) flags |= NativeMethods.UNHWP_FLAG_REFINE;
-        return flags;
-    }
-}
-
-/// <summary>
 /// Represents a parsed HWP/HWPX document.
 /// </summary>
 /// <remarks>
@@ -166,13 +127,16 @@ public class UnhwpDocument : IDisposable
     /// <summary>
     /// Convert the document to Markdown.
     /// </summary>
-    /// <param name="options">Optional rendering options</param>
+    /// <param name="options">Rendering options; the library's defaults when omitted.</param>
     /// <returns>Markdown string</returns>
+    /// <exception cref="UnhwpException">
+    /// If rendering fails — with <see cref="UnhwpErrorKind.InvalidArgument"/> when an option
+    /// cannot be honoured, such as a <see cref="MarkdownOptions.MaxHeadingLevel"/> outside 1-6.
+    /// </exception>
     public string ToMarkdown(MarkdownOptions? options = null)
     {
         ThrowIfDisposed();
-        int flags = options?.ToFlags() ?? 0;
-        var ptr = NativeMethods.unhwp_to_markdown(_handle, flags);
+        var ptr = NativeMethods.unhwp_to_markdown_with_options(_handle, options?.ToJson());
         if (ptr == IntPtr.Zero)
             throw NativeFailure("Failed to convert to markdown");
 

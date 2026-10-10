@@ -79,7 +79,8 @@ markdown = unhwp.to_markdown("document.hwp")
 ```
 
 #### `to_markdown_with_cleanup(path, cleanup_options=None) -> str`
-Convert with optional cleanup.
+Convert and run the cleanup pipeline over the Markdown — standard cleanup when
+`cleanup_options` is omitted.
 
 ```python
 markdown = unhwp.to_markdown_with_cleanup(
@@ -96,7 +97,9 @@ text = unhwp.extract_text("document.hwp")
 ```
 
 #### `parse(path, render_options=None) -> ParseResult`
-Parse a document with full access to content and images.
+Parse a document with full access to content and images. `result.markdown` is rendered
+with `render_options`; `parse_bytes(data, render_options=None)` does the same for a
+document in memory.
 
 ```python
 with unhwp.parse("document.hwp") as result:
@@ -128,32 +131,50 @@ What `parse()` and `parse_bytes()` return; use it as a context manager or call `
 - `get_tables(tsv=False)` - Every table as CSV (RFC 4180), or tab-separated with `tsv=True`, in reading order: `{"section", "index", "text"}` — the section's number (from 1), the table's place among that section's tables (from 1), and the text. A merged cell's text is in its top-left position and the positions it covers are empty, so every record has the same number of fields: `pandas.read_csv(io.StringIO(t["text"]))` reads one.
 
 #### `RenderOptions`
-Options for Markdown rendering.
+Options for Markdown rendering. Every field reaches the native library, and the defaults
+are the library's own.
 
 ```python
 opts = unhwp.RenderOptions(
     include_frontmatter=True,
     image_path_prefix="images/",
-    preserve_line_breaks=False,
+    table_fallback="html",
+    cleanup=unhwp.CleanupOptions.default(),
 )
+with unhwp.parse("document.hwp", render_options=opts) as result:
+    print(result.markdown)
 ```
 
+| Field | Default | Meaning |
+|---|---|---|
+| `image_path_prefix` | `"assets/"` | Prefix of the image paths in the Markdown |
+| `table_fallback` | `"simplified_markdown"` | A table with merged cells: `"simplified_markdown"` (merges dropped), `"html"` (rowspan/colspan kept) or `"skip"` |
+| `max_heading_level` | `4` | Deepest heading level written (1-6) |
+| `include_frontmatter` | `False` | Document metadata as YAML frontmatter |
+| `preserve_line_breaks` | `True` | Line breaks inside a paragraph as Markdown hard breaks; `False` joins the lines |
+| `include_empty_paragraphs` | `False` | Keep empty paragraphs as blank lines |
+| `list_marker` | `"-"` | Marker of an unordered list item (one character) |
+| `paragraph_spacing` | `True` | A blank line after each paragraph |
+| `escape_special_chars` | `True` | Escape text that would read as Markdown syntax |
+| `section_markers` | `"none"` | `"comment"` writes `<!-- section N -->` before each section |
+| `cleanup` | `None` | A `CleanupOptions` to run over the output |
+| `refine` | `False` | The lossless shape-refinement pass (table shape, list numbering, link/image paths, frontmatter, section anchors) |
+
+A value the library cannot honour — an unknown `table_fallback`, a `max_heading_level`
+outside 1-6 — raises `RenderError` with `kind == ErrorKind.INVALID_ARGUMENT` when the
+Markdown is produced.
+
 #### `CleanupOptions`
-Options for output cleanup.
+The cleanup pipeline: string normalization, line cleaning (page numbers, repeated
+headers and footers), structural filtering, whitespace normalization.
 
 ```python
-# Presets
-opts = unhwp.CleanupOptions.minimal()
-opts = unhwp.CleanupOptions.default()
-opts = unhwp.CleanupOptions.aggressive()
-opts = unhwp.CleanupOptions.disabled()
+opts = unhwp.CleanupOptions.minimal()     # normalization only
+opts = unhwp.CleanupOptions.default()     # every stage ("standard")
+opts = unhwp.CleanupOptions.aggressive()  # every stage, headers and footers removed more eagerly
+opts = unhwp.CleanupOptions.disabled()    # no cleanup
 
-# Custom
-opts = unhwp.CleanupOptions(
-    enabled=True,
-    preset=1,
-    detect_mojibake=True,
-)
+opts = unhwp.CleanupOptions(preset="aggressive")
 ```
 
 ### Constants

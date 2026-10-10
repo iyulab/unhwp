@@ -9,6 +9,7 @@ namespace Unhwp;
 /// </summary>
 [JsonSerializable(typeof(string[]))]
 [JsonSerializable(typeof(TableText[]))]
+[JsonSerializable(typeof(RenderOptionsJson))]
 internal sealed partial class UnhwpJsonContext : JsonSerializerContext
 {
 }
