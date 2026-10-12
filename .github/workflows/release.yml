@@ -10,18 +10,12 @@ on:
     types: [completed]
     branches: [main]
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Version to release (leave empty to use Cargo.toml version)'
-        required: false
-        type: string
 
 jobs:
   release:
     uses: iyulab/unparser-shared/.github/workflows/release-reusable.yml@main
     with:
       package-name: unhwp
-      version: ${{ inputs.version }}
       csharp-project-name: Unhwp
       nuget-staging-mode: flat
       nuget-test-matrix: |
