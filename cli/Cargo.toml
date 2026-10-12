@@ -24,23 +24,17 @@ clap = { version = "4.5", features = ["derive"] }
 # JSON serialization
 serde_json = "1.0"
 
-# Self-update from GitHub releases
-self_update = { version = "1.3", features = ["archive-zip", "archive-tar", "compression-tar-gz", "compression-zip-deflate"] }
-
-# Staging directory and in-place binary replacement for the update flow. self_update stopped
-# re-exporting these in 1.0; its own docs direct callers to depend on them directly.
-tempfile = "3"
-self-replace = "1.5"
-
-# Version comparison
-semver = "1.0"
-
 # Progress indicator
 indicatif = "0.18"
 
 # Colored output
 colored = "3.1"
 
+# The update notice and the `update` command, shared by the family's CLIs.
+unparser-shared = { version = "0.9", default-features = false, features = ["cli-update"] }
+
 [dev-dependencies]
+# Scratch directories for the CLI integration tests.
+tempfile = "3"
 # Builds the HWPX the `tables` test reads, from the committed fixture.
 zip = { version = "9.0", default-features = false, features = ["deflate"] }
