@@ -95,21 +95,17 @@ dotnet pack Unhwp/Unhwp.csproj -c Release
 
 ## CI/CD
 
-The bindings are built and published automatically via GitHub Actions:
+The bindings are built, tested and published by the release workflow (`.github/workflows/release.yml`),
+which runs when CI passes on `main` with a version that has no GitHub Release yet:
 
-- **Trigger**: Push tags starting with `v` (e.g., `v0.1.10`)
-- **Workflow**: `.github/workflows/bindings.yml`
-- **Artifacts**:
-  - Native libraries for all platforms
-  - Python wheels
-  - NuGet package
+1. Native libraries are built for every supported platform, packed into the Python wheel/sdist and the
+   NuGet package, and both packages are tested.
+2. Only once those tests and the CLI and C-ABI builds pass is the GitHub Release created.
+3. The tested wheel, sdist and NuGet package are then published to PyPI and NuGet, alongside crates.io
+   and npm.
 
-### Manual Publishing
-
-```bash
-# Trigger workflow manually
-gh workflow run bindings.yml -f publish=true
-```
+A publish job that fails can be re-run from the workflow run ("Re-run failed jobs") while its artifacts
+are retained (7 days).
 
 ### Required Secrets
 

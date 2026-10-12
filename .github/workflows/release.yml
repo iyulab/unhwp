@@ -1,8 +1,8 @@
 name: Release
 
 # The pipeline itself is unparser-shared's release-reusable.yml, shared by the parser
-# crates; this file keeps the trigger and says what differs here. The workflow name is
-# load-bearing: bindings.yml starts when "Release" completes.
+# crates; this file keeps the trigger and says what differs here -- the PyPI and NuGet
+# packages included, which that pipeline publishes after the GitHub Release.
 
 on:
   workflow_run:
