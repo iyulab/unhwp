@@ -137,7 +137,7 @@ pub const UNHWP_FLAG_NO_ESCAPE: u32 = 16;
 /// ```
 ///
 /// `max_heading_level` is 1-6 and `list_marker` one character; anything else is an error.
-/// `cleanup_preset` absent or `null` means no cleanup.
+/// `cleanup_preset` absent, `null` or `"none"` means no cleanup.
 #[derive(serde::Deserialize, Default)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 struct FfiRenderOptions {
@@ -170,11 +170,13 @@ enum FfiSectionMarkerStyle {
     Comment,
 }
 
-/// The cleanup pipeline's three configurations: [`CleanupOptions::minimal`],
-/// [`CleanupOptions::default`] and [`CleanupOptions::aggressive`].
+/// No cleanup, or the cleanup pipeline's three configurations: [`CleanupOptions::minimal`],
+/// [`CleanupOptions::default`] and [`CleanupOptions::aggressive`]. `"none"` is the same word
+/// the sibling parsers take for it.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum FfiCleanupPreset {
+    None,
     Minimal,
     Standard,
     Aggressive,
@@ -230,11 +232,12 @@ impl TryFrom<FfiRenderOptions> for RenderOptions {
             };
         }
         if let Some(preset) = ffi.cleanup_preset {
-            options.cleanup = Some(match preset {
-                FfiCleanupPreset::Minimal => CleanupOptions::minimal(),
-                FfiCleanupPreset::Standard => CleanupOptions::default(),
-                FfiCleanupPreset::Aggressive => CleanupOptions::aggressive(),
-            });
+            options.cleanup = match preset {
+                FfiCleanupPreset::None => None,
+                FfiCleanupPreset::Minimal => Some(CleanupOptions::minimal()),
+                FfiCleanupPreset::Standard => Some(CleanupOptions::default()),
+                FfiCleanupPreset::Aggressive => Some(CleanupOptions::aggressive()),
+            };
         }
         if ffi.refine == Some(true) {
             options = options.with_refine();
@@ -1016,6 +1019,10 @@ mod tests {
         assert_eq!(render_with_options(doc, r#"{"refine": false}"#), default);
         assert_eq!(
             render_with_options(doc, r#"{"cleanup_preset": null}"#),
+            default
+        );
+        assert_eq!(
+            render_with_options(doc, r#"{"cleanup_preset": "none"}"#),
             default
         );
 

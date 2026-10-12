@@ -145,11 +145,11 @@ char* unhwp_to_markdown(const UnhwpDocument* doc, uint32_t flags);
  *     "preserve_line_breaks": bool, "include_empty_paragraphs": bool,
  *     "list_marker": string, "paragraph_spacing": bool,
  *     "escape_special_chars": bool, "section_markers": "none" | "comment",
- *     "cleanup_preset": "minimal" | "standard" | "aggressive" | null,
+ *     "cleanup_preset": "none" | "minimal" | "standard" | "aggressive" | null,
  *     "refine": bool }
  *
  * Defaults: "assets/", "simplified_markdown", 4, false, true, false, "-", true,
- * true, "none", null (no cleanup), false. max_heading_level is 1-6 and
+ * true, "none", null (no cleanup -- "none" says the same), false. max_heading_level is 1-6 and
  * list_marker one character. table_fallback says what becomes of a table with
  * merged cells. A field the library does not know is an error, not ignored.
  *
