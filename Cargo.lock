@@ -2417,9 +2417,9 @@ checksum = "81e544489bf3d8ef66c953931f56617f423cd4b5494be343d9b9d3dda037b9a3"
 
 [[package]]
 name = "unparser-shared"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46c2f9a6bf9b703142cf01a01928498bcdd4f6dd2a2cd303155bee991a3fe86d"
+checksum = "abf5a33901f3ce40227761c453dcc2ded94d5ed1e0e6918a0d18cc94437168b8"
 dependencies = [
  "colored",
  "pulldown-cmark",

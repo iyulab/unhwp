@@ -31,7 +31,7 @@ indicatif = "0.18"
 colored = "3.1"
 
 # The update notice and the `update` command, shared by the family's CLIs.
-unparser-shared = { version = "0.9", default-features = false, features = ["cli-update"] }
+unparser-shared = { version = "0.10", default-features = false, features = ["cli-update"] }
 
 [dev-dependencies]
 # Scratch directories for the CLI integration tests.
