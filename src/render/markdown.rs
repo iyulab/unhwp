@@ -677,13 +677,9 @@ impl MarkdownRenderer {
             return;
         }
 
-        // Calculate total columns considering colspan
-        let total_cols = table
-            .rows
-            .iter()
-            .map(|row| row.cells.iter().map(|c| c.colspan as usize).sum::<usize>())
-            .max()
-            .unwrap_or(0);
+        // The grid width, merges included — a vertical merge pushes the cells of the rows
+        // below it rightward, so a row's spans do not add up to it ([`Table::column_count`]).
+        let total_cols = table.column_count();
 
         // Optimization: extract full-span rows (colspan == total_cols) as plain text blocks
         // and check empty cell ratio for the remaining rows.
@@ -741,89 +737,45 @@ impl MarkdownRenderer {
     }
 
     /// Renders a table as Markdown, handling both rowspan and colspan.
-    /// Rowspan cells have content in first row only; subsequent rows get empty cells.
+    ///
+    /// Each cell is placed at its grid column ([`Table::cell_columns`]); the columns a merge
+    /// covers — the tail of a horizontal span, and the columns a vertical span occupies in the
+    /// rows below — are empty, so every row is as wide as the table and no value shifts out
+    /// from under its heading.
     fn render_table_markdown_with_rowspan(&self, table: &Table, output: &mut String) {
-        // First, build a grid that expands rowspan/colspan
-        // Each cell in grid: (content_string, alignment, is_continuation)
-        // is_continuation = true means this cell is part of a rowspan from above
-
-        // Calculate total columns considering colspan
-        let total_cols = table
-            .rows
-            .iter()
-            .map(|row| row.cells.iter().map(|c| c.colspan as usize).sum::<usize>())
-            .max()
-            .unwrap_or(0);
-
+        let total_cols = table.column_count();
         if total_cols == 0 {
             return;
         }
 
-        // Build expanded grid
-        // Track which cells are "occupied" by rowspan from previous rows
-        // rowspan_remaining[col] = (remaining_rows, content, alignment)
-        let mut rowspan_remaining: Vec<Option<(u32, String, Alignment)>> = vec![None; total_cols];
-
-        for (row_idx, row) in table.rows.iter().enumerate() {
-            let mut col_idx = 0;
-            let mut cell_iter = row.cells.iter();
-            let mut row_output = String::from("|");
-            let mut alignments: Vec<Alignment> = Vec::new();
-
-            while col_idx < total_cols {
-                // Check if this column is occupied by rowspan from above
-                if let Some((remaining, _, align)) = &rowspan_remaining[col_idx] {
-                    if *remaining > 0 {
-                        // This cell is a continuation of rowspan - render empty
-                        row_output.push_str(" |");
-                        alignments.push(*align);
-                        rowspan_remaining[col_idx] = if *remaining > 1 {
-                            Some((*remaining - 1, String::new(), *align))
-                        } else {
-                            None
-                        };
-                        col_idx += 1;
-                        continue;
-                    }
-                }
-
-                // Get next cell from the row
-                if let Some(cell) = cell_iter.next() {
-                    let text = self.render_cell_content(cell);
-                    row_output.push_str(&format!(" {} |", text.trim()));
-                    alignments.push(cell.alignment);
-
-                    // Handle colspan - add empty cells
-                    for _ in 1..cell.colspan {
-                        row_output.push_str(" |");
-                        alignments.push(cell.alignment);
-                    }
-
-                    // Handle rowspan - mark columns as occupied for future rows
-                    if cell.rowspan > 1 {
-                        for slot in rowspan_remaining
-                            .iter_mut()
-                            .take((col_idx + cell.colspan as usize).min(total_cols))
-                            .skip(col_idx)
-                        {
-                            *slot = Some((cell.rowspan - 1, String::new(), cell.alignment));
-                        }
-                    }
-
-                    col_idx += cell.colspan as usize;
-                } else {
-                    // No more cells in row, fill with empty
-                    row_output.push_str(" |");
-                    alignments.push(Alignment::Left);
-                    col_idx += 1;
-                }
+        for (row_idx, (row, cols)) in table.rows.iter().zip(table.cell_columns()).enumerate() {
+            let mut slots: Vec<Option<&TableCell>> = vec![None; total_cols];
+            for (cell, col) in row.cells.iter().zip(cols) {
+                slots[col] = Some(cell);
             }
 
+            let mut row_output = String::from("|");
+            for slot in &slots {
+                match slot {
+                    Some(cell) => {
+                        let text = self.render_cell_content(cell);
+                        row_output.push_str(&format!(" {} |", text.trim()));
+                    }
+                    None => row_output.push_str(" |"),
+                }
+            }
             output.push_str(&row_output);
             output.push('\n');
 
-            // Add separator after header row
+            // The separator takes each column's alignment from the header cell over it.
             if row_idx == 0 {
+                let mut alignments = vec![Alignment::Left; total_cols];
+                for (col, cell) in slots.iter().enumerate() {
+                    if let Some(cell) = cell {
+                        let end = (col + cell.colspan.max(1) as usize).min(total_cols);
+                        alignments[col..end].fill(cell.alignment);
+                    }
+                }
                 output.push('|');
                 for align in &alignments {
                     let sep = match align {
@@ -2178,6 +2130,68 @@ mod table_cell_content_tests {
             "Text content should be preserved, got: {}",
             result
         );
+    }
+
+    fn render_rows(rows: Vec<Vec<TableCell>>) -> String {
+        let mut doc = Document::new();
+        let mut section = Section::new(0);
+        let table = Table {
+            rows: rows
+                .into_iter()
+                .enumerate()
+                .map(|(i, cells)| TableRow {
+                    cells,
+                    is_header: i == 0,
+                })
+                .collect(),
+            column_widths: vec![],
+            has_header: true,
+        };
+        section.content.push(Block::Table(table));
+        doc.sections.push(section);
+        MarkdownRenderer::new(RenderOptions::default())
+            .render(&doc)
+            .unwrap()
+    }
+
+    fn spanned(text: &str, rowspan: u32, colspan: u32) -> TableCell {
+        TableCell {
+            content: vec![Paragraph::text(text)],
+            rowspan,
+            colspan,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn a_cell_pushed_right_by_a_vertical_merge_keeps_its_column() {
+        // Row 2 has two cells, but column 0 is still the merge from row 1, so its cells sit in
+        // columns 1 and 2: the table is three columns wide, not the two its rows' spans sum to.
+        let md = render_rows(vec![
+            vec![
+                spanned("A", 2, 1),
+                TableCell::text("b"),
+                TableCell::text("x"),
+            ],
+            vec![TableCell::text("c"), TableCell::text("d")],
+            vec![
+                TableCell::text("e"),
+                TableCell::text("f"),
+                TableCell::text("g"),
+            ],
+        ]);
+        let rows: Vec<&str> = md.lines().filter(|l| l.starts_with('|')).collect();
+        assert_eq!(rows[2], "| | c | d |", "{md}");
+        assert_eq!(rows[3], "| e | f | g |", "{md}");
+    }
+
+    #[test]
+    fn a_row_wider_than_the_spans_of_another_keeps_every_cell() {
+        let md = render_rows(vec![
+            vec![spanned("A", 2, 1), TableCell::text("b")],
+            vec![TableCell::text("c"), TableCell::text("d")],
+        ]);
+        assert!(md.contains("| c | d |"), "{md}");
     }
 
     #[test]

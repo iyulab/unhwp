@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   32-bit `colSpan`, an HWP 5.0 cell a 16-bit one, and the Markdown renderer laid its grid out
   as wide as the spans reach: one cell declaring billions of columns allocated that many. A
   span is now read the way HTML reads one -- past 1000 columns or 65 534 rows, as that bound.
+- **A cell pushed right by a vertical merge is no longer dropped from a Markdown table.** The
+  renderer took a table's width from the column spans each row adds up to, which misses the
+  columns a merged cell from a row above still occupies: in a row under such a merge, the
+  last cells had no column left and were not written. Cells are now placed on the table's
+  grid (`Table::cell_columns`, the same placement `Table::column_count` uses), so every cell
+  keeps its column; the full-width-row and sparse-table checks use that width too.
 
 ### Changed
 
