@@ -8,14 +8,14 @@ namespace Unhwp;
 /// </summary>
 public enum TableFallback
 {
-    /// <summary>A Markdown table with the merges dropped (the default).</summary>
-    SimplifiedMarkdown,
+    /// <summary>
+    /// A Markdown table: a merged cell's text sits in its first cell and the cells it spans
+    /// are left empty (the default).
+    /// </summary>
+    Markdown,
 
     /// <summary>An HTML table that keeps rowspan and colspan.</summary>
     Html,
-
-    /// <summary>The table is left out.</summary>
-    Skip,
 }
 
 /// <summary>
@@ -60,9 +60,9 @@ public class MarkdownOptions
 
     /// <summary>
     /// What becomes of a table with merged cells. Default:
-    /// <see cref="Unhwp.TableFallback.SimplifiedMarkdown"/>.
+    /// <see cref="Unhwp.TableFallback.Markdown"/>.
     /// </summary>
-    public TableFallback TableFallback { get; set; } = TableFallback.SimplifiedMarkdown;
+    public TableFallback TableFallback { get; set; } = TableFallback.Markdown;
 
     /// <summary>
     /// The deepest heading level written (1-6); deeper headings take this level. Default: 4.
@@ -130,9 +130,8 @@ public class MarkdownOptions
                 ImagePathPrefix,
                 TableFallback switch
                 {
-                    TableFallback.SimplifiedMarkdown => "simplified_markdown",
+                    TableFallback.Markdown => "markdown",
                     TableFallback.Html => "html",
-                    TableFallback.Skip => "skip",
                     _ => throw new ArgumentOutOfRangeException(nameof(TableFallback)),
                 },
                 MaxHeadingLevel,

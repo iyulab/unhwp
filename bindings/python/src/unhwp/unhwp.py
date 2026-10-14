@@ -213,9 +213,9 @@ class RenderOptions:
     Attributes:
         image_path_prefix: Prefix of the image paths written in the Markdown.
         table_fallback: What becomes of a table with merged cells, which
-            Markdown cannot express: ``"simplified_markdown"`` (a Markdown table,
-            merges dropped), ``"html"`` (an HTML table with rowspan/colspan) or
-            ``"skip"`` (left out).
+            Markdown cannot express: ``"markdown"`` (a Markdown table, a merged
+            cell's text in its first cell) or ``"html"`` (an HTML table with
+            rowspan/colspan).
         max_heading_level: The deepest heading level written (1-6); deeper
             headings take this level.
         include_frontmatter: Write the document's metadata as YAML frontmatter.
@@ -233,7 +233,7 @@ class RenderOptions:
             section anchors) after rendering.
     """
     image_path_prefix: str = "assets/"
-    table_fallback: str = "simplified_markdown"
+    table_fallback: str = "markdown"
     max_heading_level: int = 4
     include_frontmatter: bool = False
     preserve_line_breaks: bool = True

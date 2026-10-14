@@ -140,7 +140,7 @@ char* unhwp_to_markdown(const UnhwpDocument* doc, uint32_t flags);
  * optional; an absent field keeps its default:
  *
  *   { "image_path_prefix": string,
- *     "table_fallback": "simplified_markdown" | "html" | "skip",
+ *     "table_fallback": "markdown" | "html",
  *     "max_heading_level": number, "include_frontmatter": bool,
  *     "preserve_line_breaks": bool, "include_empty_paragraphs": bool,
  *     "list_marker": string, "paragraph_spacing": bool,
@@ -148,7 +148,7 @@ char* unhwp_to_markdown(const UnhwpDocument* doc, uint32_t flags);
  *     "cleanup_preset": "none" | "minimal" | "standard" | "aggressive" | null,
  *     "refine": bool }
  *
- * Defaults: "assets/", "simplified_markdown", 4, false, true, false, "-", true,
+ * Defaults: "assets/", "markdown", 4, false, true, false, "-", true,
  * true, "none", null (no cleanup -- "none" says the same), false. max_heading_level is 1-6 and
  * list_marker one character. table_fallback says what becomes of a table with
  * merged cells. A field the library does not know is an error, not ignored.

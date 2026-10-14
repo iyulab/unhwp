@@ -122,7 +122,7 @@ pub const UNHWP_FLAG_NO_ESCAPE: u32 = 16;
 /// ```json
 /// {
 ///   "image_path_prefix": string,
-///   "table_fallback": "simplified_markdown" | "html" | "skip",
+///   "table_fallback": "markdown" | "html",
 ///   "max_heading_level": number,
 ///   "include_frontmatter": bool,
 ///   "preserve_line_breaks": bool,
@@ -158,9 +158,8 @@ struct FfiRenderOptions {
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum FfiTableFallback {
-    SimplifiedMarkdown,
+    Markdown,
     Html,
-    Skip,
 }
 
 #[derive(serde::Deserialize)]
@@ -192,9 +191,8 @@ impl TryFrom<FfiRenderOptions> for RenderOptions {
         }
         if let Some(fallback) = ffi.table_fallback {
             options.table_fallback = match fallback {
-                FfiTableFallback::SimplifiedMarkdown => TableFallback::SimplifiedMarkdown,
+                FfiTableFallback::Markdown => TableFallback::Markdown,
                 FfiTableFallback::Html => TableFallback::Html,
-                FfiTableFallback::Skip => TableFallback::Skip,
             };
         }
         if let Some(level) = ffi.max_heading_level {
@@ -939,10 +937,6 @@ mod tests {
                 base().with_table_fallback(TableFallback::Html),
             ),
             (
-                r#"{"table_fallback": "skip"}"#,
-                base().with_table_fallback(TableFallback::Skip),
-            ),
-            (
                 r#"{"max_heading_level": 2}"#,
                 base().with_max_heading_level(2),
             ),
@@ -1052,6 +1046,8 @@ mod tests {
             "[]",
             r#"{"image_prefix": "img/"}"#,
             r#"{"table_fallback": "ascii"}"#,
+            r#"{"table_fallback": "skip"}"#,
+            r#"{"table_fallback": "simplified_markdown"}"#,
             r#"{"max_heading_level": 0}"#,
             r#"{"max_heading_level": 7}"#,
             r#"{"list_marker": "**"}"#,

@@ -508,18 +508,12 @@ mod tests {
 
     #[test]
     fn test_table_fallback_variants() {
-        // All TableFallback variants should be usable
         let options_html = RenderOptions::default().with_table_fallback(TableFallback::Html);
-        let options_simplified =
-            RenderOptions::default().with_table_fallback(TableFallback::SimplifiedMarkdown);
-        let options_skip = RenderOptions::default().with_table_fallback(TableFallback::Skip);
-
         assert_eq!(options_html.table_fallback, TableFallback::Html);
         assert_eq!(
-            options_simplified.table_fallback,
-            TableFallback::SimplifiedMarkdown
+            RenderOptions::default().table_fallback,
+            TableFallback::Markdown
         );
-        assert_eq!(options_skip.table_fallback, TableFallback::Skip);
     }
 
     #[test]

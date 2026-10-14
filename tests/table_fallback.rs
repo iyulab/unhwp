@@ -69,22 +69,11 @@ fn html_keeps_the_span_that_markdown_cannot_express() {
 }
 
 #[test]
-fn simplified_markdown_flattens_the_merge_into_pipes() {
-    let out = render(TableFallback::SimplifiedMarkdown);
+fn markdown_flattens_the_merge_into_pipes() {
+    let out = render(TableFallback::Markdown);
     assert!(out.contains('|'), "expected a pipe table, got:\n{out}");
     assert!(!out.contains("<table>"), "must not emit HTML, got:\n{out}");
     assert!(out.contains("Merged heading"));
-}
-
-#[test]
-fn skip_leaves_the_table_out_entirely() {
-    let out = render(TableFallback::Skip);
-    assert!(!out.contains("<table>"), "got:\n{out}");
-    assert!(
-        !out.contains("Merged heading"),
-        "skip must drop the table's content, got:\n{out}"
-    );
-    assert!(!out.contains("left"), "got:\n{out}");
 }
 
 /// A table with nothing to fall back from renders the same way in every mode -- the option
@@ -107,19 +96,14 @@ fn a_table_without_merges_is_unaffected_by_the_mode() {
     let mut document = Document::new();
     document.sections.push(section);
 
-    let renders: Vec<String> = [
-        TableFallback::Html,
-        TableFallback::SimplifiedMarkdown,
-        TableFallback::Skip,
-    ]
-    .into_iter()
-    .map(|fallback| {
-        let options = RenderOptions::default().with_table_fallback(fallback);
-        render_markdown(&document, &options).expect("rendering must succeed")
-    })
-    .collect();
+    let renders: Vec<String> = [TableFallback::Html, TableFallback::Markdown]
+        .into_iter()
+        .map(|fallback| {
+            let options = RenderOptions::default().with_table_fallback(fallback);
+            render_markdown(&document, &options).expect("rendering must succeed")
+        })
+        .collect();
 
     assert!(renders[0].contains('c'), "the table must still render");
     assert_eq!(renders[0], renders[1]);
-    assert_eq!(renders[1], renders[2]);
 }

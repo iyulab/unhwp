@@ -649,21 +649,13 @@ impl MarkdownRenderer {
             return;
         }
 
-        // What to do with a table Markdown cannot express. The option said this for a long
-        // time without anything reading it, so every table rendered as SimplifiedMarkdown
-        // whatever the caller asked for. Tables without merges are unaffected: there is
-        // nothing to fall back from.
-        if table.has_merged_cells() {
-            match self.options.table_fallback {
-                TableFallback::Skip => return,
-                TableFallback::Html => {
-                    ensure_blank_line(output);
-                    output.push_str(&render_table_html(table));
-                    output.push_str("\n\n");
-                    return;
-                }
-                TableFallback::SimplifiedMarkdown => {}
-            }
+        // What to do with a table Markdown cannot express. Tables without merges are
+        // unaffected: there is nothing to fall back from.
+        if table.has_merged_cells() && self.options.table_fallback == TableFallback::Html {
+            ensure_blank_line(output);
+            output.push_str(&render_table_html(table));
+            output.push_str("\n\n");
+            return;
         }
 
         ensure_blank_line(output);

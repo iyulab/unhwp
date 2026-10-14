@@ -274,7 +274,6 @@ class TestRenderOptions:
         [
             ({"image_path_prefix": "img/"}, "](img/image1)", "](assets/image1)"),
             ({"table_fallback": "html"}, "<table", "| North | 10 |"),
-            ({"table_fallback": "skip"}, "plain words", "Region and sales"),
             ({"max_heading_level": 2}, "## ", "### "),
             ({"include_frontmatter": True}, 'title: "Quarterly report"', None),
             ({"include_empty_paragraphs": True}, "\n\n\n\nplain words", None),

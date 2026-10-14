@@ -147,7 +147,7 @@ with unhwp.parse("document.hwp", render_options=opts) as result:
 | Field | Default | Meaning |
 |---|---|---|
 | `image_path_prefix` | `"assets/"` | Prefix of the image paths in the Markdown |
-| `table_fallback` | `"simplified_markdown"` | A table with merged cells: `"simplified_markdown"` (merges dropped), `"html"` (rowspan/colspan kept) or `"skip"` |
+| `table_fallback` | `"markdown"` | A table with merged cells: `"markdown"` (a merged cell's text in its first cell) or `"html"` (rowspan/colspan kept) |
 | `max_heading_level` | `4` | Deepest heading level written (1-6) |
 | `include_frontmatter` | `False` | Document metadata as YAML frontmatter |
 | `preserve_line_breaks` | `True` | Line breaks inside a paragraph as Markdown hard breaks; `False` joins the lines |

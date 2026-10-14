@@ -111,7 +111,6 @@ public class MarkdownOptionsTests
     {
         new object?[] { new MarkdownOptions { ImagePathPrefix = "img/" }, "](img/image1)", "](assets/image1)" },
         new object?[] { new MarkdownOptions { TableFallback = TableFallback.Html }, "<table", "| North | 10 |" },
-        new object?[] { new MarkdownOptions { TableFallback = TableFallback.Skip }, "plain words", "Region and sales" },
         new object?[] { new MarkdownOptions { MaxHeadingLevel = 2 }, "## ", "### " },
         new object?[] { new MarkdownOptions { IncludeFrontmatter = true }, "title: \"Quarterly report\"", null },
         new object?[] { new MarkdownOptions { IncludeEmptyParagraphs = true }, "\n\n\n\nplain words", null },

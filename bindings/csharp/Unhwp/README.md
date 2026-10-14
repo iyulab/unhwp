@@ -156,7 +156,7 @@ Every property reaches the native library, and the defaults are the library's ow
 | Property | Default | Meaning |
 |---|---|---|
 | `ImagePathPrefix` | `"assets/"` | Prefix of the image paths in the Markdown |
-| `TableFallback` | `SimplifiedMarkdown` | A table with merged cells: `SimplifiedMarkdown` (merges dropped), `Html` (rowspan/colspan kept) or `Skip` |
+| `TableFallback` | `Markdown` | A table with merged cells: `Markdown` (a merged cell's text in its first cell) or `Html` (rowspan/colspan kept) |
 | `MaxHeadingLevel` | `4` | Deepest heading level written (1-6) |
 | `IncludeFrontmatter` | `false` | Document metadata as YAML frontmatter |
 | `PreserveLineBreaks` | `true` | Line breaks inside a paragraph as Markdown hard breaks; `false` joins the lines |

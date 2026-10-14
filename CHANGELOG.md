@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking: `TableFallback::SimplifiedMarkdown` is now `TableFallback::Markdown`**, the name the
+  sibling parsers (unpdf, undoc) give the same mode -- C ABI and Python `"table_fallback":
+  "markdown"`, .NET `TableFallback.Markdown`. It stays the default. The old string
+  `"simplified_markdown"` is refused with an invalid-argument error.
+
+### Removed
+
+- **Breaking: `TableFallback::Skip` is gone** (CLI `--table-mode skip`, C and Python `"skip"`,
+  .NET `TableFallback.Skip`). It dropped a table with merged cells and all of its text from the
+  output, which no other mode of this library or of its siblings does. Use `Markdown` (the
+  default) or `Html`; `"skip"` is refused with an invalid-argument error.
+
 ### Fixed
 
 - **A decompression bomb is an error, not an allocation.** An HWPX part, an HWP 5 stream and an

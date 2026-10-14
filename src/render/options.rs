@@ -206,15 +206,15 @@ pub enum SectionMarkerStyle {
     Comment,
 }
 
-/// Fallback modes for tables with merged cells.
+/// What becomes of a table with merged cells, which a Markdown table cannot express.
+///
+/// A table without merged cells is a Markdown table in either mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TableFallback {
-    /// Render as HTML table with rowspan/colspan.
-    Html,
-    /// Render as simplified Markdown table (ignore merges).
-    /// This is the default as it produces cleaner output for LLM training.
+    /// A Markdown table: a merged cell's text sits in its first cell and the cells it
+    /// spans are left empty (the default).
     #[default]
-    SimplifiedMarkdown,
-    /// Skip tables with merged cells entirely.
-    Skip,
+    Markdown,
+    /// An HTML table that keeps `rowspan` and `colspan`.
+    Html,
 }

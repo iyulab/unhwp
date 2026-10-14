@@ -240,16 +240,13 @@ enum TableMode {
     Markdown,
     /// HTML tables (for complex layouts)
     Html,
-    /// Skip tables
-    Skip,
 }
 
 impl From<TableMode> for TableFallback {
     fn from(mode: TableMode) -> Self {
         match mode {
-            TableMode::Markdown => TableFallback::SimplifiedMarkdown,
+            TableMode::Markdown => TableFallback::Markdown,
             TableMode::Html => TableFallback::Html,
-            TableMode::Skip => TableFallback::Skip,
         }
     }
 }
