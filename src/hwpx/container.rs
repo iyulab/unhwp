@@ -6,7 +6,20 @@ use quick_xml::{Reader, XmlVersion};
 use std::collections::HashMap;
 use std::io::{Cursor, Read, Seek};
 use std::path::Path;
+use unparser_shared::inflate::{is_inflation_limit, InflateGuard};
 use zip::ZipArchive;
+
+/// The bytes of the entry `path`, read from its decompressing reader through
+/// [`InflateGuard`]: an entry that expands past what a document's data does (a decompression
+/// bomb) is a damaged archive, not an allocation that ends the process.
+fn read_entry(path: &str, file: impl Read, compressed_size: u64) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    match InflateGuard::new(file, compressed_size).read_to_end(&mut bytes) {
+        Ok(_) => Ok(bytes),
+        Err(e) if is_inflation_limit(&e) => Err(Error::ZipArchive(format!("{path}: {e}"))),
+        Err(e) => Err(e.into()),
+    }
+}
 
 /// HWPX container paths.
 #[allow(dead_code)]
@@ -68,27 +81,26 @@ impl HwpxContainer {
     ///
     /// [`From<std::str::Utf8Error>`]: crate::error::Error
     pub fn read_file(&mut self, path: &str) -> Result<String> {
-        let mut file = self
+        let file = self
             .archive
             .by_name(path)
             .map_err(|_| Error::MissingComponent(path.to_string()))?;
 
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)?;
+        let compressed = file.compressed_size();
+        let bytes = read_entry(path, file, compressed)?;
         String::from_utf8(bytes)
             .map_err(|err| Error::Encoding(format!("{path} is not valid UTF-8: {err}")))
     }
 
     /// Reads a binary file from the archive.
     pub fn read_binary(&mut self, path: &str) -> Result<Vec<u8>> {
-        let mut file = self
+        let file = self
             .archive
             .by_name(path)
             .map_err(|_| Error::MissingComponent(path.to_string()))?;
 
-        let mut data = Vec::new();
-        file.read_to_end(&mut data)?;
-        Ok(data)
+        let compressed = file.compressed_size();
+        read_entry(path, file, compressed)
     }
 
     /// Reads the content.hpf manifest file.
@@ -269,6 +281,35 @@ fn build_image_map_from_hpf(hpf_content: &str) -> HashMap<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An entry that expands past a hundredfold is a damaged archive (a decompression bomb),
+    /// read as an error instead of being allocated; an ordinary entry is read whole.
+    #[test]
+    fn an_entry_that_expands_past_a_hundredfold_is_a_damaged_archive() {
+        use std::io::Write;
+        let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let deflated = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+        zip.start_file("Contents/section0.xml", deflated).unwrap();
+        zip.write_all(&vec![b' '; 20 << 20]).unwrap();
+        zip.start_file("Contents/header.xml", deflated).unwrap();
+        zip.write_all(b"<hh:head/>").unwrap();
+        let bytes = zip.finish().unwrap().into_inner();
+        let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let file = archive.by_name("Contents/section0.xml").unwrap();
+        let compressed = file.compressed_size();
+        let err = read_entry("Contents/section0.xml", file, compressed).unwrap_err();
+        assert!(
+            matches!(err, Error::ZipArchive(ref m) if m.contains("decompression bomb")),
+            "{err}"
+        );
+        let file = archive.by_name("Contents/header.xml").unwrap();
+        let compressed = file.compressed_size();
+        assert_eq!(
+            read_entry("Contents/header.xml", file, compressed).unwrap(),
+            b"<hh:head/>"
+        );
+    }
 
     // Realistic single-line compact XML — the format real HWPX files actually use.
     // The previous string/line parser only found section0 here because find() returns

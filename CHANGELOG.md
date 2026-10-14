@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A decompression bomb is an error, not an allocation.** An HWPX part, an HWP 5 stream and an
+  HWP 3 body were inflated to their end however far they expanded, so a few kilobytes that
+  inflate to gigabytes exhausted memory and ended the process. Data that expands more than a
+  hundredfold past its first 100 KiB (or past 4 GiB) is now an error -- `ZipArchive` for an
+  HWPX part, `Decompression` for an HWP 5 or HWP 3 stream. And an HWP 3 body is read up to the
+  size its header gives instead of allocating that size first.
+
 - **Text that a Markdown reader would take for HTML stays text.** With `escape_special_chars`
   on (the default), a `<` that can open a tag or an autolink (`Vec<String>`, `<b>`) and a `&`
   that starts a character reference (`AT&amp;T`) are escaped, in paragraphs and table cells

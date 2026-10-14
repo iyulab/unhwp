@@ -7,6 +7,7 @@ use crate::error::{Error, Result};
 use crate::model::{Block, Document, InlineContent, Paragraph, Section, TextRun, TextStyle};
 use flate2::read::ZlibDecoder;
 use std::io::{Read, Seek, SeekFrom};
+use unparser_shared::inflate::InflateGuard;
 
 /// Check if byte is a valid CP949/EUC-KR lead byte (first byte of 2-byte sequence).
 /// CP949 lead byte range: 0x81-0xFE
@@ -72,10 +73,17 @@ impl BodyParser {
             reader.seek(SeekFrom::Start(self.body_offset as u64))?;
         }
 
-        // Read body data
+        // Read body data. The header's size is the file's word, not a measurement: read up to
+        // it rather than allocating it up front, and a file shorter than it says ends early.
         let body_data = if self.body_size > 0 {
-            let mut data = vec![0u8; self.body_size as usize];
-            reader.read_exact(&mut data)?;
+            let mut data = Vec::new();
+            reader
+                .by_ref()
+                .take(u64::from(self.body_size))
+                .read_to_end(&mut data)?;
+            if data.len() < self.body_size as usize {
+                return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof).into());
+            }
             data
         } else {
             // Read remaining file
@@ -227,9 +235,8 @@ fn flush_text(text_bytes: &mut Vec<u8>, style: &TextStyle, para: &mut Paragraph)
 
 /// Decompresses zlib-compressed body data.
 fn decompress_body(data: &[u8]) -> Result<Vec<u8>> {
-    let mut decoder = ZlibDecoder::new(data);
     let mut decompressed = Vec::new();
-    decoder
+    InflateGuard::new(ZlibDecoder::new(data), data.len() as u64)
         .read_to_end(&mut decompressed)
         .map_err(|e| Error::Decompression(e.to_string()))?;
     Ok(decompressed)
@@ -238,6 +245,17 @@ fn decompress_body(data: &[u8]) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A body that expands past a hundredfold is a decompression error, not an allocation.
+    #[test]
+    fn a_body_that_expands_past_a_hundredfold_is_a_decompression_error() {
+        use flate2::{write::ZlibEncoder, Compression};
+        use std::io::Write;
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&vec![0; 20 << 20]).unwrap();
+        let err = decompress_body(&encoder.finish().unwrap()).unwrap_err();
+        assert!(matches!(err, Error::Decompression(_)), "{err}");
+    }
 
     #[test]
     fn test_body_parser_simple() {

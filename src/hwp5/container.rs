@@ -22,6 +22,7 @@ use flate2::read::DeflateDecoder;
 use std::cell::RefCell;
 use std::io::{self, Cursor, Read, Seek};
 use std::path::Path;
+use unparser_shared::inflate::InflateGuard;
 
 /// OLE container wrapper for HWP 5.0 documents.
 ///
@@ -167,12 +168,12 @@ impl Hwp5Container {
     }
 }
 
-/// Decompresses a stream using raw deflate.
+/// Decompresses a stream using raw deflate, through [`InflateGuard`]: a stream that expands
+/// past what a document's data does (a decompression bomb) is a decompression error, not an
+/// allocation that ends the process.
 fn decompress_stream(data: &[u8]) -> Result<Vec<u8>> {
-    let mut decoder = DeflateDecoder::new(data);
     let mut output = Vec::new();
-
-    decoder
+    InflateGuard::new(DeflateDecoder::new(data), data.len() as u64)
         .read_to_end(&mut output)
         .map_err(|e| Error::Decompression(e.to_string()))?;
 
@@ -198,6 +199,29 @@ fn decode_utf16le(data: &[u8]) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A stream of 20 MiB of zeros deflates to about 20 KiB: past a hundredfold it is a
+    /// decompression error (a bomb), not 20 MiB allocated; ordinary text inflates whole.
+    #[test]
+    fn a_stream_that_expands_past_a_hundredfold_is_a_decompression_error() {
+        use flate2::{write::DeflateEncoder, Compression};
+        use std::io::Write;
+        let deflate = |data: &[u8]| {
+            let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
+            encoder.write_all(data).unwrap();
+            encoder.finish().unwrap()
+        };
+        let err = decompress_stream(&deflate(&vec![0; 20 << 20])).unwrap_err();
+        assert!(
+            matches!(err, Error::Decompression(ref m) if m.contains("decompression bomb")),
+            "{err}"
+        );
+        let text = "본문 ".repeat(1000);
+        assert_eq!(
+            decompress_stream(&deflate(text.as_bytes())).unwrap(),
+            text.as_bytes()
+        );
+    }
 
     /// Build a minimal CFB container holding the named streams.
     fn cfb_with_streams(names: &[&str]) -> Vec<u8> {
