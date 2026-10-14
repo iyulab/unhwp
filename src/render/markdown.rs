@@ -1032,6 +1032,8 @@ fn leading_char(item: &InlineContent) -> Option<char> {
 /// - `|` - table delimiter
 /// - `[`, `]` - text written `[x](y)` would be a link, and a line opening `[x]: y` a link
 ///   reference definition, which is not printed at all
+/// - `<` where it can open inline HTML or an autolink, and `&` where it starts a character
+///   reference -- through `unparser_shared::markdown::escape_html_syntax`.
 ///
 /// Characters that are NOT escaped (only special in specific contexts):
 /// - `()`, `{}` - only special after a link's `]`, which is always escaped
@@ -1051,7 +1053,7 @@ fn escape_markdown(s: &str) -> String {
             _ => result.push(c),
         }
     }
-    result
+    markdown::escape_html_syntax(&result)
 }
 
 /// An inline math span, `$latex$`. Inside a table cell `|` is escaped: a GFM table splits its
