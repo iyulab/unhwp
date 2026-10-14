@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "markdown"`, .NET `TableFallback.Markdown`. It stays the default. The old string
   `"simplified_markdown"` is refused with an invalid-argument error.
 
+- Requires `unparser-shared` 0.11.
+
 ### Removed
 
 - **Breaking: `TableFallback::Skip` is gone** (CLI `--table-mode skip`, C and Python `"skip"`,
