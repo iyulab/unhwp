@@ -8,6 +8,7 @@ use crate::model::{
 };
 use quick_xml::events::Event;
 use quick_xml::Reader;
+use unparser_shared::grid::{MAX_COL_SPAN, MAX_ROW_SPAN};
 
 /// Parses a section XML file.
 pub fn parse_section(xml: &str, section_index: usize, styles: &StyleRegistry) -> Result<Section> {
@@ -551,11 +552,13 @@ impl<'a> SectionParser<'a> {
 
                     // cellSpan element contains colspan/rowspan as attributes
                     if name == "cellSpan" {
+                        // A declared span is read the way HTML reads one: past the bound,
+                        // as the bound (`unparser_shared::grid`).
                         if let Some(cs) = get_attr_u32(&e, "colSpan") {
-                            colspan = cs;
+                            colspan = cs.min(MAX_COL_SPAN);
                         }
                         if let Some(rs) = get_attr_u32(&e, "rowSpan") {
-                            rowspan = rs;
+                            rowspan = rs.min(MAX_ROW_SPAN);
                         }
                     }
                 }
@@ -669,6 +672,21 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    #[test]
+    fn a_declared_cell_span_past_the_bound_is_read_as_the_bound() {
+        let xml = r#"<hs:sec xmlns:hp="x"><hp:p><hp:run><hp:tbl><hp:tr><hp:tc><hp:cellSpan colSpan="4294967295" rowSpan="4294967295"/><hp:subList><hp:p><hp:run><hp:t>a</hp:t></hp:run></hp:p></hp:subList></hp:tc></hp:tr></hp:tbl></hp:run></hp:p></hs:sec>"#;
+        let section = parse_section(xml, 0, &StyleRegistry::new()).expect("section must parse");
+        let cell = section
+            .content
+            .iter()
+            .find_map(|b| match b {
+                Block::Table(t) => t.rows.first().and_then(|r| r.cells.first()),
+                _ => None,
+            })
+            .expect("a table cell");
+        assert_eq!((cell.colspan, cell.rowspan), (MAX_COL_SPAN, MAX_ROW_SPAN));
     }
 
     #[test]

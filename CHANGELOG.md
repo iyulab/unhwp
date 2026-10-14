@@ -15,6 +15,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cells, and an empty row for every declared row. Cells are now read in position order, and
   the table has the rows its cells reach (a row covered only by a span from above stays).
   Rows below the last one any cell reaches are no longer emitted.
+- **A declared cell span no longer sizes the rendered table.** An HWPX `cellSpan` takes a
+  32-bit `colSpan`, an HWP 5.0 cell a 16-bit one, and the Markdown renderer laid its grid out
+  as wide as the spans reach: one cell declaring billions of columns allocated that many. A
+  span is now read the way HTML reads one -- past 1000 columns or 65 534 rows, as that bound.
+
+### Changed
+
+- Requires `unparser-shared` 0.12: a cell span past HTML's bounds (1000 columns, 65 534
+  rows) is read as the bound when a table is laid out.
 
 ## [0.21.0] - 2026-10-15
 

@@ -6,6 +6,7 @@ use crate::model::{
     ImageRef, InlineContent, Paragraph, ParagraphStyle, Section, StyleRegistry, Table, TableCell,
     TableRow, TextRun, TextStyle,
 };
+use unparser_shared::grid::{MAX_COL_SPAN, MAX_ROW_SPAN};
 
 /// Control characters in HWP text.
 /// Characters in range 0x0000-0x001F have special meanings.
@@ -411,16 +412,13 @@ fn parse_cell_content(
         row = u16::from_le_bytes([data[10], data[11]]);
 
         // Parse colspan and rowspan
-        colspan = u16::from_le_bytes([data[12], data[13]]) as u32;
-        rowspan = u16::from_le_bytes([data[14], data[15]]) as u32;
+        colspan = u32::from(u16::from_le_bytes([data[12], data[13]]));
+        rowspan = u32::from(u16::from_le_bytes([data[14], data[15]]));
 
-        // Ensure minimum values of 1
-        if colspan == 0 {
-            colspan = 1;
-        }
-        if rowspan == 0 {
-            rowspan = 1;
-        }
+        // At least 1, and past the bound read as the bound, the way HTML reads a span
+        // (`unparser_shared::grid`): the renderer lays its grid out as wide as the spans reach.
+        colspan = colspan.clamp(1, MAX_COL_SPAN);
+        rowspan = rowspan.clamp(1, MAX_ROW_SPAN);
     }
 
     // Parse paragraphs within the cell
@@ -942,6 +940,19 @@ mod tests {
             records.push(record(72, 2, header));
         }
         records
+    }
+
+    #[test]
+    fn a_declared_cell_span_past_the_bound_is_read_as_the_bound() {
+        let mut records = table_records(2, 2, &[(0, 0, u16::MAX)]);
+        let mut header = records[1].data.clone();
+        header[12..14].copy_from_slice(&u16::MAX.to_le_bytes());
+        records[1] = record(72, 2, header);
+        let table = parse_table_records(&records, &StyleRegistry::new(), &mut 0)
+            .unwrap()
+            .unwrap();
+        let cell = &table.rows[0].cells[0];
+        assert_eq!((cell.colspan, cell.rowspan), (MAX_COL_SPAN, MAX_ROW_SPAN));
     }
 
     fn row_lengths(table: &Table) -> Vec<usize> {
