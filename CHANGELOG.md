@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **An HWP 5.0 table no longer allocates the size it declares.** The table record states its
+  row and column counts as two 16-bit numbers, and the reader built a grid of that size
+  before placing the cells -- up to 65 535 x 65 535 slots for a table holding a handful of
+  cells, and an empty row for every declared row. Cells are now read in position order, and
+  the table has the rows its cells reach (a row covered only by a span from above stays).
+  Rows below the last one any cell reaches are no longer emitted.
+
 ## [0.21.0] - 2026-10-15
 
 ### Changed

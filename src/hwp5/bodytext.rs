@@ -289,56 +289,53 @@ fn parse_table_records(
         }
     }
 
-    // Build a 2D grid initialized with None
-    let mut grid: Vec<Vec<Option<usize>>> = vec![vec![None; col_count]; row_count];
-
-    // Place each cell at its row/col position
-    for (cell_idx, cell_data) in cells_data.iter().enumerate() {
-        let r = cell_data.row as usize;
-        let c = cell_data.col as usize;
-
-        // Check bounds
+    // Read the cells in position order. The declared size bounds the positions but sizes
+    // nothing: it is two u16s in the record, and a grid allocated from it would cost up to
+    // 65 535 × 65 535 slots for a table holding a handful of cells. Rows run to the last one a
+    // cell reaches — its own row or one its row span covers — since a row covered entirely by
+    // spans from above is still a row; rows no cell reaches hold nothing.
+    let mut placed: Vec<(usize, usize, usize)> = Vec::with_capacity(cells_data.len());
+    for (idx, cell) in cells_data.iter().enumerate() {
+        let (r, c) = (cell.row as usize, cell.col as usize);
         if r < row_count && c < col_count {
-            grid[r][c] = Some(cell_idx);
-
-            // Mark cells covered by rowspan/colspan as occupied (with None)
-            // These will remain None, indicating they're part of a merged cell
-            for dr in 0..cell_data.rowspan as usize {
-                for dc in 0..cell_data.colspan as usize {
-                    if dr == 0 && dc == 0 {
-                        continue; // Skip the cell itself
-                    }
-                    let nr = r + dr;
-                    let nc = c + dc;
-                    if nr < row_count && nc < col_count {
-                        // Leave as None (already initialized)
-                    }
-                }
-            }
+            placed.push((r, c, idx));
         }
     }
+    // Stable, so two cells claiming one position stay in record order; the later one wins.
+    placed.sort_by_key(|&(r, c, _)| (r, c));
+    let mut cells: Vec<(usize, usize)> = Vec::with_capacity(placed.len());
+    for (r, c, idx) in placed {
+        match cells.last_mut() {
+            Some(last)
+                if cells_data[last.1].row as usize == r && cells_data[last.1].col as usize == c =>
+            {
+                last.1 = idx;
+            }
+            _ => cells.push((r, idx)),
+        }
+    }
+    let rows = cells
+        .iter()
+        .map(|&(r, idx)| r + cells_data[idx].rowspan.max(1) as usize)
+        .max()
+        .unwrap_or(0)
+        .min(row_count);
 
-    // Build the table from the grid
     let mut table = Table::new();
-
-    for (row_idx, grid_row) in grid.iter().enumerate() {
+    let mut next = cells.into_iter().peekable();
+    for row_idx in 0..rows {
         let mut row = TableRow::new();
         row.is_header = row_idx == 0;
-
-        for &cell_idx_opt in grid_row {
-            if let Some(cell_idx) = cell_idx_opt {
-                let cell_data = &cells_data[cell_idx];
-                let cell = TableCell {
-                    content: cell_data.paragraphs.clone(),
-                    rowspan: cell_data.rowspan,
-                    colspan: cell_data.colspan,
-                    ..Default::default()
-                };
-                row.cells.push(cell);
-            } else {
-                // Empty cell (part of a merged region or missing data)
-                // Skip it - the colspan/rowspan from the parent cell handles this
-            }
+        // A position no cell starts at is covered by a span, or missing; the spans of the
+        // cells that are there account for it.
+        while let Some((_, idx)) = next.next_if(|&(r, _)| r == row_idx) {
+            let cell_data = &cells_data[idx];
+            row.cells.push(TableCell {
+                content: cell_data.paragraphs.clone(),
+                rowspan: cell_data.rowspan,
+                colspan: cell_data.colspan,
+                ..Default::default()
+            });
         }
         table.rows.push(row);
     }
@@ -914,8 +911,73 @@ fn parse_char_shape_positions(
 
 #[cfg(test)]
 mod tests {
+    use super::super::record::RecordHeader;
     use super::*;
     use crate::model::{InlineContent, StyleRegistry, TextStyle};
+
+    fn record(tag: u16, level: u16, data: Vec<u8>) -> Record {
+        Record {
+            header: RecordHeader {
+                tag_id: tag,
+                level,
+                size: data.len() as u32,
+            },
+            data,
+            offset: 0,
+        }
+    }
+
+    /// A table record declaring `rows` × `cols`, then one cell per `(row, col, rowspan)`.
+    fn table_records(rows: u16, cols: u16, cells: &[(u16, u16, u16)]) -> Vec<Record> {
+        let mut table = vec![0u8; 14];
+        table[4..6].copy_from_slice(&rows.to_le_bytes());
+        table[6..8].copy_from_slice(&cols.to_le_bytes());
+        let mut records = vec![record(77, 1, table)];
+        for &(row, col, rowspan) in cells {
+            let mut header = vec![0u8; 16];
+            header[8..10].copy_from_slice(&col.to_le_bytes());
+            header[10..12].copy_from_slice(&row.to_le_bytes());
+            header[12..14].copy_from_slice(&1u16.to_le_bytes());
+            header[14..16].copy_from_slice(&rowspan.to_le_bytes());
+            records.push(record(72, 2, header));
+        }
+        records
+    }
+
+    fn row_lengths(table: &Table) -> Vec<usize> {
+        table.rows.iter().map(|r| r.cells.len()).collect()
+    }
+
+    #[test]
+    fn a_table_declaring_the_largest_size_costs_only_its_cells() {
+        let records = table_records(u16::MAX, u16::MAX, &[(0, 0, 1), (0, 1, 1)]);
+        let table = parse_table_records(&records, &StyleRegistry::new(), &mut 0)
+            .unwrap()
+            .unwrap();
+        assert_eq!(row_lengths(&table), [2]);
+    }
+
+    #[test]
+    fn cells_are_read_in_position_order_and_a_spanned_row_stays() {
+        // Written out of order; the cell at (0, 0) spans rows 0–2, and row 2 has no cell of
+        // its own but is still inside that span. Row 4 (declared) is reached by nothing.
+        let records = table_records(5, 2, &[(1, 1, 1), (0, 1, 1), (0, 0, 3), (3, 0, 1)]);
+        let table = parse_table_records(&records, &StyleRegistry::new(), &mut 0)
+            .unwrap()
+            .unwrap();
+        assert_eq!(row_lengths(&table), [2, 1, 0, 1]);
+        assert_eq!(table.rows[0].cells[0].rowspan, 3);
+    }
+
+    #[test]
+    fn a_cell_outside_the_declared_size_is_dropped_and_a_repeated_position_keeps_the_later() {
+        let records = table_records(2, 2, &[(0, 0, 1), (5, 0, 1), (0, 0, 2)]);
+        let table = parse_table_records(&records, &StyleRegistry::new(), &mut 0)
+            .unwrap()
+            .unwrap();
+        assert_eq!(row_lengths(&table), [1, 0]);
+        assert_eq!(table.rows[0].cells[0].rowspan, 2);
+    }
 
     #[test]
     fn test_split_text_run_single_style() {
