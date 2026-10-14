@@ -1,0 +1,33 @@
+[package]
+name = "unhwp-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+unhwp = { path = ".." }
+# The `hwpx` target rewrites the fixture package around the fuzzed section; entries are
+# stored on the way out and read back with deflate.
+zip = { version = "9.0", default-features = false, features = ["deflate"] }
+
+# Not a member of the library's workspace: built with `cargo fuzz` on nightly only.
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "load"
+path = "fuzz_targets/load.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "hwpx"
+path = "fuzz_targets/hwpx.rs"
+test = false
+doc = false
+bench = false
