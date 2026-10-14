@@ -448,6 +448,7 @@ impl MarkdownRenderer {
         // heading lines — while still being preserved (zero data loss).
         let mut floating_images: Vec<&ImageRef> = Vec::new();
         let mut need_strip = strip_bullet;
+        let body_start = output.len();
         for (i, item) in para.content.iter().enumerate() {
             let after = para.content.get(i + 1).and_then(leading_char);
             if let InlineContent::Image(img) = item {
@@ -468,6 +469,14 @@ impl MarkdownRenderer {
                 }
             }
             self.render_inline(item, output, after);
+        }
+        // The paragraph's own markers -- a heading's `#`, a list item's, the prefix a bullet
+        // character maps to -- are written above; text that merely starts like one (`1. `,
+        // `* `, `# ` in a paragraph the document does not number or style) is the document's
+        // and stays text. A heading's text opens no block.
+        if self.options.escape_special_chars && !should_apply_heading {
+            let body = markdown::escape_block_starts(&output[body_start..]);
+            output.replace_range(body_start.., &body);
         }
 
         // End paragraph
@@ -1482,6 +1491,36 @@ mod tests {
         // Brackets are text: `[x](y)` would be a link, a line `[x]: y` a definition.
         assert_eq!(escape_markdown("[link]"), r"\[link\]");
         assert_eq!(escape_markdown("a|b|c"), "a\\|b\\|c");
+    }
+
+    /// A paragraph the document does not number or style whose text starts like a list item,
+    /// a heading or a quote stays a paragraph: the marker is escaped. With escaping off the
+    /// text is written as it is.
+    #[test]
+    fn text_that_starts_like_a_block_marker_stays_text() {
+        let render = |text: &str, escape: bool| {
+            let mut doc = Document::new();
+            let mut section = Section::new(0);
+            section.push_paragraph(Paragraph::text(text));
+            doc.sections.push(section);
+            let options = RenderOptions {
+                escape_special_chars: escape,
+                ..RenderOptions::default()
+            };
+            MarkdownRenderer::new(options).render(&doc).unwrap()
+        };
+        for (text, md) in [
+            ("1. 목적", "1\\. 목적"),
+            ("# 해시로 시작", "\\# 해시로 시작"),
+            ("> 인용처럼", "\\> 인용처럼"),
+            ("- 대시로 시작", "\\- 대시로 시작"),
+        ] {
+            let out = render(text, true);
+            assert!(out.contains(md), "{text}: {out:?}");
+        }
+        assert!(render("1. 목적", false).contains("1. 목적"));
+        // A bullet character the renderer maps to a list marker is still the item's marker.
+        assert!(render("● 항목", true).contains("- 항목"));
     }
 
     #[test]

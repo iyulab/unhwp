@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A paragraph whose text starts like a list item, a heading or a quote stays a paragraph.**
+  With `escape_special_chars` on (the default), a paragraph the document does not number or
+  style but whose text begins `1. `, `* `, `- `, `# ` or `> ` -- hand-typed numbering such as
+  `1. 목적` -- was written as is and read as a list item, a heading or a block quote. The
+  marker is now escaped (`1\.`, `\*`, `\#`, …) at the start of each of its lines. A bullet
+  character the renderer maps to a list marker (`●`, `□`, …) is still written as one, and a
+  heading's text is left as it is.
+
 ## [0.20.0] - 2026-10-13
 
 ### Added
