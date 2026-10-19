@@ -51,6 +51,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fell under it. The paragraph that opens the document is now a heading when it is also the
   largest text in the document, centred or not; a signature at the end stays text.
 
+- **An HWP 5.0 style named the wrong paragraph and character shape.** A style record holds
+  its next style in one byte, and the reader took two, so the paragraph and character shape
+  IDs after it were each read one byte off (shape 10 as 2816) for every style. The outline
+  level a style such as a chapter or section title brings is now found, and more numbered
+  section titles are headings.
+
 ### Changed
 
 - `ParagraphStyle` gains `head`, the head kind, level and definition of a numbered, outlined

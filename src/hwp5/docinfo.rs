@@ -535,7 +535,7 @@ fn parse_bullet(record: &Record) -> Option<char> {
 /// - name_en_len (u16): Length of English style name
 /// - name_en (name_en_len * 2 bytes): English style name
 /// - properties (1 byte): Style type (bit 0: 0=paragraph, 1=character)
-/// - next_style_id (u16): ID of next style
+/// - next_style_id (u8): ID of next style
 /// - lang_id (u16): Language ID
 /// - para_shape_id (u16): Reference to ParaShape
 /// - char_shape_id (u16): Reference to CharShape
@@ -582,9 +582,10 @@ fn parse_style(record: &Record) -> Result<StyleData> {
         0
     };
 
-    let next_style_id = if offset + 2 <= data.len() {
-        let id = u16::from_le_bytes([data[offset], data[offset + 1]]);
-        offset += 2;
+    // The next style is one byte, not two: the language ID follows it at the next byte.
+    let next_style_id = if offset < data.len() {
+        let id = u16::from(data[offset]);
+        offset += 1;
         id
     } else {
         0
@@ -881,5 +882,25 @@ mod tests {
         assert!(registry.numbering(2).unwrap().levels.is_empty());
         assert_eq!(registry.numbering(3).unwrap().levels.len(), 7);
         assert_eq!(registry.bullet(1), Some('■'));
+    }
+
+    /// A style record: the Korean and English names, then properties (1 byte), next style
+    /// (1 byte), language (2), paragraph shape (2), character shape (2) and a trailing lock
+    /// word -- the bytes an editor writes for its default style ("바탕글" / "Normal",
+    /// paragraph shape 10, character shape 11).
+    #[test]
+    fn a_style_record_names_its_paragraph_and_character_shape() {
+        let mut data = Vec::new();
+        for name in ["바탕글", "Normal"] {
+            let units: Vec<u16> = name.encode_utf16().collect();
+            data.extend_from_slice(&(units.len() as u16).to_le_bytes());
+            data.extend(units.iter().flat_map(|u| u.to_le_bytes()));
+        }
+        data.extend_from_slice(&unhex("000012040a000b000000"));
+        let style = parse_style(&record_of(TagId::Style, data)).unwrap();
+        assert_eq!(style.name, "바탕글");
+        assert_eq!(style.name_en, "Normal");
+        assert_eq!((style.para_shape_id, style.char_shape_id), (10, 11));
+        assert_eq!(style.lang_id, 0x0412);
     }
 }
