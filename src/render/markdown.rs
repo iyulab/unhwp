@@ -5,7 +5,7 @@ use super::{RenderOptions, TableFallback};
 use crate::error::Result;
 use crate::model::{
     Alignment, Block, Document, ImageRef, InlineContent, ListStyle, Paragraph, Section,
-    StyleRegistry, Table, TableCell, TextRun,
+    StyleRegistry, Table, TableCell, TableRow, TextRun,
 };
 
 use std::cell::{Cell, RefCell};
@@ -643,8 +643,24 @@ impl MarkdownRenderer {
         markdown::image(alt, &path, in_table_cell)
     }
 
-    /// Renders a table.
+    /// Renders a table, then each table nested in its cells as a block of its own.
+    ///
+    /// Markdown has no table inside a table cell, so the cell holds its own text and a nested
+    /// table follows the one that holds it -- depth first, the order
+    /// [`Table::with_nested_tables`] lists them in.
     fn render_table(&self, table: &Table, output: &mut String) {
+        self.render_table_body(table, output);
+        for row in &table.rows {
+            for cell in &row.cells {
+                for nested in &cell.nested_tables {
+                    self.render_table(nested, output);
+                }
+            }
+        }
+    }
+
+    /// Renders a table without the tables nested in its cells.
+    fn render_table_body(&self, table: &Table, output: &mut String) {
         if table.rows.is_empty() {
             return;
         }
@@ -677,58 +693,21 @@ impl MarkdownRenderer {
             return;
         }
 
-        // The grid width, merges included — a vertical merge pushes the cells of the rows
-        // below it rightward, so a row's spans do not add up to it ([`Table::column_count`]).
+        // A table whose every row is one cell spanning the whole width holds no columns: it
+        // is a stack of text blocks (a boxed title, a run of notes), written as such.
         let total_cols = table.column_count();
-
-        // Optimization: extract full-span rows (colspan == total_cols) as plain text blocks
-        // and check empty cell ratio for the remaining rows.
-        if total_cols > 0 {
-            let (full_span_rows, normal_rows): (Vec<_>, Vec<_>) =
-                table.rows.iter().enumerate().partition(|(_, row)| {
-                    row.cells.len() == 1 && row.cells[0].colspan as usize >= total_cols
-                });
-
-            // If all rows are full-span, render as plain text
-            if normal_rows.is_empty() {
-                for (_, row) in &full_span_rows {
-                    let text = self.render_cell_content(&row.cells[0]);
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty() {
-                        output.push_str(trimmed);
-                        output.push_str("\n\n");
-                    }
-                }
-                return;
-            }
-
-            // Calculate empty cell ratio in normal (non-full-span) rows
-            let mut total_cells = 0usize;
-            let mut empty_cells = 0usize;
-            for (_, row) in &normal_rows {
-                for cell in &row.cells {
-                    let expanded = cell.colspan as usize;
-                    total_cells += expanded;
-                    let text = cell.plain_text();
-                    if text.trim().is_empty() {
-                        empty_cells += expanded;
-                    }
+        let is_full_span =
+            |row: &TableRow| row.cells.len() == 1 && row.cells[0].colspan as usize >= total_cols;
+        if total_cols > 0 && table.rows.iter().all(is_full_span) {
+            for row in &table.rows {
+                let text = self.render_cell_content(&row.cells[0]);
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    output.push_str(trimmed);
+                    output.push_str("\n\n");
                 }
             }
-
-            // If empty cell ratio >= 60%, fall back to structured text rendering
-            // This typically indicates form-style tables (신청서 양식) where
-            // markdown table format produces excessive empty pipe columns
-            let empty_ratio = if total_cells > 0 {
-                empty_cells as f64 / total_cells as f64
-            } else {
-                0.0
-            };
-
-            if empty_ratio >= 0.6 {
-                self.render_table_structured_text(table, total_cols, output);
-                return;
-            }
+            return;
         }
 
         // Render all tables as markdown, including those with rowspan
@@ -870,39 +849,6 @@ impl MarkdownRenderer {
                     text.clone()
                 };
                 output.push_str(&markdown::link(&label, url, None, in_table_cell));
-            }
-        }
-    }
-
-    /// Renders a sparse table (high empty cell ratio) as structured text.
-    ///
-    /// Full-span rows (colspan == total_cols) are rendered as standalone text blocks.
-    /// Normal rows render non-empty cells as "key: value" or comma-separated items.
-    fn render_table_structured_text(&self, table: &Table, total_cols: usize, output: &mut String) {
-        for row in &table.rows {
-            let is_full_span = row.cells.len() == 1 && row.cells[0].colspan as usize >= total_cols;
-
-            if is_full_span {
-                let text = self.render_cell_content(&row.cells[0]);
-                let trimmed = text.trim();
-                if !trimmed.is_empty() {
-                    output.push_str(trimmed);
-                    output.push_str("\n\n");
-                }
-            } else {
-                // Collect non-empty cells
-                let texts: Vec<String> = row
-                    .cells
-                    .iter()
-                    .map(|cell| self.render_cell_content(cell))
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-
-                if !texts.is_empty() {
-                    output.push_str(&texts.join(" | "));
-                    output.push_str("\n\n");
-                }
             }
         }
     }
@@ -2082,8 +2028,9 @@ mod table_cell_content_tests {
     }
 
     #[test]
-    fn test_sparse_table_falls_back_to_text() {
-        // Table with >60% empty cells should fall back to structured text
+    fn a_form_table_mostly_empty_keeps_its_columns() {
+        // A form-style table holds mostly empty cells (the blanks to fill in). It stays a
+        // table: reading it as lines of text loses which value sits under which column.
         let mut doc = Document::new();
         let mut section = Section::new(0);
 
@@ -2118,17 +2065,91 @@ mod table_cell_content_tests {
         let renderer = MarkdownRenderer::new(RenderOptions::default());
         let result = renderer.render(&doc).unwrap();
 
-        // Should NOT contain pipe-style table (too sparse)
         assert!(
-            !result.contains(":---"),
-            "Sparse table should not use markdown table format, got: {}",
-            result
+            result.contains(":---"),
+            "a sparse table is still a Markdown table, got: {result}"
         );
-        // Should contain the text content
+        // The value sits in its own column, the blanks after it keep theirs.
+        assert!(result.contains("| 이름 | 홍길동 |  |  |"), "got: {result}");
+        assert!(result.contains("| 연락처 |  |  |  |"), "got: {result}");
+    }
+
+    /// A one-cell table holding `text`, its cell holding `nested`.
+    fn holder(text: &str, nested: Vec<Table>) -> Table {
+        let mut cell = TableCell::text(text);
+        cell.nested_tables = nested;
+        let mut row = TableRow::new();
+        row.cells = vec![cell, TableCell::text("side")];
+        let mut other = TableRow::new();
+        other.cells = vec![TableCell::text("below"), TableCell::text("value")];
+        Table {
+            rows: vec![row, other],
+            column_widths: vec![],
+            has_header: true,
+        }
+    }
+
+    fn render_table_alone(table: Table) -> String {
+        let mut doc = Document::new();
+        let mut section = Section::new(0);
+        section.content.push(Block::Table(table));
+        doc.sections.push(section);
+        MarkdownRenderer::new(RenderOptions::default())
+            .render(&doc)
+            .unwrap()
+    }
+
+    #[test]
+    fn a_nested_table_is_a_table_after_the_one_that_holds_it() {
+        let mut inner = Table::new();
+        for (a, b) in [("col A", "col B"), ("a1", "b1")] {
+            let mut row = TableRow::new();
+            row.cells = vec![TableCell::text(a), TableCell::text(b)];
+            inner.rows.push(row);
+        }
+        let result = render_table_alone(holder("outer", vec![inner]));
+
+        // The holder's cell keeps its own text only; the nested table is not folded into it.
+        assert!(result.contains("| outer |"), "got: {result}");
+        assert!(!result.contains("outer<br>"), "got: {result}");
+        let holder_at = result.find("| outer |").unwrap();
+        let nested_at = result
+            .find("| col A | col B |")
+            .expect("nested table header");
         assert!(
-            result.contains("홍길동"),
-            "Text content should be preserved, got: {}",
-            result
+            holder_at < nested_at,
+            "nested table follows its holder: {result}"
+        );
+        assert!(result.contains("| a1 | b1 |"), "got: {result}");
+    }
+
+    #[test]
+    fn nested_tables_render_depth_first_in_reading_order() {
+        let leaf = |text: &str| {
+            let mut row = TableRow::new();
+            row.cells = vec![TableCell::text(text), TableCell::text("x")];
+            let mut row2 = TableRow::new();
+            row2.cells = vec![TableCell::text("y"), TableCell::text("z")];
+            Table {
+                rows: vec![row, row2],
+                column_widths: vec![],
+                has_header: true,
+            }
+        };
+        let middle = holder("middle", vec![leaf("leaf")]);
+        let second = leaf("second");
+        let result = render_table_alone(holder("top", vec![middle, second]));
+        let order: Vec<usize> = ["| top |", "| middle |", "| leaf |", "| second |"]
+            .iter()
+            .map(|needle| {
+                result
+                    .find(needle)
+                    .unwrap_or_else(|| panic!("{needle} in {result}"))
+            })
+            .collect();
+        assert!(
+            order.windows(2).all(|w| w[0] < w[1]),
+            "order {order:?} in {result}"
         );
     }
 

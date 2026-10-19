@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **A table nested in a table cell is a table, not text.** The HWP 5.0 reader folded every
+  paragraph of a nested table into the cell that held it, so the nested table's rows and
+  columns ran together as lines of one cell (`a<br>b<br>c...`); the HWPX reader dropped the
+  nested table altogether. Both now keep it as `TableCell::nested_tables`, the shape the
+  sibling parsers use. The Markdown renderer writes each nested table as a table of its own
+  after the one that holds it (depth first), `Document::tables()` lists it right after its
+  holder -- so `unhwp tables` writes it as its own CSV -- and `Document::plain_text()` reads
+  its cells after the holder's. A table nested more than `MAX_TABLE_NESTING` (64) deep is read
+  as paragraphs of its cell (HWP 5.0) or skipped (HWPX), so a hostile document cannot drive
+  the recursion without bound.
+- **A form-style table keeps its columns in Markdown.** A table whose cells were mostly empty
+  (60% or more) was written as lines of `a | b` text with no header, no separator and no
+  column positions, so a value could no longer be tied to the column it sat under. It is now
+  written as a Markdown table like any other; a table whose every row is one full-width cell
+  is still written as text blocks.
+
+### Changed
+
+- `TableCell` gains a public `nested_tables` field (empty tables are omitted from JSON). Code
+  that builds a `TableCell` with a struct literal must add it (`..Default::default()` does).
+
 ## [0.22.0] - 2026-10-15
 
 ### Fixed

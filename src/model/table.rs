@@ -4,6 +4,12 @@ use super::{Alignment, Paragraph};
 use serde::Serialize;
 use unparser_shared::csv;
 
+/// How many tables deep the parsers read tables nested in cells. The bound keeps the
+/// recursion over a hostile document's nesting finite (the HWP 5.0 record level alone allows
+/// hundreds of levels); the format sets no limit of its own. Past it, an HWP 5.0 nested
+/// table is read as paragraphs of the cell that holds it and an HWPX one is skipped.
+pub const MAX_TABLE_NESTING: usize = 64;
+
 /// A table in the document.
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Table {
@@ -61,6 +67,25 @@ impl Table {
                 .iter()
                 .map(|cell| unparser_shared::grid::Span::new(cell.rowspan, cell.colspan))
         }))
+    }
+
+    /// This table, then every table nested in its cells, depth first -- the order they are
+    /// read in.
+    pub fn with_nested_tables(&self) -> Vec<&Table> {
+        let mut found = Vec::new();
+        self.collect_with_nested(&mut found);
+        found
+    }
+
+    fn collect_with_nested<'a>(&'a self, out: &mut Vec<&'a Table>) {
+        out.push(self);
+        for row in &self.rows {
+            for cell in &row.cells {
+                for nested in &cell.nested_tables {
+                    nested.collect_with_nested(out);
+                }
+            }
+        }
     }
 
     /// Returns true if this table has any merged cells.
@@ -151,6 +176,12 @@ impl TableRow {
 pub struct TableCell {
     /// Content paragraphs within this cell
     pub content: Vec<Paragraph>,
+    /// Tables nested in this cell, in reading order. They are tables of their own, not
+    /// paragraphs of the cell: [`TableCell::plain_text`] and [`Table::to_csv`] leave them out,
+    /// [`Document::tables`](crate::model::Document::tables) lists each right after the table
+    /// that holds it, and the Markdown renderer writes each as a block after that table.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub nested_tables: Vec<Table>,
     /// Number of rows this cell spans (default: 1)
     pub rowspan: u32,
     /// Number of columns this cell spans (default: 1)

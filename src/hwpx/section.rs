@@ -4,7 +4,7 @@ use super::xml::{decode_text, resolve_general_ref};
 use crate::error::Result;
 use crate::model::{
     Block, Equation, ImageRef, InlineContent, Paragraph, ParagraphStyle, Section, StyleRegistry,
-    Table, TableCell, TableRow, TextRun,
+    Table, TableCell, TableRow, TextRun, MAX_TABLE_NESTING,
 };
 use quick_xml::events::Event;
 use quick_xml::Reader;
@@ -39,6 +39,8 @@ struct CellAttrs;
 struct SectionParser<'a> {
     reader: Reader<&'a [u8]>,
     styles: &'a StyleRegistry,
+    /// How many tables deep the parser is (0 outside any table).
+    table_depth: usize,
 }
 
 impl<'a> SectionParser<'a> {
@@ -54,7 +56,11 @@ impl<'a> SectionParser<'a> {
         // explicitly below.
         reader.config_mut().trim_text(false);
 
-        Self { reader, styles }
+        Self {
+            reader,
+            styles,
+            table_depth: 0,
+        }
     }
 
     fn parse(&mut self, section: &mut Section) -> Result<()> {
@@ -72,16 +78,19 @@ impl<'a> SectionParser<'a> {
                                 style_id: get_attr_u32(&e, "styleIDRef"),
                             };
                             buf.clear();
-                            let para = self.parse_paragraph(attrs, Some(section))?;
+                            let (para, tables) = self.parse_paragraph(attrs)?;
                             // Don't filter empty paragraphs here — let the renderer
                             // decide based on include_empty_paragraphs option.
                             // This matches HWP5 behavior for consistency.
                             section.content.push(Block::Paragraph(para));
+                            // A table anchored in the paragraph follows it.
+                            section.content.extend(tables.into_iter().map(Block::Table));
                         }
                         "tbl" => {
                             buf.clear();
-                            let table = self.parse_table()?;
-                            section.content.push(Block::Table(table));
+                            if let Some(table) = self.parse_table()? {
+                                section.content.push(Block::Table(table));
+                            }
                         }
                         _ => {}
                     }
@@ -96,12 +105,8 @@ impl<'a> SectionParser<'a> {
         Ok(())
     }
 
-    /// Parses a <hp:p> paragraph element.
-    fn parse_paragraph(
-        &mut self,
-        attrs: ParaAttrs,
-        section: Option<&mut Section>,
-    ) -> Result<Paragraph> {
+    /// Parses a <hp:p> paragraph element, returning it with the tables anchored in it.
+    fn parse_paragraph(&mut self, attrs: ParaAttrs) -> Result<(Paragraph, Vec<Table>)> {
         // Build paragraph style from references
         let mut para_style = ParagraphStyle::default();
 
@@ -122,7 +127,7 @@ impl<'a> SectionParser<'a> {
         let mut paragraph = Paragraph::with_style(para_style);
         let mut buf = Vec::new();
 
-        // Collect tables found in runs (to add to section after paragraph)
+        // Tables found in runs and controls; the caller places them
         let mut tables_found: Vec<Table> = Vec::new();
 
         // Parse paragraph content
@@ -169,14 +174,7 @@ impl<'a> SectionParser<'a> {
             buf.clear();
         }
 
-        // Add any tables found to section
-        if let Some(sec) = section {
-            for table in tables_found {
-                sec.content.push(Block::Table(table));
-            }
-        }
-
-        Ok(paragraph)
+        Ok((paragraph, tables_found))
     }
 
     /// Parses a <hp:run> text run element, returning the text run and any images found.
@@ -224,8 +222,7 @@ impl<'a> SectionParser<'a> {
                     } else if name == "tbl" {
                         // Table inside run - parse and collect
                         buf.clear();
-                        let table = self.parse_table()?;
-                        tables.push(table);
+                        tables.extend(self.parse_table()?);
                     }
                 }
                 Ok(Event::Empty(e)) => {
@@ -313,8 +310,7 @@ impl<'a> SectionParser<'a> {
                         "tbl" => {
                             // Table inside control - parse and collect
                             buf.clear();
-                            let table = self.parse_table()?;
-                            tables.push(table);
+                            tables.extend(self.parse_table()?);
                         }
                         "img" if in_pic => {
                             // Look for binaryItemIDRef attribute in <hc:img> element
@@ -453,7 +449,20 @@ impl<'a> SectionParser<'a> {
     }
 
     /// Parses a <hp:tbl> table element.
-    fn parse_table(&mut self) -> Result<Table> {
+    fn parse_table(&mut self) -> Result<Option<Table>> {
+        // A table nested past the bound is skipped, not read: the recursion over a hostile
+        // document's element nesting stays finite.
+        if self.table_depth >= MAX_TABLE_NESTING {
+            skip_element(&mut self.reader)?;
+            return Ok(None);
+        }
+        self.table_depth += 1;
+        let table = self.parse_table_inner();
+        self.table_depth -= 1;
+        table.map(Some)
+    }
+
+    fn parse_table_inner(&mut self) -> Result<Table> {
         let mut table = Table::new();
         let mut buf = Vec::new();
 
@@ -526,6 +535,7 @@ impl<'a> SectionParser<'a> {
         let mut rowspan: u32 = 1;
         let mut colspan: u32 = 1;
         let mut paragraphs: Vec<Paragraph> = Vec::new();
+        let mut nested_tables: Vec<Table> = Vec::new();
         let mut buf = Vec::new();
 
         loop {
@@ -540,11 +550,12 @@ impl<'a> SectionParser<'a> {
                             style_id: get_attr_u32(&e, "styleIDRef"),
                         };
                         buf.clear();
-                        // Pass None for section since we're inside a table cell
-                        let para = self.parse_paragraph(para_attrs, None)?;
+                        let (para, tables) = self.parse_paragraph(para_attrs)?;
                         // Don't filter empty paragraphs here — renderer handles it.
                         // This matches HWP5 cell parsing behavior.
                         paragraphs.push(para);
+                        // A table anchored in a cell's paragraph is nested in the cell.
+                        nested_tables.extend(tables);
                     }
                 }
                 Ok(Event::Empty(e)) => {
@@ -577,6 +588,7 @@ impl<'a> SectionParser<'a> {
 
         let mut cell = TableCell::merged(rowspan, colspan);
         cell.content = paragraphs;
+        cell.nested_tables = nested_tables;
         Ok(cell)
     }
 }
@@ -687,6 +699,71 @@ mod tests {
             })
             .expect("a table cell");
         assert_eq!((cell.colspan, cell.rowspan), (MAX_COL_SPAN, MAX_ROW_SPAN));
+    }
+
+    /// A cell `text` with, after it, a paragraph anchoring `inner` (a `<hp:tbl>` as XML).
+    fn cell_xml(text: &str, inner: &str) -> String {
+        format!(
+            "<hp:tc><hp:subList><hp:p><hp:run><hp:t>{text}</hp:t></hp:run></hp:p>\
+             <hp:p><hp:run>{inner}</hp:run></hp:p></hp:subList></hp:tc>"
+        )
+    }
+
+    fn table_of(section: &Section) -> &Table {
+        section
+            .content
+            .iter()
+            .find_map(|b| match b {
+                Block::Table(t) => Some(t),
+                _ => None,
+            })
+            .expect("a table")
+    }
+
+    #[test]
+    fn a_table_nested_in_a_cell_is_kept_as_a_table_of_the_cell() {
+        let inner = "<hp:tbl><hp:tr><hp:tc><hp:subList><hp:p><hp:run><hp:t>inner</hp:t></hp:run></hp:p></hp:subList></hp:tc></hp:tr></hp:tbl>";
+        let xml = format!(
+            "<hs:sec xmlns:hp=\"x\"><hp:p><hp:run><hp:tbl><hp:tr>{}<hp:tc><hp:subList><hp:p><hp:run><hp:t>beside</hp:t></hp:run></hp:p></hp:subList></hp:tc></hp:tr></hp:tbl></hp:run></hp:p></hs:sec>",
+            cell_xml("outer", inner)
+        );
+        let section = parse_section(&xml, 0, &StyleRegistry::new()).expect("section must parse");
+        let table = table_of(&section);
+        // Only the outer table is a block of the section: the nested one belongs to its cell.
+        let tables = section
+            .content
+            .iter()
+            .filter(|b| matches!(b, Block::Table(_)))
+            .count();
+        assert_eq!(tables, 1);
+        assert_eq!(table.rows[0].cells.len(), 2);
+        assert_eq!(table.rows[0].cells[0].plain_text().trim(), "outer");
+        let nested = &table.rows[0].cells[0].nested_tables;
+        assert_eq!(nested.len(), 1, "the nested table must not be dropped");
+        assert_eq!(nested[0].rows[0].cells[0].plain_text(), "inner");
+    }
+
+    #[test]
+    fn tables_nested_past_the_bound_are_skipped_not_overflowed() {
+        // MAX_TABLE_NESTING + 3 tables, each in the cell of the one above.
+        let levels = MAX_TABLE_NESTING + 3;
+        let mut xml = String::from("<hp:tbl><hp:tr><hp:tc><hp:subList><hp:p><hp:run><hp:t>leaf</hp:t></hp:run></hp:p></hp:subList></hp:tc></hp:tr></hp:tbl>");
+        for n in 0..levels {
+            xml = format!(
+                "<hp:tbl><hp:tr>{}</hp:tr></hp:tbl>",
+                cell_xml(&format!("level {n}"), &xml)
+            );
+        }
+        let xml = format!("<hs:sec xmlns:hp=\"x\"><hp:p><hp:run>{xml}</hp:run></hp:p></hs:sec>");
+        let section = parse_section(&xml, 0, &StyleRegistry::new()).expect("section must parse");
+        let mut depth = 0;
+        let mut table = table_of(&section);
+        while let Some(next) = table.rows[0].cells[0].nested_tables.first() {
+            table = next;
+            depth += 1;
+        }
+        // The outermost table is at depth 0; the bound is how many tables deep the parser goes.
+        assert_eq!(depth + 1, MAX_TABLE_NESTING);
     }
 
     #[test]

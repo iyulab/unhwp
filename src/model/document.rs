@@ -64,7 +64,8 @@ impl Document {
 
     /// Every table of the document in reading order, with where it is: the section's number
     /// (from 1) and the table's place among that section's tables (from 1) — the names
-    /// `unhwp tables` writes them under (`s<section>-t<n>`).
+    /// `unhwp tables` writes them under (`s<section>-t<n>`). A table nested in a cell is a
+    /// table of its own, right after the one that holds it.
     pub fn tables(&self) -> impl Iterator<Item = (usize, usize, &Table)> {
         self.sections.iter().enumerate().flat_map(|(s, section)| {
             section
@@ -74,6 +75,7 @@ impl Document {
                     Block::Table(table) => Some(table),
                     _ => None,
                 })
+                .flat_map(Table::with_nested_tables)
                 .enumerate()
                 .map(move |(t, table)| (s + 1, t + 1, table))
         })
@@ -87,9 +89,11 @@ impl Document {
                 match block {
                     Block::Paragraph(p) => result.push(p.plain_text()),
                     Block::Table(t) => {
-                        for row in &t.rows {
-                            for cell in &row.cells {
-                                result.push(cell.plain_text());
+                        for table in t.with_nested_tables() {
+                            for row in &table.rows {
+                                for cell in &row.cells {
+                                    result.push(cell.plain_text());
+                                }
                             }
                         }
                     }
@@ -287,5 +291,46 @@ mod tests {
             [(1, 1, "a"), (1, 2, "b"), (3, 1, "c")].map(|(s, t, text)| (s, t, text.to_string()));
         assert_eq!(found, expected);
         assert_eq!(Document::new().tables().count(), 0);
+    }
+
+    /// A one-cell table holding `text`, its cell holding `nested`.
+    fn holder(text: &str, nested: Vec<Table>) -> Table {
+        let mut cell = TableCell::text(text);
+        cell.nested_tables = nested;
+        let mut row = TableRow::new();
+        row.cells.push(cell);
+        let mut table = Table::new();
+        table.rows.push(row);
+        table
+    }
+
+    #[test]
+    fn a_nested_table_is_numbered_and_read_right_after_the_table_that_holds_it() {
+        let mut doc = Document::new();
+        let mut first = Section::new(0);
+        first.push_table(holder(
+            "a",
+            vec![
+                holder("a.1", vec![holder("a.1.1", vec![])]),
+                holder("a.2", vec![]),
+            ],
+        ));
+        first.push_table(holder("b", vec![]));
+        doc.sections.push(first);
+
+        let found: Vec<(usize, usize, String)> = doc
+            .tables()
+            .map(|(s, t, table)| (s, t, table.rows[0].cells[0].plain_text()))
+            .collect();
+        let expected = [
+            (1, 1, "a"),
+            (1, 2, "a.1"),
+            (1, 3, "a.1.1"),
+            (1, 4, "a.2"),
+            (1, 5, "b"),
+        ]
+        .map(|(s, t, text)| (s, t, text.to_string()));
+        assert_eq!(found, expected);
+        assert_eq!(doc.plain_text(), "a\na.1\na.1.1\na.2\nb");
     }
 }

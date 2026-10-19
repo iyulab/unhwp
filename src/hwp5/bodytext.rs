@@ -4,7 +4,7 @@ use super::record::{Record, RecordIterator, TagId};
 use crate::error::Result;
 use crate::model::{
     ImageRef, InlineContent, Paragraph, ParagraphStyle, Section, StyleRegistry, Table, TableCell,
-    TableRow, TextRun, TextStyle,
+    TableRow, TextRun, TextStyle, MAX_TABLE_NESTING,
 };
 use unparser_shared::grid::{MAX_COL_SPAN, MAX_ROW_SPAN};
 
@@ -238,6 +238,16 @@ fn parse_table_records(
     styles: &StyleRegistry,
     picture_counter: &mut u32,
 ) -> Result<Option<Table>> {
+    parse_table_records_nested(records, styles, picture_counter, 0)
+}
+
+/// [`parse_table_records`] for a table `depth` tables deep (0 for one in the section's body).
+fn parse_table_records_nested(
+    records: &[Record],
+    styles: &StyleRegistry,
+    picture_counter: &mut u32,
+    depth: usize,
+) -> Result<Option<Table>> {
     if records.is_empty() {
         return Ok(None);
     }
@@ -282,7 +292,8 @@ fn parse_table_records(
             // Find all records belonging to this cell
             let cell_end = find_cell_end(records, i, record.level());
 
-            let cell_content = parse_cell_content(&records[i..cell_end], styles, picture_counter)?;
+            let cell_content =
+                parse_cell_content(&records[i..cell_end], styles, picture_counter, depth)?;
             cells_data.push(cell_content);
             i = cell_end;
         } else {
@@ -333,6 +344,7 @@ fn parse_table_records(
             let cell_data = &cells_data[idx];
             row.cells.push(TableCell {
                 content: cell_data.paragraphs.clone(),
+                nested_tables: cell_data.nested_tables.clone(),
                 rowspan: cell_data.rowspan,
                 colspan: cell_data.colspan,
                 ..Default::default()
@@ -350,6 +362,7 @@ fn parse_table_records(
 /// Data for a single table cell
 struct CellData {
     paragraphs: Vec<Paragraph>,
+    nested_tables: Vec<Table>,
     rowspan: u32,
     colspan: u32,
     row: u16,
@@ -376,8 +389,10 @@ fn parse_cell_content(
     records: &[Record],
     styles: &StyleRegistry,
     picture_counter: &mut u32,
+    depth: usize,
 ) -> Result<CellData> {
     let mut paragraphs = Vec::new();
+    let mut nested_tables = Vec::new();
     let mut rowspan = 1u32;
     let mut colspan = 1u32;
     let mut row = 0u16;
@@ -386,6 +401,7 @@ fn parse_cell_content(
     if records.is_empty() {
         return Ok(CellData {
             paragraphs,
+            nested_tables,
             rowspan,
             colspan,
             row,
@@ -425,8 +441,30 @@ fn parse_cell_content(
     // Process all remaining records - they belong to this cell
     let mut para_context = ParagraphContext::new();
 
-    for record in records.iter().skip(1) {
+    let mut idx = 1;
+    while idx < records.len() {
+        let record = &records[idx];
+        idx += 1;
         match record.tag() {
+            // A table nested in the cell is a table of its own: its records -- its cells and
+            // their paragraphs -- are not paragraphs of this cell. Past the nesting bound
+            // ([`MAX_TABLE_NESTING`]) the records stay with the cell.
+            TagId::Table if depth < MAX_TABLE_NESTING => {
+                if let Some(para) = para_context.finish(styles) {
+                    paragraphs.push(para);
+                }
+                let end = find_block_end(records, idx - 1, record.level());
+                if let Some(table) = parse_table_records_nested(
+                    &records[idx - 1..end],
+                    styles,
+                    picture_counter,
+                    depth + 1,
+                )? {
+                    nested_tables.push(table);
+                }
+                idx = end;
+            }
+
             TagId::ParaHeader => {
                 if let Some(para) = para_context.finish(styles) {
                     paragraphs.push(para);
@@ -470,6 +508,7 @@ fn parse_cell_content(
 
     Ok(CellData {
         paragraphs,
+        nested_tables,
         rowspan,
         colspan,
         row,
@@ -1286,6 +1325,102 @@ mod tests {
         };
         assert_eq!(table.rows.len(), 1);
         assert_eq!(table.rows[0].cells[0].plain_text(), "cell");
+    }
+
+    /// A table record declaring `rows` × `cols`, at `level`.
+    fn table_record(level: u16, rows: u16, cols: u16) -> Vec<u8> {
+        let mut table = b" lbt".to_vec();
+        table.extend_from_slice(&rows.to_le_bytes());
+        table.extend_from_slice(&cols.to_le_bytes());
+        table.extend_from_slice(&[0u8; 6]);
+        make_record(TagId::Table as u16, level, &table)
+    }
+
+    /// A cell at (`row`, `col`) holding one paragraph of `text`, its records at `level`.
+    fn cell_records(level: u16, row: u16, col: u16, text: &str) -> Vec<u8> {
+        let mut list_header = vec![0u8; 16];
+        list_header[8..10].copy_from_slice(&col.to_le_bytes());
+        list_header[10..12].copy_from_slice(&row.to_le_bytes());
+        list_header[12..14].copy_from_slice(&1u16.to_le_bytes());
+        list_header[14..16].copy_from_slice(&1u16.to_le_bytes());
+        let mut out = make_record(TagId::ListHeader as u16, level, &list_header);
+        out.extend(make_record(TagId::ParaHeader as u16, level, &[0u8; 8]));
+        out.extend(make_record(
+            TagId::ParaText as u16,
+            level + 1,
+            &utf16_bytes(text),
+        ));
+        out
+    }
+
+    /// The paragraph that anchors a table (its `tbl ` control) in a cell, at `level`.
+    fn table_anchor(level: u16) -> Vec<u8> {
+        let mut out = make_record(TagId::ParaHeader as u16, level, &[0u8; 8]);
+        out.extend(make_record(71, level + 1, b" lbt"));
+        out
+    }
+
+    #[test]
+    fn a_table_nested_in_a_cell_is_a_table_of_its_own() {
+        // Outer 1x2: [ "outer" + a nested 2x1 table | "beside" ].
+        let mut stream = table_record(0, 1, 2);
+        stream.extend(cell_records(1, 0, 0, "outer"));
+        stream.extend(table_anchor(1));
+        stream.extend(table_record(3, 2, 1));
+        stream.extend(cell_records(3, 0, 0, "inner head"));
+        stream.extend(cell_records(3, 1, 0, "inner body"));
+        stream.extend(cell_records(1, 0, 1, "beside"));
+
+        let section = parse_section(&stream, 0, &StyleRegistry::new(), &mut 0).unwrap();
+        let crate::model::Block::Table(table) = &section.content[0] else {
+            panic!("expected a table, got: {:?}", section.content);
+        };
+        // The outer row has its two cells; the nested table's cells are not among them.
+        assert_eq!(table.rows.len(), 1);
+        assert_eq!(table.rows[0].cells.len(), 2);
+        assert_eq!(table.rows[0].cells[0].plain_text().trim(), "outer");
+        assert_eq!(table.rows[0].cells[1].plain_text(), "beside");
+
+        let nested = &table.rows[0].cells[0].nested_tables;
+        assert_eq!(nested.len(), 1);
+        assert_eq!(nested[0].rows.len(), 2);
+        assert_eq!(nested[0].rows[0].cells[0].plain_text(), "inner head");
+        assert_eq!(nested[0].rows[1].cells[0].plain_text(), "inner body");
+    }
+
+    #[test]
+    fn tables_nested_past_the_bound_stay_as_paragraphs_of_the_cell() {
+        // Each level: a 1x1 table whose cell holds "level n" and the next table.
+        let levels = MAX_TABLE_NESTING + 6;
+        let mut stream = Vec::new();
+        for n in 0..levels {
+            let level = (n * 3) as u16;
+            stream.extend(table_record(level, 1, 1));
+            stream.extend(cell_records(level + 1, 0, 0, &format!("level {n}")));
+            stream.extend(table_anchor(level + 1));
+        }
+
+        let section = parse_section(&stream, 0, &StyleRegistry::new(), &mut 0).unwrap();
+        let crate::model::Block::Table(top) = &section.content[0] else {
+            panic!("expected a table, got: {:?}", section.content);
+        };
+        let mut depth = 0;
+        let mut table = top;
+        while let Some(next) = table.rows[0].cells[0].nested_tables.first() {
+            table = next;
+            depth += 1;
+        }
+        assert_eq!(depth, MAX_TABLE_NESTING);
+        // The tables deeper than the bound are not lost: their text is in the last cell.
+        let text = table.rows[0].cells[0].plain_text();
+        assert!(
+            text.contains(&format!("level {}", MAX_TABLE_NESTING)),
+            "got: {text:?}"
+        );
+        assert!(
+            text.contains(&format!("level {}", levels - 1)),
+            "got: {text:?}"
+        );
     }
 
     /// Control: a malformed ParaText in a body paragraph fails the section.
