@@ -1,5 +1,6 @@
 //! Style definitions for text and paragraphs.
 
+use super::{Numbering, ParaHead};
 use serde::Serialize;
 use std::collections::HashMap;
 
@@ -78,6 +79,10 @@ pub struct ParagraphStyle {
     pub space_before: Option<f32>,
     /// Space after paragraph in points
     pub space_after: Option<f32>,
+    /// The number or bullet the paragraph is shown with, when its shape gives it one. The
+    /// parsers write it into the paragraph's text as it is shown ("1.", "가)", "●"), so a
+    /// consumer reads the head with the paragraph and does not count.
+    pub head: Option<ParaHead>,
 }
 
 impl ParagraphStyle {
@@ -153,6 +158,12 @@ pub struct StyleRegistry {
     /// Value: filename like "BIN0001.bmp"
     #[serde(skip)]
     pub bindata_mapping: HashMap<u32, String>,
+    /// Numbering definitions by ID (from 1)
+    #[serde(skip)]
+    pub numberings: HashMap<u32, Numbering>,
+    /// Bullet characters by ID (from 1)
+    #[serde(skip)]
+    pub bullets: HashMap<u32, char>,
 }
 
 impl StyleRegistry {
@@ -179,6 +190,26 @@ impl StyleRegistry {
     /// Gets a paragraph style by ID.
     pub fn get_para_style(&self, id: u32) -> Option<&ParagraphStyle> {
         self.para_styles.get(&id)
+    }
+
+    /// Registers a numbering definition.
+    pub fn register_numbering(&mut self, id: u32, numbering: Numbering) {
+        self.numberings.insert(id, numbering);
+    }
+
+    /// Gets a numbering definition by ID.
+    pub fn numbering(&self, id: u32) -> Option<&Numbering> {
+        self.numberings.get(&id)
+    }
+
+    /// Registers a bullet character.
+    pub fn register_bullet(&mut self, id: u32, bullet: char) {
+        self.bullets.insert(id, bullet);
+    }
+
+    /// Gets a bullet character by ID.
+    pub fn bullet(&self, id: u32) -> Option<char> {
+        self.bullets.get(&id).copied()
     }
 
     /// Registers a BinData index to filename mapping.

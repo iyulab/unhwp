@@ -5,7 +5,10 @@
 //! common abbreviations (charPr, paraPr).
 
 use crate::error::Result;
-use crate::model::{Alignment, ListStyle, ParagraphStyle, StyleRegistry, TextStyle};
+use crate::model::{
+    Alignment, HeadKind, ListStyle, NumberLevel, NumberShape, Numbering, ParaHead, ParagraphStyle,
+    StyleRegistry, TextStyle, NUMBERING_LEVELS,
+};
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
@@ -22,6 +25,10 @@ pub fn parse_styles(xml: &str, registry: &mut StyleRegistry) -> Result<()> {
     let mut current_para_style: Option<(u32, ParagraphStyle)> = None;
     let mut in_char_properties = false;
     let mut in_para_properties = false;
+    // A numbering definition being read (`hh:numbering`), and the level whose format text is
+    // still to come (`hh:paraHead`).
+    let mut current_numbering: Option<(u32, Vec<NumberLevel>)> = None;
+    let mut pending_level: Option<(usize, NumberLevel)> = None;
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -41,6 +48,39 @@ pub fn parse_styles(xml: &str, registry: &mut StyleRegistry) -> Result<()> {
                         let id = get_id_attr(&e);
                         current_para_style = Some((id, ParagraphStyle::default()));
                         in_para_properties = true;
+                    }
+
+                    // Numbering definitions: `hh:numbering id`, with a `hh:paraHead` per level
+                    // whose text is the format (`^1.`).
+                    "numbering" if !in_para_properties => {
+                        finish_level(&mut current_numbering, &mut pending_level);
+                        current_numbering = Some((get_id_attr(&e), Vec::new()));
+                    }
+                    "paraHead" if current_numbering.is_some() => {
+                        finish_level(&mut current_numbering, &mut pending_level);
+                        let level = get_int_attr(&e, "level").unwrap_or(0);
+                        if (1..=NUMBERING_LEVELS as i32).contains(&level) {
+                            pending_level = Some((
+                                level as usize - 1,
+                                NumberLevel {
+                                    shape: NumberShape::from_name(
+                                        &get_string_attr(&e, "numFormat").unwrap_or_default(),
+                                    ),
+                                    format: String::new(),
+                                    start: get_int_attr(&e, "start")
+                                        .and_then(|n| u32::try_from(n).ok())
+                                        .unwrap_or(1),
+                                },
+                            ));
+                        }
+                    }
+                    // Bullet definitions: `hh:bullet id char`.
+                    "bullet" if !in_para_properties => {
+                        if let Some(bullet) =
+                            get_string_attr(&e, "char").and_then(|c| c.chars().next())
+                        {
+                            registry.register_bullet(get_id_attr(&e), bullet);
+                        }
                     }
 
                     // Character formatting elements
@@ -158,8 +198,33 @@ pub fn parse_styles(xml: &str, registry: &mut StyleRegistry) -> Result<()> {
                         }
                     }
 
+                    // The head of a paragraph shape: `hh:heading type idRef level`, where the
+                    // type says whether the paragraph is outlined, numbered or bulleted.
+                    "heading" if in_para_properties => {
+                        if let Some((_, ref mut style)) = current_para_style {
+                            let kind = match get_string_attr(&e, "type").as_deref() {
+                                Some("OUTLINE") => Some(HeadKind::Outline),
+                                Some("NUMBER") => Some(HeadKind::Number),
+                                Some("BULLET") => Some(HeadKind::Bullet),
+                                _ => None,
+                            };
+                            let level = get_int_attr(&e, "level").unwrap_or(0);
+                            style.head = kind.map(|kind| ParaHead {
+                                kind,
+                                level: level.clamp(0, i32::from(u8::MAX)) as u8,
+                                id: get_int_attr(&e, "idRef")
+                                    .and_then(|n| u32::try_from(n).ok())
+                                    .unwrap_or(0),
+                            });
+                            // An outline level is a heading level; a number or a bullet is not.
+                            if kind == Some(HeadKind::Outline) && level > 0 {
+                                style.heading_level = (level as u8).min(6);
+                            }
+                        }
+                    }
+
                     // Heading level / outline level
-                    "outlineLevel" | "heading" | "level" if in_para_properties => {
+                    "outlineLevel" | "level" if in_para_properties => {
                         if let Some((_, ref mut style)) = current_para_style {
                             if let Some(level) =
                                 get_int_attr(&e, "val").or_else(|| get_int_attr(&e, "level"))
@@ -216,11 +281,24 @@ pub fn parse_styles(xml: &str, registry: &mut StyleRegistry) -> Result<()> {
                     _ => {}
                 }
             }
+            Ok(Event::Text(t)) => {
+                // The format of the level being read.
+                if let Some((_, level)) = pending_level.as_mut() {
+                    level.format.push_str(&super::xml::decode_text(&t));
+                }
+            }
             Ok(Event::End(e)) => {
                 let local_name = e.local_name();
                 let name = local_name.as_ref();
 
                 match name {
+                    "paraHead" => finish_level(&mut current_numbering, &mut pending_level),
+                    "numbering" if current_numbering.is_some() => {
+                        finish_level(&mut current_numbering, &mut pending_level);
+                        if let Some((id, levels)) = current_numbering.take() {
+                            registry.register_numbering(id, Numbering { levels });
+                        }
+                    }
                     "charShape" | "charPr" | "charProperties" => {
                         if let Some((id, style)) = current_char_style.take() {
                             registry.register_char_style(id, style);
@@ -244,6 +322,20 @@ pub fn parse_styles(xml: &str, registry: &mut StyleRegistry) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Puts the level being read into the numbering being read, at its place.
+fn finish_level(
+    numbering: &mut Option<(u32, Vec<NumberLevel>)>,
+    pending: &mut Option<(usize, NumberLevel)>,
+) {
+    let (Some((_, levels)), Some((index, level))) = (numbering.as_mut(), pending.take()) else {
+        return;
+    };
+    if levels.len() <= index {
+        levels.resize(index + 1, NumberLevel::default());
+    }
+    levels[index] = level;
 }
 
 /// Parses alignment string to Alignment enum.

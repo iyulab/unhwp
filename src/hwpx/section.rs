@@ -3,8 +3,8 @@
 use super::xml::{decode_text, resolve_general_ref};
 use crate::error::Result;
 use crate::model::{
-    Block, Equation, ImageRef, InlineContent, Paragraph, ParagraphStyle, Section, StyleRegistry,
-    Table, TableCell, TableRow, TextRun, MAX_TABLE_NESTING,
+    Block, Equation, ImageRef, InlineContent, NumberingState, Paragraph, ParagraphStyle, Section,
+    StyleRegistry, Table, TableCell, TableRow, TextRun, MAX_TABLE_NESTING,
 };
 use quick_xml::events::Event;
 use quick_xml::Reader;
@@ -41,6 +41,8 @@ struct SectionParser<'a> {
     styles: &'a StyleRegistry,
     /// How many tables deep the parser is (0 outside any table).
     table_depth: usize,
+    /// Counts the section's numbered paragraphs.
+    numbering: NumberingState,
 }
 
 impl<'a> SectionParser<'a> {
@@ -60,6 +62,7 @@ impl<'a> SectionParser<'a> {
             reader,
             styles,
             table_depth: 0,
+            numbering: NumberingState::new(),
         }
     }
 
@@ -124,6 +127,11 @@ impl<'a> SectionParser<'a> {
             }
         }
 
+        // Counted when the paragraph starts, so a table anchored in it is counted after it.
+        let label = para_style
+            .head
+            .as_ref()
+            .and_then(|head| self.numbering.label(head, self.styles));
         let mut paragraph = Paragraph::with_style(para_style);
         let mut buf = Vec::new();
 
@@ -174,6 +182,19 @@ impl<'a> SectionParser<'a> {
             buf.clear();
         }
 
+        // The number is not in the paragraph's text; it is written in front of text that has
+        // some (an empty numbered paragraph is counted but says nothing).
+        if let Some(label) = label {
+            let has_text = paragraph.content.iter().any(
+                |item| matches!(item, InlineContent::Text(run) if !run.text.trim().is_empty()),
+            );
+            if has_text {
+                paragraph
+                    .content
+                    .insert(0, InlineContent::Text(TextRun::new(format!("{label} "))));
+            }
+        }
+
         Ok((paragraph, tables_found))
     }
 
@@ -219,6 +240,8 @@ impl<'a> SectionParser<'a> {
                                 ImageRef::new(id).floating(pic_floating),
                             ));
                         }
+                    } else if name == "secPr" {
+                        self.note_section_properties(&e);
                     } else if name == "tbl" {
                         // Table inside run - parse and collect
                         buf.clear();
@@ -230,6 +253,8 @@ impl<'a> SectionParser<'a> {
 
                     if name == "t" {
                         // Empty text element - skip
+                    } else if name == "secPr" {
+                        self.note_section_properties(&e);
                     } else if name == "tab" && !in_ctrl {
                         // <hp:tab/> is a layout tab (often a TOC leader between a title
                         // and its page number). Markdown has no tab concept, so emit a
@@ -275,6 +300,14 @@ impl<'a> SectionParser<'a> {
         }
 
         Ok(TextRun::with_style(text, text_style))
+    }
+
+    /// Reads the section properties (`hp:secPr`): the numbering its outline paragraphs are
+    /// counted by.
+    fn note_section_properties(&mut self, e: &quick_xml::events::BytesStart) {
+        if let Some(id) = get_attr_u32(e, "outlineShapeIDRef") {
+            self.numbering.set_outline_id(id);
+        }
     }
 
     /// Parses a <hp:ctrl> control element.
@@ -764,6 +797,124 @@ mod tests {
         }
         // The outermost table is at depth 0; the bound is how many tables deep the parser goes.
         assert_eq!(depth + 1, MAX_TABLE_NESTING);
+    }
+
+    // === Paragraph numbers ===
+
+    /// A header holding one numbering (`1.` `가.`), one bullet, and paragraph shapes 0 to 4:
+    /// plain, first and second level of the numbering, the bullet, and an outline.
+    const HEADER: &str = r#"<hh:head xmlns:hh="x"><hh:refList>
+        <hh:numberings itemCnt="1"><hh:numbering id="1" start="0">
+          <hh:paraHead start="1" level="1" align="LEFT" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0">^1.</hh:paraHead>
+          <hh:paraHead start="1" level="2" align="LEFT" numFormat="HANGUL_SYLLABLE" charPrIDRef="4294967295" checkable="0">^2.</hh:paraHead>
+        </hh:numbering></hh:numberings>
+        <hh:bullets itemCnt="1"><hh:bullet id="1" char="●" useImage="0">
+          <hh:paraHead level="0" align="LEFT" charPrIDRef="4294967295"/>
+        </hh:bullet></hh:bullets>
+        <hh:paraProperties itemCnt="5">
+          <hh:paraPr id="0"><hh:heading type="NONE" idRef="0" level="0"/></hh:paraPr>
+          <hh:paraPr id="1"><hh:heading type="NUMBER" idRef="1" level="0"/></hh:paraPr>
+          <hh:paraPr id="2"><hh:heading type="NUMBER" idRef="1" level="1"/></hh:paraPr>
+          <hh:paraPr id="3"><hh:heading type="BULLET" idRef="1" level="0"/></hh:paraPr>
+          <hh:paraPr id="4"><hh:heading type="OUTLINE" idRef="0" level="0"/></hh:paraPr>
+        </hh:paraProperties></hh:refList></hh:head>"#;
+
+    fn styles_of(header: &str) -> StyleRegistry {
+        let mut registry = StyleRegistry::new();
+        crate::hwpx::styles::parse_styles(header, &mut registry).expect("header parses");
+        registry
+    }
+
+    fn paragraph_xml(shape: u32, text: &str) -> String {
+        format!("<hp:p paraPrIDRef=\"{shape}\"><hp:run><hp:t>{text}</hp:t></hp:run></hp:p>")
+    }
+
+    fn section_texts(xml: &str, styles: &StyleRegistry) -> Vec<String> {
+        let section = parse_section(xml, 0, styles).expect("section parses");
+        section
+            .content
+            .iter()
+            .filter_map(|b| match b {
+                Block::Paragraph(p) => Some(p.plain_text()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_header_gives_the_numbering_and_the_bullet_and_the_heads() {
+        let styles = styles_of(HEADER);
+        let numbering = styles.numbering(1).expect("numbering 1");
+        assert_eq!(numbering.levels.len(), 2);
+        assert_eq!(numbering.levels[0].format, "^1.");
+        assert_eq!(
+            numbering.levels[1].shape,
+            crate::model::NumberShape::HangulSyllable
+        );
+        assert_eq!(styles.bullet(1), Some('●'));
+        let head = |id| styles.get_para_style(id).unwrap().head;
+        assert_eq!(head(0), None);
+        assert_eq!(head(2).map(|h| (h.level, h.id)), Some((1, 1)));
+        // A numbered paragraph is not a heading; an outline of the first level is not either.
+        assert_eq!(styles.get_para_style(2).unwrap().heading_level, 0);
+    }
+
+    #[test]
+    fn numbered_paragraphs_are_written_with_their_numbers() {
+        let styles = styles_of(HEADER);
+        let body: String = [
+            (1, "first"),
+            (2, "under"),
+            (1, "second"),
+            (0, "plain"),
+            (3, "bullet"),
+        ]
+        .iter()
+        .map(|(shape, text)| paragraph_xml(*shape, text))
+        .collect();
+        let xml = format!("<hs:sec xmlns:hp=\"x\">{body}</hs:sec>");
+        assert_eq!(
+            section_texts(&xml, &styles),
+            ["1. first", "가. under", "2. second", "plain", "● bullet"]
+        );
+    }
+
+    #[test]
+    fn outline_paragraphs_are_counted_by_the_sections_outline_numbering() {
+        let styles = styles_of(HEADER);
+        let xml = format!(
+            "<hs:sec xmlns:hp=\"x\"><hp:p paraPrIDRef=\"0\"><hp:run><hp:secPr outlineShapeIDRef=\"1\"/><hp:t>title</hp:t></hp:run></hp:p>{}{}</hs:sec>",
+            paragraph_xml(4, "chapter"),
+            paragraph_xml(4, "next")
+        );
+        assert_eq!(
+            section_texts(&xml, &styles),
+            ["title", "1. chapter", "2. next"]
+        );
+    }
+
+    #[test]
+    fn the_count_runs_on_through_a_table_cell() {
+        let styles = styles_of(HEADER);
+        let cell = format!(
+            "<hp:tbl><hp:tr><hp:tc><hp:subList>{}</hp:subList></hp:tc></hp:tr></hp:tbl>",
+            paragraph_xml(1, "in the cell")
+        );
+        let xml = format!(
+            "<hs:sec xmlns:hp=\"x\">{}<hp:p><hp:run>{cell}</hp:run></hp:p>{}</hs:sec>",
+            paragraph_xml(1, "body"),
+            paragraph_xml(1, "after")
+        );
+        let section = parse_section(&xml, 0, &styles).expect("section parses");
+        let mut seen: Vec<String> = Vec::new();
+        for block in &section.content {
+            match block {
+                Block::Paragraph(p) => seen.push(p.plain_text()),
+                Block::Table(t) => seen.push(t.rows[0].cells[0].plain_text()),
+            }
+        }
+        seen.retain(|t| !t.is_empty());
+        assert_eq!(seen, ["1. body", "2. in the cell", "3. after"]);
     }
 
     #[test]

@@ -4,7 +4,10 @@
 
 use super::record::{Record, RecordIterator, TagId};
 use crate::error::Result;
-use crate::model::{Alignment, ListStyle, ParagraphStyle, StyleRegistry, TextStyle};
+use crate::model::{
+    Alignment, HeadKind, NumberLevel, NumberShape, Numbering, ParaHead, ParagraphStyle,
+    StyleRegistry, TextStyle, NUMBERING_LEVELS,
+};
 
 // ============================================================================
 // CharShape Record Byte Offsets (HWP 5.0 Spec 표 42)
@@ -84,6 +87,8 @@ pub fn parse_docinfo(data: &[u8], registry: &mut StyleRegistry) -> Result<()> {
     let mut char_shapes: Vec<CharShapeData> = Vec::with_capacity(64);
     let mut para_shapes: Vec<ParaShapeData> = Vec::with_capacity(64);
     let mut styles: Vec<StyleData> = Vec::with_capacity(32);
+    let mut numberings: Vec<Numbering> = Vec::new();
+    let mut bullets: Vec<Option<char>> = Vec::new();
 
     for record in RecordIterator::new(data) {
         let record = record?;
@@ -115,6 +120,15 @@ pub fn parse_docinfo(data: &[u8], registry: &mut StyleRegistry) -> Result<()> {
                 if let Ok(style) = parse_style(&record) {
                     styles.push(style);
                 }
+            }
+            // Numbering and bullet definitions are named by their place among the records,
+            // from 1. A record that cannot be read still takes its place, so the ones after
+            // it keep their numbers.
+            TagId::Numbering => {
+                numberings.push(parse_numbering(&record).unwrap_or_default());
+            }
+            TagId::Bullet => {
+                bullets.push(parse_bullet(&record));
             }
             _ => {
                 // Skip other records
@@ -150,14 +164,24 @@ pub fn parse_docinfo(data: &[u8], registry: &mut StyleRegistry) -> Result<()> {
         let para_style = ParagraphStyle {
             heading_level: shape.outline_level.unwrap_or(0),
             alignment: shape.alignment,
-            list_style: shape.list_style.clone(),
+            list_style: None,
             indent_level: shape.indent_level,
             line_spacing: shape.line_spacing,
             space_before: shape.space_before,
             space_after: shape.space_after,
+            head: shape.head,
         };
 
         registry.register_para_style(index as u32, para_style);
+    }
+
+    for (index, numbering) in numberings.into_iter().enumerate() {
+        registry.register_numbering(index as u32 + 1, numbering);
+    }
+    for (index, bullet) in bullets.into_iter().enumerate() {
+        if let Some(bullet) = bullet {
+            registry.register_bullet(index as u32 + 1, bullet);
+        }
     }
 
     // Register named styles (referencing CharShape and ParaShape by index)
@@ -193,7 +217,7 @@ struct CharShapeData {
 struct ParaShapeData {
     alignment: Alignment,
     outline_level: Option<u8>,
-    list_style: Option<ListStyle>,
+    head: Option<ParaHead>,
     indent_level: u8,
     line_spacing: Option<f32>,
     space_before: Option<f32>,
@@ -409,26 +433,97 @@ fn parse_para_shape(record: &Record) -> Result<ParaShapeData> {
         None // Not an outline style
     };
 
-    // List style from numbering ID
+    // The head the shape gives its paragraphs: an outline, a number or a bullet, at a level,
+    // from the definition the shape names (from 1; an outline paragraph is counted by the
+    // section's outline numbering instead).
     let numbering_id = u16::from_le_bytes([
         data[PARA_SHAPE_NUMBERING_ID_OFFSET],
         data[PARA_SHAPE_NUMBERING_ID_OFFSET + 1],
     ]);
-    let list_style = if numbering_id > 0 {
-        Some(ListStyle::Ordered) // Simplified - would need to look up actual style
-    } else {
-        None
-    };
+    let head_level =
+        ((properties1 >> PARA_PROP1_OUTLINE_LEVEL_SHIFT) & PARA_PROP1_OUTLINE_LEVEL_MASK) as u8;
+    let head = match head_shape_type {
+        1 => Some(HeadKind::Outline),
+        2 => Some(HeadKind::Number),
+        3 => Some(HeadKind::Bullet),
+        _ => None,
+    }
+    .map(|kind| ParaHead {
+        kind,
+        level: head_level,
+        id: u32::from(numbering_id),
+    });
 
     Ok(ParaShapeData {
         alignment,
         outline_level,
-        list_style,
+        head,
         indent_level: 0,
         line_spacing,
         space_before,
         space_after,
     })
+}
+
+/// Parses HWPTAG_NUMBERING record: seven levels, each a 12-byte paragraph head info (its
+/// attributes hold the number shape in bits 5-8) and a length-prefixed format string, then the
+/// first number (`u16`) and, from version 5.0.3.0, one first number per level (`u32`).
+fn parse_numbering(record: &Record) -> Option<Numbering> {
+    const HEAD_INFO_LEN: usize = 12;
+    const SHAPE_SHIFT: u32 = 5;
+    const SHAPE_MASK: u32 = 0x0F;
+
+    let data = record.data();
+    let mut at = 0usize;
+    let mut levels = Vec::with_capacity(NUMBERING_LEVELS);
+    for _ in 0..NUMBERING_LEVELS {
+        let head = data.get(at..at + HEAD_INFO_LEN)?;
+        let attributes = u32::from_le_bytes([head[0], head[1], head[2], head[3]]);
+        at += HEAD_INFO_LEN;
+        let length = usize::from(u16::from_le_bytes([*data.get(at)?, *data.get(at + 1)?]));
+        at += 2;
+        let text = data.get(at..at + length * 2)?;
+        at += length * 2;
+        let units: Vec<u16> = text
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .copied()
+            .map(u16::from_le_bytes)
+            .collect();
+        levels.push(NumberLevel {
+            shape: NumberShape::from_code((attributes >> SHAPE_SHIFT) & SHAPE_MASK),
+            format: String::from_utf16_lossy(&units),
+            start: 1,
+        });
+    }
+
+    // The first number of the definition, and of each level where the record gives it.
+    let first = data
+        .get(at..at + 2)
+        .map(|b| u32::from(u16::from_le_bytes([b[0], b[1]])))
+        .filter(|&n| n > 0)
+        .unwrap_or(1);
+    at += 2;
+    for (index, level) in levels.iter_mut().enumerate() {
+        level.start = data
+            .get(at + index * 4..at + index * 4 + 4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .unwrap_or(first);
+    }
+    Some(Numbering { levels })
+}
+
+/// Parses HWPTAG_BULLET record: a 12-byte paragraph head info, then the bullet character.
+/// A character from the private-use area is a glyph of a symbol font this reader does not
+/// have, so it is written as a plain bullet.
+fn parse_bullet(record: &Record) -> Option<char> {
+    let data = record.data();
+    let unit = u16::from_le_bytes([*data.get(12)?, *data.get(13)?]);
+    if (0xE000..=0xF8FF).contains(&unit) {
+        return Some('•');
+    }
+    char::from_u32(u32::from(unit))
 }
 
 /// Parses HWPTAG_STYLE record.
@@ -651,5 +746,140 @@ mod tests {
         let shape = parse_char_shape(&record).expect("parse should succeed");
         assert!(shape.bold, "bit1 must be bold");
         assert!(shape.italic, "bit0 must be italic");
+    }
+
+    /// A record of `tag` holding `data`.
+    fn record_of(tag: TagId, data: Vec<u8>) -> Record {
+        Record {
+            header: RecordHeader {
+                tag_id: tag as u16,
+                level: 1,
+                size: data.len() as u32,
+            },
+            data,
+            offset: 0,
+        }
+    }
+
+    fn unhex(hex: &str) -> Vec<u8> {
+        (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
+    /// A numbering record as the editor writes its default definition: `^1.` `^2.` `^3)`
+    /// `^4)` `(^5)` `(^6)` `^7`, the second, fourth and sixth levels in Hangul syllables
+    /// (attribute bits 5-8 = 8) and the seventh circled (= 1).
+    const DEFAULT_NUMBERING: &str = concat!(
+        "0c00000000003200ffffffff03005e0031002e000c01000000003200ffffffff",
+        "03005e0032002e000c00000000003200ffffffff03005e00330029000c010000",
+        "00003200ffffffff03005e00340029000c00000000003200ffffffff04002800",
+        "5e00350029000c01000000003200ffffffff040028005e00360029002c000000",
+        "00003200ffffffff02005e003700010001000000010000000100000001000000",
+        "0100000001000000010000000800000000003200ffffffff0000080000000000",
+        "3200ffffffff00000800000000003200ffffffff000001000000010000000100",
+        "0000",
+    );
+
+    #[test]
+    fn a_numbering_record_gives_the_shape_format_and_start_of_each_level() {
+        let numbering = parse_numbering(&record_of(TagId::Numbering, unhex(DEFAULT_NUMBERING)))
+            .expect("a whole record parses");
+        let levels: Vec<(NumberShape, &str, u32)> = numbering
+            .levels
+            .iter()
+            .map(|l| (l.shape, l.format.as_str(), l.start))
+            .collect();
+        assert_eq!(
+            levels,
+            [
+                (NumberShape::Digit, "^1.", 1),
+                (NumberShape::HangulSyllable, "^2.", 1),
+                (NumberShape::Digit, "^3)", 1),
+                (NumberShape::HangulSyllable, "^4)", 1),
+                (NumberShape::Digit, "(^5)", 1),
+                (NumberShape::HangulSyllable, "(^6)", 1),
+                (NumberShape::CircledDigit, "^7", 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_truncated_numbering_record_is_not_a_definition() {
+        let mut data = unhex(DEFAULT_NUMBERING);
+        data.truncate(40);
+        assert!(parse_numbering(&record_of(TagId::Numbering, data)).is_none());
+    }
+
+    /// A paragraph shape record: `properties` then zeros, with the numbering ID at offset 30.
+    fn para_shape_record(properties: u32, numbering_id: u16) -> Record {
+        let mut data = vec![0u8; 58];
+        data[..4].copy_from_slice(&properties.to_le_bytes());
+        data[30..32].copy_from_slice(&numbering_id.to_le_bytes());
+        record_of(TagId::ParaShape, data)
+    }
+
+    #[test]
+    fn a_paragraph_shape_names_its_head_kind_level_and_definition() {
+        // Bits 23-24 = 2 (number), bits 25-27 = 1 (second level), numbering 3.
+        let shape = parse_para_shape(&para_shape_record((2 << 23) | (1 << 25), 3)).unwrap();
+        assert_eq!(
+            shape.head,
+            Some(ParaHead {
+                kind: HeadKind::Number,
+                level: 1,
+                id: 3
+            })
+        );
+        // Bullet and outline.
+        let bullet = parse_para_shape(&para_shape_record(3 << 23, 2)).unwrap();
+        assert_eq!(
+            bullet.head.map(|h| (h.kind, h.id)),
+            Some((HeadKind::Bullet, 2))
+        );
+        let outline = parse_para_shape(&para_shape_record(1 << 23, 0)).unwrap();
+        assert_eq!(outline.head.map(|h| h.kind), Some(HeadKind::Outline));
+        // No head.
+        assert_eq!(
+            parse_para_shape(&para_shape_record(0, 7)).unwrap().head,
+            None
+        );
+    }
+
+    #[test]
+    fn a_bullet_record_gives_its_character_and_a_symbol_glyph_a_plain_bullet() {
+        let bullet = |unit: u16| {
+            let mut data = vec![0u8; 25];
+            data[12..14].copy_from_slice(&unit.to_le_bytes());
+            parse_bullet(&record_of(TagId::Bullet, data))
+        };
+        assert_eq!(bullet(0x25CF), Some('●'));
+        assert_eq!(bullet(0xF0A7), Some('•'));
+        assert_eq!(parse_bullet(&record_of(TagId::Bullet, vec![0u8; 8])), None);
+    }
+
+    #[test]
+    fn the_definitions_are_named_by_their_place_among_the_records() {
+        let mut stream = Vec::new();
+        let mut push = |tag: u32, data: &[u8]| {
+            let header = tag | (1 << 10) | ((data.len() as u32) << 20);
+            stream.extend_from_slice(&header.to_le_bytes());
+            stream.extend_from_slice(data);
+        };
+        push(TagId::Numbering as u32, &unhex(DEFAULT_NUMBERING));
+        // A damaged record still takes its place, so the next one is the third.
+        push(TagId::Numbering as u32, &[1, 2, 3]);
+        push(TagId::Numbering as u32, &unhex(DEFAULT_NUMBERING));
+        let mut bullet = vec![0u8; 25];
+        bullet[12..14].copy_from_slice(&0x25A0u16.to_le_bytes());
+        push(TagId::Bullet as u32, &bullet);
+
+        let mut registry = StyleRegistry::new();
+        parse_docinfo(&stream, &mut registry).unwrap();
+        assert_eq!(registry.numbering(1).unwrap().levels.len(), 7);
+        assert!(registry.numbering(2).unwrap().levels.is_empty());
+        assert_eq!(registry.numbering(3).unwrap().levels.len(), 7);
+        assert_eq!(registry.bullet(1), Some('■'));
     }
 }

@@ -25,8 +25,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   written as a Markdown table like any other; a table whose every row is one full-width cell
   is still written as text blocks.
 
+- **A numbered paragraph is written with its number.** A paragraph whose shape numbers it
+  (HWP 5.0 paragraph shape head type "number", HWPX `hh:heading type="NUMBER"`) holds no
+  number in its text -- the number is counted from the document's numbering definition -- so
+  `1. Overview` was read as `Overview`, and a paragraph the shape marked as numbered was
+  written with a literal `1. ` whatever its number. The readers now count the numbered
+  paragraphs of a section in order (a paragraph takes the next number of its level and
+  starts the levels below it over; a table cell counts in its place), write the head in
+  front of the text in the definition's format and shape (`1.`, `가)`, `(1)`, `①`, `Ⅱ`, ...),
+  and do the same for bullets and for outline paragraphs, which are counted by the
+  section's outline numbering. A numbered paragraph with no text is counted and says
+  nothing. Each section is counted on its own, so reading a document whole and reading it
+  section by section give the same heads.
+- **An HWP 5.0 paragraph read the wrong paragraph shape.** The paragraph shape is the 16-bit
+  value at byte 8 of the paragraph header (the text length and the control mask come
+  first); the reader took the first four bytes, the text length, so alignment, outline level
+  and every other shape property came from an unrelated shape. The named style a paragraph
+  uses is now looked up by its style, not taken for a shape. On a document with outline
+  styles this changes which paragraphs are headings: lines of formulas and dates are no
+  longer mistaken for headings, and numbered section titles are found.
+
 ### Changed
 
+- `ParagraphStyle` gains `head`, the head kind, level and definition of a numbered, outlined
+  or bulleted paragraph. The HWP 5.0 reader no longer sets `list_style` for a numbered
+  paragraph: its head is in its text.
 - `TableCell` gains a public `nested_tables` field (empty tables are omitted from JSON). Code
   that builds a `TableCell` with a struct literal must add it (`..Default::default()` does).
 

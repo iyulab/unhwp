@@ -3,8 +3,8 @@
 use super::record::{Record, RecordIterator, TagId};
 use crate::error::Result;
 use crate::model::{
-    ImageRef, InlineContent, Paragraph, ParagraphStyle, Section, StyleRegistry, Table, TableCell,
-    TableRow, TextRun, TextStyle, MAX_TABLE_NESTING,
+    ImageRef, InlineContent, NumberingState, Paragraph, ParagraphStyle, Section, StyleRegistry,
+    Table, TableCell, TableRow, TextRun, TextStyle, MAX_TABLE_NESTING,
 };
 use unparser_shared::grid::{MAX_COL_SPAN, MAX_ROW_SPAN};
 
@@ -87,6 +87,7 @@ pub fn parse_section(
 
     let mut section = Section::new(section_index);
     let mut paragraph_context = ParagraphContext::new();
+    let mut numbering = NumberingState::new();
     // Track which records to skip (already processed as part of table)
     let mut skip_until_idx: usize = 0;
 
@@ -110,22 +111,27 @@ pub fn parse_section(
                 }
 
                 // Start new paragraph
-                let para_shape_id = record.read_u32(0).unwrap_or(0);
-                let style_id = record.read_u16(4).unwrap_or(0) as u32;
+                let para_shape_id = para_shape_id(record);
+                let style_id = u32::from(record.read_u8(PARA_HEADER_STYLE_OFFSET).unwrap_or(0));
 
                 let mut style = styles
                     .get_para_style(para_shape_id)
                     .cloned()
                     .unwrap_or_default();
 
-                // Override with explicit style if different
-                if let Some(named_style) = styles.get_para_style(style_id) {
-                    if named_style.heading_level > 0 {
-                        style.heading_level = named_style.heading_level;
+                // A named style (the style ID is an index into the document's styles, not
+                // into its paragraph shapes) brings the outline level of its own paragraph
+                // shape.
+                if let Some(named_shape) = styles
+                    .get_named_style(style_id)
+                    .and_then(|named| styles.get_para_style(named.para_shape_id))
+                {
+                    if named_shape.heading_level > 0 {
+                        style.heading_level = named_shape.heading_level;
                     }
                 }
 
-                paragraph_context.start(style);
+                paragraph_context.start_numbered(style, &mut numbering, styles);
                 paragraph_context.base_level = base_level;
             }
 
@@ -151,14 +157,26 @@ pub fn parse_section(
                 let table_end = find_block_end(&records, idx, table_level);
 
                 // Parse table from the collected records
-                if let Some(table) =
-                    parse_table_records(&records[idx..table_end], styles, picture_counter)?
-                {
+                if let Some(table) = parse_table_records_nested(
+                    &records[idx..table_end],
+                    styles,
+                    picture_counter,
+                    &mut numbering,
+                    0,
+                )? {
                     section.content.push(crate::model::Block::Table(table));
                 }
 
                 // Skip all records that were part of the table
                 skip_until_idx = table_end;
+            }
+
+            TagId::CtrlHeader => {
+                // A section definition names the numbering its outline paragraphs are
+                // counted by.
+                if let Some(id) = outline_numbering_id(record.data()) {
+                    numbering.set_outline_id(id);
+                }
             }
 
             TagId::EqEdit => {
@@ -188,6 +206,30 @@ pub fn parse_section(
     }
 
     Ok(section)
+}
+
+/// Offsets in a paragraph header (`HWPTAG_PARA_HEADER`): the text length (`u32`) and the
+/// control mask (`u32`) come first, then the paragraph shape (`u16`) and the style (`u8`).
+const PARA_HEADER_SHAPE_OFFSET: usize = 8;
+const PARA_HEADER_STYLE_OFFSET: usize = 10;
+
+/// The paragraph shape a paragraph header names.
+fn para_shape_id(header: &Record) -> u32 {
+    u32::from(header.read_u16(PARA_HEADER_SHAPE_OFFSET).unwrap_or(0))
+}
+
+/// The numbering definition (from 1; 0 for none) a section definition (`secd` control) counts
+/// its outline paragraphs by -- the paragraph-shape ID after the control ID (4 bytes),
+/// properties (4), column gap (2), vertical and horizontal grid (2 + 2) and default tab (4).
+/// `None` for any other control.
+fn outline_numbering_id(control: &[u8]) -> Option<u32> {
+    const SECTION_DEFINITION: &[u8; 4] = b"dces";
+    const OUTLINE_NUMBERING_OFFSET: usize = 18;
+    if control.get(..4)? != SECTION_DEFINITION {
+        return None;
+    }
+    let id = control.get(OUTLINE_NUMBERING_OFFSET..OUTLINE_NUMBERING_OFFSET + 2)?;
+    Some(u32::from(u16::from_le_bytes([id[0], id[1]])))
 }
 
 /// Extracts the equation script from an EqEdit (HWPTAG_EQ_EDIT) record.
@@ -233,12 +275,19 @@ fn find_block_end(records: &[Record], start_idx: usize, base_level: u16) -> usiz
 /// `Ok(None)` means the records do not describe a table this parser recognises (the
 /// structure is tolerated, as before). An error inside a cell's content is returned: a cell
 /// is parsed with the same contract as any other paragraph in the section.
+#[cfg(test)]
 fn parse_table_records(
     records: &[Record],
     styles: &StyleRegistry,
     picture_counter: &mut u32,
 ) -> Result<Option<Table>> {
-    parse_table_records_nested(records, styles, picture_counter, 0)
+    parse_table_records_nested(
+        records,
+        styles,
+        picture_counter,
+        &mut NumberingState::new(),
+        0,
+    )
 }
 
 /// [`parse_table_records`] for a table `depth` tables deep (0 for one in the section's body).
@@ -246,6 +295,7 @@ fn parse_table_records_nested(
     records: &[Record],
     styles: &StyleRegistry,
     picture_counter: &mut u32,
+    numbering: &mut NumberingState,
     depth: usize,
 ) -> Result<Option<Table>> {
     if records.is_empty() {
@@ -292,8 +342,13 @@ fn parse_table_records_nested(
             // Find all records belonging to this cell
             let cell_end = find_cell_end(records, i, record.level());
 
-            let cell_content =
-                parse_cell_content(&records[i..cell_end], styles, picture_counter, depth)?;
+            let cell_content = parse_cell_content(
+                &records[i..cell_end],
+                styles,
+                picture_counter,
+                numbering,
+                depth,
+            )?;
             cells_data.push(cell_content);
             i = cell_end;
         } else {
@@ -389,6 +444,7 @@ fn parse_cell_content(
     records: &[Record],
     styles: &StyleRegistry,
     picture_counter: &mut u32,
+    numbering: &mut NumberingState,
     depth: usize,
 ) -> Result<CellData> {
     let mut paragraphs = Vec::new();
@@ -458,6 +514,7 @@ fn parse_cell_content(
                     &records[idx - 1..end],
                     styles,
                     picture_counter,
+                    numbering,
                     depth + 1,
                 )? {
                     nested_tables.push(table);
@@ -470,12 +527,12 @@ fn parse_cell_content(
                     paragraphs.push(para);
                 }
 
-                let para_shape_id = record.read_u32(0).unwrap_or(0);
+                let para_shape_id = para_shape_id(record);
                 let style = styles
                     .get_para_style(para_shape_id)
                     .cloned()
                     .unwrap_or_default();
-                para_context.start(style);
+                para_context.start_numbered(style, numbering, styles);
             }
 
             TagId::ParaText => {
@@ -542,6 +599,9 @@ struct ParagraphContext {
     /// Unfilled slots keep an empty script, which the renderer surfaces as a
     /// placeholder — an equation is never silently dropped.
     pending_equations: std::collections::VecDeque<usize>,
+    /// The number or bullet the paragraph is shown with, written in front of its text when
+    /// the paragraph is finished.
+    label: Option<String>,
 }
 
 impl ParagraphContext {
@@ -558,7 +618,23 @@ impl ParagraphContext {
             current_text_wchar_positions: Vec::new(),
             content_wchar_positions: Vec::new(),
             pending_equations: std::collections::VecDeque::new(),
+            label: None,
         }
+    }
+
+    /// Starts a paragraph, counting it if its shape numbers it.
+    fn start_numbered(
+        &mut self,
+        style: ParagraphStyle,
+        numbering: &mut NumberingState,
+        styles: &StyleRegistry,
+    ) {
+        let label = style
+            .head
+            .as_ref()
+            .and_then(|head| numbering.label(head, styles));
+        self.start(style);
+        self.label = label;
     }
 
     fn start(&mut self, style: ParagraphStyle) {
@@ -572,6 +648,7 @@ impl ParagraphContext {
         self.current_text_wchar_positions.clear();
         self.content_wchar_positions.clear();
         self.pending_equations.clear();
+        self.label = None;
     }
 
     fn push_char(&mut self, ch: char) {
@@ -651,6 +728,18 @@ impl ParagraphContext {
         // Apply char_shape_positions to split/restyle text runs
         if !self.char_shape_positions.is_empty() {
             self.apply_char_shapes(styles);
+        }
+
+        // The number is not in the paragraph's text; it is written in front of text that has
+        // some (an empty numbered paragraph is counted but says nothing).
+        if let Some(label) = self.label.take() {
+            let has_text = self.content.iter().any(
+                |item| matches!(item, InlineContent::Text(run) if !run.text.trim().is_empty()),
+            );
+            if has_text {
+                self.content
+                    .insert(0, InlineContent::Text(TextRun::new(format!("{label} "))));
+            }
         }
 
         Some(Paragraph {
@@ -1421,6 +1510,168 @@ mod tests {
             text.contains(&format!("level {}", levels - 1)),
             "got: {text:?}"
         );
+    }
+
+    // === Paragraph numbers ===
+
+    /// A paragraph header naming paragraph shape `shape` (the `u16` after the text length
+    /// and the control mask).
+    fn para_header_of(level: u16, shape: u16) -> Vec<u8> {
+        let mut data = vec![0u8; 12];
+        data[8..10].copy_from_slice(&shape.to_le_bytes());
+        make_record(TagId::ParaHeader as u16, level, &data)
+    }
+
+    fn numbered_paragraph(level: u16, shape: u16, text: &str) -> Vec<u8> {
+        let mut out = para_header_of(level, shape);
+        if !text.is_empty() {
+            out.extend(make_record(
+                TagId::ParaText as u16,
+                level + 1,
+                &utf16_bytes(text),
+            ));
+        }
+        out
+    }
+
+    /// Shapes 1 and 2 are the first and second level of numbering 1 (`1.` / `가.`); shape 3
+    /// is a bullet; shape 4 outlines.
+    fn numbered_styles() -> StyleRegistry {
+        use crate::model::{
+            HeadKind, NumberLevel, NumberShape, Numbering, ParaHead, ParagraphStyle,
+        };
+        let mut styles = StyleRegistry::new();
+        let level = |shape, format: &str| NumberLevel {
+            shape,
+            format: format.to_string(),
+            start: 1,
+        };
+        styles.register_numbering(
+            1,
+            Numbering {
+                levels: vec![
+                    level(NumberShape::Digit, "^1."),
+                    level(NumberShape::HangulSyllable, "^2."),
+                ],
+            },
+        );
+        styles.register_bullet(1, '●');
+        let shape = |kind, level, id| ParagraphStyle {
+            head: Some(ParaHead { kind, level, id }),
+            ..Default::default()
+        };
+        styles.register_para_style(1, shape(HeadKind::Number, 0, 1));
+        styles.register_para_style(2, shape(HeadKind::Number, 1, 1));
+        styles.register_para_style(3, shape(HeadKind::Bullet, 0, 1));
+        styles.register_para_style(4, shape(HeadKind::Outline, 0, 0));
+        styles
+    }
+
+    fn texts(section: &crate::model::Section) -> Vec<String> {
+        section
+            .content
+            .iter()
+            .filter_map(|block| match block {
+                crate::model::Block::Paragraph(p) => Some(p.plain_text()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn numbered_paragraphs_are_written_with_their_numbers() {
+        let mut stream = Vec::new();
+        for (shape, text) in [
+            (1, "first"),
+            (2, "under"),
+            (2, "under too"),
+            (1, "second"),
+            (0, "plain"),
+            (3, "bullet"),
+        ] {
+            stream.extend(numbered_paragraph(0, shape, text));
+        }
+        let section = parse_section(&stream, 0, &numbered_styles(), &mut 0).unwrap();
+        assert_eq!(
+            texts(&section),
+            [
+                "1. first",
+                "가. under",
+                "나. under too",
+                "2. second",
+                "plain",
+                "● bullet"
+            ]
+        );
+    }
+
+    #[test]
+    fn an_empty_numbered_paragraph_is_counted_but_says_nothing() {
+        let mut stream = numbered_paragraph(0, 1, "one");
+        stream.extend(numbered_paragraph(0, 1, ""));
+        stream.extend(numbered_paragraph(0, 1, "three"));
+        let section = parse_section(&stream, 0, &numbered_styles(), &mut 0).unwrap();
+        assert_eq!(texts(&section), ["1. one", "3. three"]);
+    }
+
+    #[test]
+    fn the_count_runs_on_through_a_table_cell() {
+        // Body paragraph, a table whose cell holds a numbered paragraph, a body paragraph.
+        let mut stream = numbered_paragraph(0, 1, "body");
+        // As in a document, the table sits under the paragraph that holds it.
+        stream.extend(table_record(2, 1, 1));
+        let mut list_header = vec![0u8; 16];
+        list_header[12..14].copy_from_slice(&1u16.to_le_bytes());
+        list_header[14..16].copy_from_slice(&1u16.to_le_bytes());
+        stream.extend(make_record(TagId::ListHeader as u16, 2, &list_header));
+        stream.extend(numbered_paragraph(2, 1, "in the cell"));
+        stream.extend(numbered_paragraph(0, 1, "after"));
+
+        let section = parse_section(&stream, 0, &numbered_styles(), &mut 0).unwrap();
+        let mut seen = texts(&section);
+        let crate::model::Block::Table(table) = section
+            .content
+            .iter()
+            .find(|b| matches!(b, crate::model::Block::Table(_)))
+            .unwrap()
+        else {
+            unreachable!()
+        };
+        seen.push(table.rows[0].cells[0].plain_text());
+        seen.sort();
+        assert_eq!(seen, ["1. body", "2. in the cell", "3. after"]);
+    }
+
+    #[test]
+    fn an_outline_paragraph_is_counted_by_the_sections_outline_numbering() {
+        let mut styles = numbered_styles();
+        // Numbering 2 is what the section's outline paragraphs are counted by.
+        styles.register_numbering(2, styles.numbering(1).unwrap().clone());
+        let mut stream = numbered_paragraph(0, 4, "before the definition");
+        // The section definition: control ID, properties, gaps, tab, then the numbering.
+        let mut secd = b"dces".to_vec();
+        secd.extend_from_slice(&[0u8; 14]);
+        secd.extend_from_slice(&2u16.to_le_bytes());
+        stream.extend(make_record(TagId::CtrlHeader as u16, 1, &secd));
+        stream.extend(numbered_paragraph(0, 4, "chapter"));
+        stream.extend(numbered_paragraph(0, 4, "next"));
+        let section = parse_section(&stream, 0, &styles, &mut 0).unwrap();
+        assert_eq!(
+            texts(&section),
+            ["before the definition", "1. chapter", "2. next"]
+        );
+    }
+
+    #[test]
+    fn a_section_definition_names_its_outline_numbering_and_no_other_control_does() {
+        let mut secd = b"dces".to_vec();
+        secd.extend_from_slice(&[0u8; 14]);
+        secd.extend_from_slice(&7u16.to_le_bytes());
+        assert_eq!(outline_numbering_id(&secd), Some(7));
+        let mut table = b" lbt".to_vec();
+        table.extend_from_slice(&[0u8; 16]);
+        assert_eq!(outline_numbering_id(&table), None);
+        assert_eq!(outline_numbering_id(b"dces"), None);
     }
 
     /// Control: a malformed ParaText in a body paragraph fails the section.
