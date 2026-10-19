@@ -45,6 +45,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   styles this changes which paragraphs are headings: lines of formulas and dates are no
   longer mistaken for headings, and numbered section titles are found.
 
+- **A centred document title just under the stricter threshold is a heading again.** Centred
+  text needs a font 1.5 times the body's to be inferred a heading, which keeps a centred
+  signature block out. A document title set at 1.45 times the body's size (16 pt over 11 pt)
+  fell under it. The paragraph that opens the document is now a heading when it is also the
+  largest text in the document, centred or not; a signature at the end stays text.
+
 ### Changed
 
 - `ParagraphStyle` gains `head`, the head kind, level and definition of a numbered, outlined

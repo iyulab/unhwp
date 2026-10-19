@@ -204,6 +204,12 @@ impl DocumentStats {
             .map(|(size, _)| *size as f32 / 10.0);
     }
 
+    /// Whether no text in the document is set larger than `size`.
+    pub fn is_largest(&self, size: f32) -> bool {
+        let size = (size * 10.0) as u32;
+        self.font_sizes.keys().all(|&key| key <= size)
+    }
+
     /// Check if a font size is significantly larger than the base.
     pub fn is_larger_than_base(&self, size: f32, ratio: f32) -> bool {
         if let Some(base) = self.base_font_size {
@@ -359,9 +365,10 @@ impl HeadingAnalyzer {
     pub fn analyze_paragraphs(&self, paragraphs: &[&Paragraph]) -> Vec<HeadingDecision> {
         let mut decisions = Vec::with_capacity(paragraphs.len());
 
-        // Make initial decisions
-        for para in paragraphs {
-            decisions.push(self.decide_heading(para));
+        // Make initial decisions. The first paragraph with text opens the document.
+        let opening = paragraphs.iter().position(|para| para.has_text_content());
+        for (index, para) in paragraphs.iter().enumerate() {
+            decisions.push(self.decide_heading(para, opening == Some(index)));
         }
 
         // Check sequential patterns if enabled
@@ -373,7 +380,7 @@ impl HeadingAnalyzer {
     }
 
     /// Make a heading decision for a single paragraph.
-    fn decide_heading(&self, para: &Paragraph) -> HeadingDecision {
+    fn decide_heading(&self, para: &Paragraph, opens_document: bool) -> HeadingDecision {
         let plain_text = para.plain_text();
         let trimmed = plain_text.trim();
         let style = &para.style;
@@ -427,7 +434,7 @@ impl HeadingAnalyzer {
 
         // P3: Statistical inference (font size based)
         if self.config.enable_statistical_inference {
-            if let Some(inferred) = self.infer_heading_from_style(para) {
+            if let Some(inferred) = self.infer_heading_from_style(para, opens_document) {
                 return HeadingDecision::Inferred(inferred);
             }
         }
@@ -451,7 +458,7 @@ impl HeadingAnalyzer {
     /// - Font size must be >= base_font_size * size_threshold_ratio
     /// - Bold formatting is a bonus signal but not required
     /// - Center-aligned text requires a higher threshold (to avoid signature/label misclassification)
-    fn infer_heading_from_style(&self, para: &Paragraph) -> Option<u8> {
+    fn infer_heading_from_style(&self, para: &Paragraph, opens_document: bool) -> Option<u8> {
         use crate::model::Alignment;
 
         // Must have text content
@@ -466,8 +473,11 @@ impl HeadingAnalyzer {
 
         // Determine the effective threshold ratio.
         // Center-aligned text (common for signatures, labels, footers in Korean docs)
-        // requires a higher font-size ratio to be inferred as a heading.
-        let effective_ratio = if para.style.alignment == Alignment::Center {
+        // requires a higher font-size ratio to be inferred as a heading -- unless it is the
+        // largest text of the document and the one it opens with, which is the document's title
+        // however it is set (a centred signature block at the end can be the largest too).
+        let is_title = opens_document && self.stats.is_largest(font_size);
+        let effective_ratio = if para.style.alignment == Alignment::Center && !is_title {
             // Center-aligned: require at least 1.5x base font (vs default ~1.15x)
             self.config.size_threshold_ratio.max(1.5)
         } else {
@@ -1593,6 +1603,87 @@ mod tests {
             "Center-aligned moderate-font text should NOT be heading: {:?}",
             decisions[1]
         );
+    }
+
+    /// A document of `paragraphs` analysed with statistical inference alone.
+    fn decisions_of(paragraphs: Vec<Paragraph>) -> Vec<HeadingDecision> {
+        let config = HeadingConfig::default()
+            .with_statistical_inference(true)
+            .with_trust_explicit(false);
+        let doc = Document {
+            sections: vec![Section {
+                content: paragraphs.into_iter().map(Block::Paragraph).collect(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        HeadingAnalyzer::new(config).analyze(&doc)
+    }
+
+    fn sized_body(text: &str, size: f32) -> Paragraph {
+        make_styled_paragraph(
+            text,
+            0,
+            TextStyle {
+                font_size: Some(size),
+                ..Default::default()
+            },
+        )
+    }
+
+    fn centred_bold(text: &str, size: f32) -> Paragraph {
+        make_center_styled_paragraph(
+            text,
+            0,
+            TextStyle {
+                bold: true,
+                font_size: Some(size),
+                ..Default::default()
+            },
+        )
+    }
+
+    #[test]
+    fn a_centred_title_that_opens_the_document_and_is_its_largest_text_is_a_heading() {
+        // 1.45x the body, below the centred threshold, but it is the document's title: the
+        // first text, and nothing is set larger.
+        let decisions = decisions_of(vec![
+            centred_bold("성과평가 기준 지침", 16.0),
+            sized_body("본문 텍스트입니다. 기준 폰트 크기를 정하는 글.", 11.0),
+            sized_body(
+                "본문 텍스트가 이어집니다. 기준 폰트 크기를 정하는 글.",
+                11.0,
+            ),
+        ]);
+        assert!(decisions[0].is_heading(), "got {:?}", decisions[0]);
+        assert!(!decisions[1].is_heading());
+    }
+
+    #[test]
+    fn a_centred_opening_paragraph_is_not_a_title_when_something_is_set_larger() {
+        let decisions = decisions_of(vec![
+            centred_bold("작은 머리글", 16.0),
+            sized_body("본문 텍스트입니다. 기준 폰트 크기를 정하는 글.", 11.0),
+            sized_body(
+                "본문 텍스트가 이어집니다. 기준 폰트 크기를 정하는 글.",
+                11.0,
+            ),
+            sized_body("더 큰 글", 20.0),
+        ]);
+        assert!(!decisions[0].is_heading(), "got {:?}", decisions[0]);
+    }
+
+    #[test]
+    fn a_centred_signature_after_the_body_is_not_a_title_even_as_the_largest_text() {
+        let decisions = decisions_of(vec![
+            sized_body("본문 텍스트입니다. 기준 폰트 크기를 정하는 글.", 11.0),
+            sized_body(
+                "본문 텍스트가 이어집니다. 기준 폰트 크기를 정하는 글.",
+                11.0,
+            ),
+            centred_bold("스마트제조혁신추진단장", 16.0),
+        ]);
+        assert!(!decisions[2].is_heading(), "got {:?}", decisions[2]);
     }
 
     #[test]
