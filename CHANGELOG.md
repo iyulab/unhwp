@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-10-20
+
 ### Fixed
 
 - **A table nested in a table cell is a table, not text.** The HWP 5.0 reader folded every
@@ -965,7 +967,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `thiserror` for error types
 - `bytes` for buffer handling
 
-[Unreleased]: https://github.com/iyulab/unhwp/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/iyulab/unhwp/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/iyulab/unhwp/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/iyulab/unhwp/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/iyulab/unhwp/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/iyulab/unhwp/compare/v0.19.0...v0.20.0
