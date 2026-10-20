@@ -262,6 +262,7 @@ unhwp convert report.hwp --no-images
 
 # Every table as CSV (RFC 4180); with -o, one file per table: s1-t1.csv, s1-t2.csv, ...
 # A merged cell's text is in its top-left position, the positions it covers empty.
+# A table nested in a cell comes right after the table that holds it.
 unhwp tables report.hwp -o ./tables
 
 # Quiet batch conversion (shell) — -q is on the `convert` subcommand
@@ -614,7 +615,11 @@ unhwp maintains document structure during conversion:
 
 - **Headings**: Outline levels → `#`, `##`, `###`
 - **Lists**: Ordered and unordered with nesting
-- **Tables**: Cell spans, alignment, HTML fallback for complex tables
+- **Numbered paragraphs**: A paragraph numbered by the document's numbering or outline definition
+  is written with its number (`1.`, `가)`, `(1)`, `①`, ...), counted in reading order per section
+- **Tables**: Cell spans, alignment, HTML fallback for complex tables; a table nested in a cell
+  is a table of its own (`TableCell::nested_tables`), written after the table that holds it and
+  extracted by `unhwp tables` as its own CSV
 - **Images**: Extracted with Markdown references
 - **Inline styles**: Bold (`**`), italic (`*`), underline (`<u>`), strikethrough (`~~`)
 - **Equations**: LaTeX or script format
