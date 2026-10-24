@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.23.1] - 2026-10-24
+
 ### Fixed
 
 - **Ordinary HWPX text is no longer marked as struck through.** Hancom writes
@@ -984,7 +986,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `thiserror` for error types
 - `bytes` for buffer handling
 
-[Unreleased]: https://github.com/iyulab/unhwp/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/iyulab/unhwp/compare/v0.23.1...HEAD
+[0.23.1]: https://github.com/iyulab/unhwp/compare/v0.23.0...v0.23.1
 [0.23.0]: https://github.com/iyulab/unhwp/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/iyulab/unhwp/compare/v0.21.0...v0.22.0
 [0.21.0]: https://github.com/iyulab/unhwp/compare/v0.20.0...v0.21.0

@@ -51,7 +51,7 @@ from .unhwp import (
     supported_formats,
 )
 
-__version__ = "0.23.0"
+__version__ = "0.23.1"
 __all__ = [
     # Functions
     "parse",
