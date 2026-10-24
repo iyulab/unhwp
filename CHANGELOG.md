@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Ordinary HWPX text is no longer marked as struck through.** Hancom writes
+  `<hh:strikeout shape="3D">` on the character properties of unstruck text, and the reader
+  took every shape other than `NONE` as a strikeout, so whole paragraphs came out wrapped in
+  `~~…~~`. Only the line shapes a strikeout offers (`SOLID` through `SLIM_THICK_SLIM`) strike
+  the text now; `WAVE`, `DOUBLEWAVE`, the 3D kinds, a missing and an unknown shape do not --
+  the mapping hwp2hwpx uses, and what the printed copies show.
+- **HWP 5.0 superscripts, subscripts and strikeouts are read from the right bits.** The
+  character shape reader took bits 11, 12 and 13 (shadow and emboss) as superscript,
+  subscript and strikeout, so real scripts (`m²`, `Nm³`, `E_bo`, footnote marks) were lost
+  and shadowed or embossed text was marked instead. They are bits 15, 16 and 18 (HWP 5.0
+  table 35); a strikeout counts only with a line shape that strikes (kinds 0-10, the same
+  rule as HWPX -- Hancom stores «strikeout on, 3D shape» on ordinary text). An underline of
+  kind 2 (middle) is not an underline, and neither is an HWPX `<hh:underline>` of type `CENTER`
+  or without a type (its default is `NONE`); `BOTTOM` and `TOP` are.
+
 ## [0.23.0] - 2026-10-20
 
 ### Fixed

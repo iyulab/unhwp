@@ -34,13 +34,27 @@ const CHAR_SHAPE_PROPERTIES_OFFSET: usize = 46;
 /// Offset for text color (COLORREF, 4 bytes)
 const CHAR_SHAPE_TEXT_COLOR_OFFSET: usize = 52;
 
-// CharShape property bit masks (HWP 5.0 스펙 Table 35: bit0=italic, bit1=bold)
+// CharShape property bits (HWP 5.0 spec table 35): 0 italic, 1 bold, 2-3 underline kind,
+// 4-7 underline shape, 8-10 outline, 11-12 shadow, 13 emboss, 14 engrave, 15 superscript,
+// 16 subscript, 18-20 strikeout, 21-24 emphasis mark, 25 font-fitted space, 26-29 strikeout
+// shape, 30 kerning.
 const CHAR_PROP_ITALIC: u32 = 1 << 0;
 const CHAR_PROP_BOLD: u32 = 1 << 1;
-const CHAR_PROP_UNDERLINE: u32 = 1 << 2;
-const CHAR_PROP_SUPERSCRIPT: u32 = 1 << 11;
-const CHAR_PROP_SUBSCRIPT: u32 = 1 << 12;
-const CHAR_PROP_STRIKETHROUGH: u32 = 1 << 13;
+const CHAR_PROP_UNDERLINE_KIND_SHIFT: u32 = 2;
+const CHAR_PROP_SUPERSCRIPT: u32 = 1 << 15;
+const CHAR_PROP_SUBSCRIPT: u32 = 1 << 16;
+const CHAR_PROP_STRIKEOUT_SHIFT: u32 = 18;
+const CHAR_PROP_STRIKEOUT_SHAPE_SHIFT: u32 = 26;
+
+/// Whether a strikeout of this shape (table 27 border line kind) draws a line through the text.
+///
+/// The strikeout shapes a word processor offers are kinds 0-10 (solid through thin-thick-thin).
+/// Kinds 11-16 (wave, double wave and the 3D kinds) are not strikeout shapes: Hancom stores
+/// «strikeout on, kind 15» as the default of ordinary text, and it prints no line. hwp2hwpx
+/// (`ValueConvertor.lineType2(BorderType2)`) likewise writes them as `NONE`.
+fn strikeout_shape_draws(kind: u32) -> bool {
+    kind <= 10
+}
 
 // ============================================================================
 // ParaShape Record Byte Offsets (HWP 5.0 Spec 표 43)
@@ -328,10 +342,13 @@ fn parse_char_shape(record: &Record) -> Result<CharShapeData> {
 
     let bold = properties & CHAR_PROP_BOLD != 0;
     let italic = properties & CHAR_PROP_ITALIC != 0;
-    let underline = properties & CHAR_PROP_UNDERLINE != 0;
+    // Underline kind: 0 none, 1 below, 2 middle, 3 above. hwp2hwpx (`underLineType`) writes
+    // «middle» as no underline.
+    let underline = matches!((properties >> CHAR_PROP_UNDERLINE_KIND_SHIFT) & 0b11, 1 | 3);
     let superscript = properties & CHAR_PROP_SUPERSCRIPT != 0;
     let subscript = properties & CHAR_PROP_SUBSCRIPT != 0;
-    let strikethrough = properties & CHAR_PROP_STRIKETHROUGH != 0;
+    let strikethrough = (properties >> CHAR_PROP_STRIKEOUT_SHIFT) & 0b111 != 0
+        && strikeout_shape_draws((properties >> CHAR_PROP_STRIKEOUT_SHAPE_SHIFT) & 0xF);
 
     // Text color (RGB, 3 bytes)
     let text_color = if data.len() > CHAR_SHAPE_TEXT_COLOR_OFFSET + 2 {
@@ -747,6 +764,45 @@ mod tests {
         let shape = parse_char_shape(&record).expect("parse should succeed");
         assert!(shape.bold, "bit1 must be bold");
         assert!(shape.italic, "bit0 must be italic");
+    }
+
+    /// A CharShape record from its bytes as a real document stores them.
+    fn char_shape_from_hex(hex: &str) -> CharShapeData {
+        let data: Vec<u8> = (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect();
+        parse_char_shape(&record_of(TagId::CharShape, data)).expect("parse should succeed")
+    }
+
+    // The records below are dumped from public documents (law.go.kr forms, a KEA rule book).
+
+    #[test]
+    fn superscript_and_subscript_are_bits_15_and_16() {
+        let sup = char_shape_from_hex("0d0010000b000b00070009000700646464646464640000000000000064646464646464000000000000004c040000008000000a0a0000000000000000ffffffffb2b2b200020000000000");
+        assert!(sup.superscript && !sup.subscript && !sup.strikethrough);
+        let sub = char_shape_from_hex("0d0010000b000b00070009000700646464646464640000000000000064646464646464000000000000004c040000000001000a0a0000000000000000ffffffffb2b2b200020000000000");
+        assert!(sub.subscript && !sub.superscript && !sub.strikethrough);
+    }
+
+    #[test]
+    fn a_solid_strikeout_is_struck() {
+        // properties 0x00040008: strikeout bit 18 on, shape 0 (solid), underline kind 2.
+        let shape = char_shape_from_hex("08000b0007000700070008000700646464646464640000000000000064646464646464000000000000004c040000080004000a0a0000000000000000ffffffffb2b2b200020000000000");
+        assert!(shape.strikethrough);
+    }
+
+    #[test]
+    fn a_strikeout_of_the_3d_shape_is_not_struck() {
+        // properties 0x3c0400f8: strikeout bit 18 on with shape 15 (3D) -- every character shape
+        // of a form whose printed copy has no line through any text; bits 11-13 (shadow, emboss)
+        // are set too and are neither scripts nor strikeout.
+        let shape = char_shape_from_hex("050005000400040004000400040064646464646464000000000000006464646464646400000000000000e8030000f800043c0a0a0000000000000000ffffffffc0c0c000020000000000");
+        assert!(!shape.strikethrough && !shape.superscript && !shape.subscript);
+        assert!(
+            !shape.underline,
+            "underline kind 2 (middle) is not an underline"
+        );
     }
 
     /// A record of `tag` holding `data`.

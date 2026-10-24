@@ -96,27 +96,18 @@ pub fn parse_styles(xml: &str, registry: &mut StyleRegistry) -> Result<()> {
                     }
                     "underline" if in_char_properties => {
                         if let Some((_, ref mut style)) = current_char_style {
-                            // Check underline type - any non-none value means underlined
-                            // Use case-insensitive comparison (HWPML uses "NONE", not "none")
+                            // OWPML underline types are NONE (the default), BOTTOM, CENTER and
+                            // TOP. CENTER is the HWP 5.0 «middle» kind, which hwp2hwpx writes
+                            // as no underline; the HWP 5.0 reader treats it the same way.
                             let utype = get_string_attr(&e, "type").unwrap_or_default();
-                            style.underline = !utype.eq_ignore_ascii_case("none") && utype != "0";
-                            if utype.is_empty() {
-                                style.underline = true; // Default if just <underline/>
-                            }
+                            style.underline = utype.eq_ignore_ascii_case("bottom")
+                                || utype.eq_ignore_ascii_case("top");
                         }
                     }
                     "strikeout" | "strikethrough" if in_char_properties => {
                         if let Some((_, ref mut style)) = current_char_style {
-                            // Check shape/type attribute - "NONE" or "none" means no strikethrough
                             let shape = get_string_attr(&e, "shape").unwrap_or_default();
-                            let stype = get_string_attr(&e, "type").unwrap_or_default();
-                            let is_none = shape.eq_ignore_ascii_case("none")
-                                || stype.eq_ignore_ascii_case("none")
-                                || shape == "0"
-                                || stype == "0";
-                            if !is_none {
-                                style.strikethrough = true;
-                            }
+                            style.strikethrough = strikeout_shape_draws(&shape);
                         }
                     }
                     // Superscript/subscript (HWPML uses supscript/subscript in charShape)
@@ -339,6 +330,30 @@ fn finish_level(
 }
 
 /// Parses alignment string to Alignment enum.
+/// Whether `<hh:strikeout shape="…">` draws a line through the text.
+///
+/// `shape` is an OWPML `LineType2`. The strikeout shapes a word processor offers are `SOLID`
+/// through `SLIM_THICK_SLIM`; `WAVE`, `DOUBLEWAVE` and the 3D kinds are not, and Hancom writes
+/// `3D` on the character properties of ordinary unstruck text (its printed copy has no line).
+/// hwp2hwpx (`ValueConvertor.lineType2(BorderType2)`) maps those kinds to `NONE` the same way.
+/// A missing or unknown shape is `NONE`, the attribute's default in Hancom's OWPML model.
+fn strikeout_shape_draws(shape: &str) -> bool {
+    matches!(
+        shape.to_ascii_uppercase().as_str(),
+        "SOLID"
+            | "DOT"
+            | "DASH"
+            | "DASH_DOT"
+            | "DASH_DOT_DOT"
+            | "LONG_DASH"
+            | "CIRCLE"
+            | "DOUBLE_SLIM"
+            | "SLIM_THICK"
+            | "THICK_SLIM"
+            | "SLIM_THICK_SLIM"
+    )
+}
+
 fn parse_alignment(align: &str) -> Alignment {
     match align.to_lowercase().as_str() {
         "left" | "0" => Alignment::Left,
@@ -398,4 +413,72 @@ fn get_int_attr(e: &quick_xml::events::BytesStart, name: &str) -> Option<i32> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The character styles of a header holding one `charPr` per entry of `elements`, each
+    /// `charPr` carrying that entry as its child elements.
+    fn styles_of(elements: &[String]) -> Vec<TextStyle> {
+        let char_prs: String = elements
+            .iter()
+            .enumerate()
+            .map(|(id, inner)| {
+                format!(r##"<hh:charPr id="{id}" height="1000" textColor="#000000">{inner}</hh:charPr>"##)
+            })
+            .collect();
+        let xml = format!(
+            r#"<hh:head xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head"><hh:refList><hh:charProperties itemCnt="{}">{char_prs}</hh:charProperties></hh:refList></hh:head>"#,
+            elements.len()
+        );
+        let mut registry = StyleRegistry::new();
+        parse_styles(&xml, &mut registry).unwrap();
+        (0..elements.len() as u32)
+            .map(|id| registry.get_char_style(id).cloned().unwrap_or_default())
+            .collect()
+    }
+
+    #[test]
+    fn only_the_line_shapes_a_strikeout_offers_strike_the_text() {
+        // `NONE` and `3D` are the two shapes of a public press release's header; its printed copy
+        // shows no line through the `3D` runs.
+        let shapes = [
+            "NONE",
+            "3D",
+            "SOLID",
+            "DASH_DOT",
+            "SLIM_THICK_SLIM",
+            "WAVE",
+            "REV3D",
+            "",
+        ];
+        let elements: Vec<String> = shapes
+            .iter()
+            .map(|shape| match *shape {
+                "" => r##"<hh:strikeout color="#000000"/>"##.to_string(),
+                shape => format!(r##"<hh:strikeout shape="{shape}" color="#000000"/>"##),
+            })
+            .collect();
+        let struck: Vec<bool> = styles_of(&elements)
+            .iter()
+            .map(|s| s.strikethrough)
+            .collect();
+        assert_eq!(
+            struck,
+            [false, false, true, true, true, false, false, false]
+        );
+    }
+
+    #[test]
+    fn an_underline_is_one_below_or_above_the_text() {
+        let elements: Vec<String> = ["NONE", "BOTTOM", "CENTER", "TOP"]
+            .iter()
+            .map(|t| format!(r##"<hh:underline type="{t}" shape="SOLID" color="#000000"/>"##))
+            .chain([r##"<hh:underline shape="SOLID" color="#000000"/>"##.to_string()])
+            .collect();
+        let underlined: Vec<bool> = styles_of(&elements).iter().map(|s| s.underline).collect();
+        assert_eq!(underlined, [false, true, false, true, false]);
+    }
 }
