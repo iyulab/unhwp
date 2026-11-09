@@ -41,7 +41,8 @@ impl std::fmt::Display for FormatType {
 /// Detect document format from a file path.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn detect_format_from_path(path: impl AsRef<Path>) -> Result<FormatType> {
-    let mut file = std::fs::File::open(path)?;
+    let path = path.as_ref();
+    let mut file = std::fs::File::open(path).map_err(|e| Error::read_file(path, e))?;
     detect_format(&mut file)
 }
 

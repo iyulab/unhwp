@@ -2,12 +2,12 @@
 //!
 //! A command-line tool for extracting content from HWP and HWPX files.
 
+mod output;
 mod writer;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use colored::*;
 use indicatif::{ProgressBar, ProgressStyle};
-use std::fs;
 use std::io::{self, Write};
 use std::ops::ControlFlow;
 use std::path::PathBuf;
@@ -477,12 +477,12 @@ fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
 
             let doc = parse_file(&input)?;
 
-            fs::create_dir_all(&output)?;
+            output::create_dir_all(&output)?;
 
             let mut count = 0;
             for (name, resource) in &doc.resources {
                 let path = output.join(name);
-                fs::write(&path, &resource.data)?;
+                output::write(&path, &resource.data)?;
                 count += 1;
             }
 
@@ -532,7 +532,7 @@ fn cmd_convert(args: ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Create output directory
-    fs::create_dir_all(&output_dir)?;
+    output::create_dir_all(&output_dir)?;
 
     // Resolve formats: --all overrides --formats
     let formats: Vec<OutputFormat> = if args.all {
@@ -720,12 +720,12 @@ fn cmd_convert(args: ConvertArgs) -> Result<(), Box<dyn std::error::Error>> {
             ParseEvent::ResourceExtracted { name, data } => {
                 if let Some(ref dir) = images_dir_clone {
                     let result: io::Result<()> = (|| {
-                        std::fs::create_dir_all(dir)?;
+                        output::create_dir_all(dir)?;
                         // Sanitize resource name to prevent path traversal attacks
                         let safe_name = std::path::Path::new(&name)
                             .file_name()
                             .unwrap_or_else(|| std::ffi::OsStr::new(&name));
-                        std::fs::write(dir.join(safe_name), &data)?;
+                        output::write(dir.join(safe_name), &data)?;
                         Ok(())
                     })();
                     match result {
@@ -850,10 +850,10 @@ fn cmd_tables(
             print!("{}", text.join("\r\n"));
         }
         Some(dir) => {
-            fs::create_dir_all(dir)?;
+            output::create_dir_all(dir)?;
             for (section, n, text) in &tables {
                 let name = format!("s{section}-t{n}.{extension}");
-                fs::write(dir.join(&name), text)?;
+                output::write(dir.join(&name), text)?;
                 println!("{} {}", "Extracted".green(), name);
             }
             println!(
@@ -869,7 +869,7 @@ fn cmd_tables(
 fn write_output(path: Option<&PathBuf>, content: &str) -> Result<(), Box<dyn std::error::Error>> {
     match path {
         Some(p) => {
-            fs::write(p, content)?;
+            output::write(p, content)?;
         }
         None => {
             let stdout = io::stdout();

@@ -84,7 +84,7 @@ impl MultiFormatWriter {
         // Markdown — open writer now; render section-by-section in write_section
         let (md, md_path, md_renderer) = if want_md {
             let p = out_dir.join("extract.md");
-            let f = File::create(&p)?;
+            let f = crate::output::create(&p)?;
             let renderer = MarkdownRenderer::new(render_opts.clone());
             (Some(BufWriter::new(f)), Some(p), Some(renderer))
         } else {
@@ -94,7 +94,7 @@ impl MultiFormatWriter {
         // Text
         let (txt, txt_path) = if want_txt {
             let p = out_dir.join("extract.txt");
-            let f = File::create(&p)?;
+            let f = crate::output::create(&p)?;
             (Some(BufWriter::new(f)), Some(p))
         } else {
             (None, None)
@@ -103,7 +103,7 @@ impl MultiFormatWriter {
         // JSON — preamble is written in write_document_start
         let (json, json_path) = if want_json {
             let p = out_dir.join("content.json");
-            let f = File::create(&p)?;
+            let f = crate::output::create(&p)?;
             (Some(BufWriter::new(f)), Some(p))
         } else {
             (None, None)

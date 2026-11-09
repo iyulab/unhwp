@@ -40,7 +40,8 @@ pub struct HwpxContainer {
 impl HwpxContainer {
     /// Opens an HWPX container from a file path.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let data = std::fs::read(path)?;
+        let path = path.as_ref();
+        let data = std::fs::read(path).map_err(|e| Error::read_file(path, e))?;
         Self::from_bytes(data)
     }
 

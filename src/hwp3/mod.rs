@@ -21,7 +21,7 @@ mod header;
 pub use body::BodyParser;
 pub use header::{Hwp3Header, Hwp3Version};
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::model::{Document, Section};
 use encoding_rs::EUC_KR;
 use std::io::{Read, Seek, SeekFrom};
@@ -36,7 +36,8 @@ pub struct Hwp3Parser<R> {
 impl Hwp3Parser<std::io::BufReader<std::fs::File>> {
     /// Opens an HWP 3.x file for parsing.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let file = std::fs::File::open(path)?;
+        let path = path.as_ref();
+        let file = std::fs::File::open(path).map_err(|e| Error::read_file(path, e))?;
         let reader = std::io::BufReader::new(file);
         Self::from_reader(reader)
     }

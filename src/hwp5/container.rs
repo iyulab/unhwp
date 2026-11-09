@@ -38,7 +38,8 @@ pub struct Hwp5Container {
 impl Hwp5Container {
     /// Opens an HWP 5.0 container from a file path.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let data = std::fs::read(path)?;
+        let path = path.as_ref();
+        let data = std::fs::read(path).map_err(|e| Error::read_file(path, e))?;
         Self::from_bytes(data)
     }
 

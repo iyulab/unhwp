@@ -7,7 +7,7 @@
 //! unhwp = { version = "0.1", features = ["async"] }
 //! ```
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::model::Document;
 use crate::render::RenderOptions;
 use crate::{FormatType, ParseOptions};
@@ -27,7 +27,10 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 /// # }
 /// ```
 pub async fn parse_file(path: impl AsRef<Path>) -> Result<Document> {
-    let data = fs::read(path).await?;
+    let path = path.as_ref();
+    let data = fs::read(path)
+        .await
+        .map_err(|e| Error::read_file(path, e))?;
     parse_bytes(&data).await
 }
 
@@ -98,7 +101,10 @@ pub async fn to_markdown_with_options(
 
 /// Asynchronously detects the format of a file.
 pub async fn detect_format(path: impl AsRef<Path>) -> Result<FormatType> {
-    let data = fs::read(path).await?;
+    let path = path.as_ref();
+    let data = fs::read(path)
+        .await
+        .map_err(|e| Error::read_file(path, e))?;
     crate::detect_format_from_bytes(&data)
 }
 
@@ -167,7 +173,10 @@ impl AsyncUnhwp {
 
     /// Parses a document asynchronously.
     pub async fn parse(self, path: impl AsRef<Path>) -> Result<AsyncParsedDocument> {
-        let data = fs::read(path).await?;
+        let path = path.as_ref();
+        let data = fs::read(path)
+            .await
+            .map_err(|e| Error::read_file(path, e))?;
         let document = parse_bytes_with_options(&data, &self.parse_options).await?;
         Ok(AsyncParsedDocument {
             document,

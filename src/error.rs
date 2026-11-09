@@ -1,6 +1,7 @@
 //! Error types for unhwp library.
 
 use std::io;
+use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 /// Result type alias for unhwp operations.
@@ -170,6 +171,44 @@ impl From<std::str::Utf8Error> for Error {
     }
 }
 
+/// What an I/O failure was doing and to which file: the message of the `io::Error` that
+/// [`Error::read_file`] builds, with the operating-system error kept as its source.
+#[derive(Debug)]
+struct FileAccess {
+    path: PathBuf,
+    source: io::Error,
+}
+
+impl std::fmt::Display for FileAccess {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "cannot read '{}': {}", self.path.display(), self.source)
+    }
+}
+
+impl std::error::Error for FileAccess {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+impl Error {
+    /// An I/O failure while reading the file at `path`, naming that file.
+    ///
+    /// A bare `io::Error` says only what the operating system said ("No such file or
+    /// directory"), so a caller that hands in several paths cannot tell which one failed. The
+    /// [`io::ErrorKind`] is kept and the original error stays reachable as the source; the
+    /// classification is still [`ErrorKind::Io`].
+    pub(crate) fn read_file(path: &Path, source: io::Error) -> Self {
+        Error::Io(io::Error::new(
+            source.kind(),
+            FileAccess {
+                path: path.to_path_buf(),
+                source,
+            },
+        ))
+    }
+}
+
 impl Error {
     /// Classify this error into a stable [`ErrorKind`].
     ///
@@ -294,5 +333,29 @@ mod kind_tests {
         OleContainer = 401,
         RecordParse = 402,
         DistributionRestricted = 403,
+    }
+}
+
+#[cfg(test)]
+mod read_file_tests {
+    use super::*;
+
+    #[test]
+    fn a_read_failure_names_the_file_and_keeps_its_kind() {
+        let missing = Path::new("no-such-dir/report.hwp");
+        let err = Error::read_file(
+            missing,
+            io::Error::new(io::ErrorKind::NotFound, "No such file or directory"),
+        );
+        assert_eq!(err.kind(), ErrorKind::Io);
+        let message = err.to_string();
+        assert!(message.contains("cannot read"), "{message}");
+        assert!(message.contains("report.hwp"), "{message}");
+        assert!(message.contains("No such file or directory"), "{message}");
+        let Error::Io(inner) = &err else {
+            panic!("expected Error::Io, got {err:?}")
+        };
+        assert_eq!(inner.kind(), io::ErrorKind::NotFound);
+        assert!(inner.get_ref().and_then(|e| e.source()).is_some());
     }
 }
