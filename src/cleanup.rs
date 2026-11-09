@@ -688,7 +688,9 @@ pub fn stage3_filter_structure(input: &str, options: &CleanupOptions) -> String 
 
     // Convert back to markdown
     let mut output = String::new();
-    if pulldown_cmark_to_cmark::cmark(events.into_iter(), &mut output).is_err() {
+    // The serializer takes the parser's options so it knows which constructs (tables here) the
+    // events were read with; it refuses a structurally invalid event stream instead of guessing.
+    if pulldown_cmark_to_cmark::cmark(events, &mut output, parser_options).is_err() {
         // Fallback to original if conversion fails
         return input.to_string();
     }

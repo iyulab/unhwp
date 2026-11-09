@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Markdown cleanup uses `pulldown-cmark-to-cmark` 23.** The serializer is given the options the
+  text was parsed with; table cells gain no escapes (release 23.0.0 wrote `0\.05` inside cells,
+  23.0.1 does not).
+
 ## [0.23.1] - 2026-10-24
 
 ### Fixed
