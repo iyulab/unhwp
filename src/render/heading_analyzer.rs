@@ -197,10 +197,12 @@ impl DocumentStats {
     /// Calculate the base (body) font size from the distribution.
     /// Uses the most weighted font size as the baseline.
     pub fn calculate_base_font_size(&mut self) {
+        // The most weighted size; of equal weights the smaller is the body text — the answer
+        // does not depend on the order a map hands its entries out in.
         self.base_font_size = self
             .font_sizes
             .iter()
-            .max_by_key(|(_, weight)| *weight)
+            .max_by_key(|(size, weight)| (**weight, std::cmp::Reverse(**size)))
             .map(|(size, _)| *size as f32 / 10.0);
     }
 
@@ -1526,6 +1528,20 @@ mod tests {
         stats.calculate_base_font_size();
 
         assert_eq!(stats.base_font_size, Some(12.0));
+    }
+
+    /// Sizes that weigh the same: the smaller is the body text, on every run.
+    #[test]
+    fn test_document_stats_base_font_tie_is_the_smaller_size() {
+        for _ in 0..64 {
+            let mut stats = DocumentStats::default();
+            for size in [160, 120, 100, 140] {
+                stats.font_sizes.insert(size, 300);
+            }
+            stats.font_sizes.insert(90, 20);
+            stats.calculate_base_font_size();
+            assert_eq!(stats.base_font_size, Some(10.0));
+        }
     }
 
     #[test]

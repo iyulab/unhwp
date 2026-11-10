@@ -165,9 +165,9 @@ impl Paragraph {
     /// Calculates weighted by text length - longer runs contribute more.
     /// Returns None if no text runs have font size information.
     pub fn dominant_font_size(&self) -> Option<f32> {
-        use std::collections::HashMap;
-
-        let mut size_weights: HashMap<u32, usize> = HashMap::new();
+        // Sizes in the order they first appear: when two sizes weigh the same, the one the
+        // paragraph uses first is its dominant size, whatever the run.
+        let mut size_weights: Vec<(u32, usize)> = Vec::new();
 
         for item in &self.content {
             if let InlineContent::Text(run) = item {
@@ -175,13 +175,18 @@ impl Paragraph {
                     // Convert to integer key (tenths of a point for precision)
                     let key = (size * 10.0) as u32;
                     let text_len = run.text.chars().count();
-                    *size_weights.entry(key).or_insert(0) += text_len;
+                    match size_weights.iter_mut().find(|(k, _)| *k == key) {
+                        Some((_, weight)) => *weight += text_len,
+                        None => size_weights.push((key, text_len)),
+                    }
                 }
             }
         }
 
+        // `max_by_key` keeps the last of equal maxima; the first one is wanted.
         size_weights
             .into_iter()
+            .rev()
             .max_by_key(|(_, weight)| *weight)
             .map(|(key, _)| key as f32 / 10.0)
     }
@@ -299,6 +304,34 @@ mod tests {
 
         // 12.0 should win because of longer text
         assert_eq!(para.dominant_font_size(), Some(12.0));
+    }
+
+    /// Two sizes that weigh the same: the dominant one is the one the paragraph uses first,
+    /// on every call — a map handing its entries out in a different order must not decide.
+    #[test]
+    fn test_dominant_font_size_tie_is_the_first_used() {
+        let run = |text: &str, size: f32| {
+            InlineContent::Text(TextRun::with_style(
+                text,
+                TextStyle {
+                    font_size: Some(size),
+                    ..Default::default()
+                },
+            ))
+        };
+        for _ in 0..64 {
+            let mut para = Paragraph::new();
+            para.content.push(run("aaaaaaaaaa", 12.0));
+            para.content.push(run("bbbbbbbbbb", 10.0));
+            para.content.push(run("cccccccccc", 14.0));
+            assert_eq!(para.dominant_font_size(), Some(12.0));
+
+            let mut reversed = Paragraph::new();
+            reversed.content.push(run("cccccccccc", 14.0));
+            reversed.content.push(run("bbbbbbbbbb", 10.0));
+            reversed.content.push(run("aaaaaaaaaa", 12.0));
+            assert_eq!(reversed.dominant_font_size(), Some(14.0));
+        }
     }
 
     #[test]

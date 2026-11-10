@@ -7,7 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`Document::resources` is a `BTreeMap`, so the same document gives the same output on every run.**
+  The resources were a `HashMap`, whose iteration order changes from one process to the next: the JSON of
+  a document with images, the list of resource ids a binding reads and the order the CLI writes extracted
+  files in varied from run to run, and two resources whose file names differ only in the extension
+  (`image1.bmp`, `image1.png`) could swap which one an image reference resolved to. They are now ordered
+  by id. A caller that names the map's type changes `HashMap<String, Resource>` to
+  `BTreeMap<String, Resource>`; `get`, `insert`, `keys`, `values` and `iter` are unchanged.
+
+- **Markdown cleanup uses `pulldown-cmark-to-cmark` 23.** The serializer is given the options the
+  text was parsed with; table cells gain no escapes (release 23.0.0 wrote `0\.05` inside cells,
+  23.0.1 does not).
+
 ### Fixed
+
+- **A tie between font sizes no longer depends on the run.** The body font size of a document and the
+  dominant font size of a paragraph -- which decide whether a paragraph is read as a heading -- were
+  picked from a map by the largest weight; when two sizes weighed the same the one chosen was whichever
+  the map handed out last, so the same file could be read with different headings on two runs. The
+  smaller size is the body text, and a paragraph's dominant size is, of equal ones, the one it uses first.
 
 - **A file that cannot be read says which file.** The error for an input that does not exist or cannot be opened
   named only the operating-system text ("No such file or directory"), so a caller handing in several paths could
@@ -18,12 +38,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file that cannot be written, was reported with the operating-system text alone; it now says `cannot create output
   directory '<path>'` / `cannot write output file '<path>'`, so a command with both an input file and an output
   folder shows which one is at fault. Exit codes and successful output are unchanged.
-
-### Changed
-
-- **Markdown cleanup uses `pulldown-cmark-to-cmark` 23.** The serializer is given the options the
-  text was parsed with; table cells gain no escapes (release 23.0.0 wrote `0\.05` inside cells,
-  23.0.1 does not).
 
 ## [0.23.1] - 2026-10-24
 

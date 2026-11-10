@@ -2,7 +2,7 @@
 
 use super::{Paragraph, StyleRegistry, Table};
 use serde::Serialize;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 /// A complete document parsed from HWP/HWPX.
 #[derive(Debug, Clone, Default, Serialize)]
@@ -13,8 +13,9 @@ pub struct Document {
     pub sections: Vec<Section>,
     /// Style registry
     pub styles: StyleRegistry,
-    /// Binary resources (images, etc.) keyed by ID
-    pub resources: HashMap<String, Resource>,
+    /// Binary resources (images, etc.) keyed by ID. Ordered by ID, so the JSON, the list of
+    /// IDs a binding reads and the order resources are extracted in are the same on every run.
+    pub resources: BTreeMap<String, Resource>,
     /// Indices of sections that could not be read or parsed and were left out.
     ///
     /// Always empty under the default [`ErrorMode::Strict`], where an unreadable section
@@ -260,6 +261,27 @@ pub enum ResourceType {
 mod tests {
     use super::*;
     use crate::model::{TableCell, TableRow};
+
+    /// The same document gives the same JSON on every run: resources are listed by ID, whatever
+    /// order they were added in.
+    #[test]
+    fn test_resources_are_listed_in_id_order() {
+        let mut doc = Document::new();
+        for id in ["image9", "image10", "image1", "image5.bmp", "image5.png"] {
+            let mut resource = Resource::new(ResourceType::Image, vec![1]);
+            resource.filename = Some(id.to_string());
+            doc.resources.insert(id.to_string(), resource);
+        }
+        let listed: Vec<&str> = doc.resources.keys().map(String::as_str).collect();
+        assert_eq!(
+            listed,
+            ["image1", "image10", "image5.bmp", "image5.png", "image9"]
+        );
+        let json = serde_json::to_string(&doc).unwrap();
+        let at = |id: &str| json.find(&format!("\"filename\":\"{id}\"")).expect(id);
+        assert!(at("image1") < at("image10") && at("image10") < at("image5.bmp"));
+        assert!(at("image5.bmp") < at("image5.png") && at("image5.png") < at("image9"));
+    }
 
     /// A one-cell table holding `text`.
     fn table(text: &str) -> Table {
