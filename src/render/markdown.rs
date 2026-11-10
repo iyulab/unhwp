@@ -1304,6 +1304,61 @@ mod tests {
         assert!(result.contains("x<sup>**2**</sup>"), "got: {result:?}");
     }
 
+    /// The same document renders the same every time: two resources whose names differ only in
+    /// the extension resolve one image reference the same way, and sizes used equally often
+    /// make the same body size — neither is left to the order a map hands its entries out in.
+    /// (Each render builds its maps anew, with new seeds, even inside one process.)
+    #[test]
+    fn test_the_same_document_renders_the_same_every_time() {
+        use crate::model::{Resource, ResourceType};
+
+        let build = || {
+            let mut doc = Document::new();
+            for name in ["image2.jpg", "image1.png", "image1.bmp", "image3.gif"] {
+                doc.resources.insert(
+                    name.to_string(),
+                    Resource::new(ResourceType::Image, vec![1, 2, 3]),
+                );
+            }
+            let styled = |text: &str, size: f32| {
+                InlineContent::Text(TextRun::with_style(
+                    text,
+                    TextStyle {
+                        font_size: Some(size),
+                        ..Default::default()
+                    },
+                ))
+            };
+            let mut section = Section::new(0);
+            for (small, large) in [(10.0, 14.0), (12.0, 16.0), (10.0, 14.0)] {
+                let mut para = Paragraph::new();
+                para.content.push(styled("tie tie tie", small));
+                para.content.push(styled("tie tie tie", large));
+                section.push_paragraph(para);
+            }
+            let mut para = Paragraph::new();
+            para.content
+                .push(InlineContent::Image(ImageRef::new("image1")));
+            section.push_paragraph(para);
+            doc.sections.push(section);
+            doc
+        };
+        let render = |doc: &Document| {
+            (
+                MarkdownRenderer::new(RenderOptions::default())
+                    .render(doc)
+                    .unwrap(),
+                serde_json::to_string(doc).unwrap(),
+            )
+        };
+        let first = render(&build());
+        // `image1.bmp` sorts before `image1.png`: the later name is the one the reference names.
+        assert!(first.0.contains("image1.png"), "{}", first.0);
+        for run in 1..24 {
+            assert_eq!(render(&build()), first, "run {run} differs from the first");
+        }
+    }
+
     #[test]
     fn test_floating_image_standalone_block() {
         // A floating image (stamp/signature) following heading text must not
