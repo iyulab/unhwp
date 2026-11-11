@@ -1,6 +1,6 @@
 [workspace]
 members = [".", "cli", "unhwp-wasm"]
-resolver = "2"
+resolver = "3"
 
 [package]
 name = "unhwp"
